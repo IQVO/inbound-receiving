@@ -5,8 +5,6 @@ disable-model-invocation: true
 argument-hint: "[git range]"
 ---
 
-<!-- TEMPLATE NOTE (warehouse-harness-template v2): adapt every repo-specific example in this file (file paths, type names, field names) to THIS repo real code. Do not copy-paste verbatim. -->
-
 Perform a pre-commit semantic code review of the current uncommitted
 changes (or, if `$ARGUMENTS` names a branch/commit range, review that
 diff instead — e.g. `/code-review origin/develop..HEAD`).
@@ -54,7 +52,7 @@ linter already catches.
    accidental (an agent "helpfully" adding back something that looks
    missing) and should be flagged even if the code itself looks correct.
 8. **Anything that would surprise the sibling-context boundary.** If this
-   repo's `AGENTS.md`/`CLAUDE.md` documents a stricter rule (e.g. "no
+   repo's `HARNESS.md` or `SPEC.md` documents a stricter rule (e.g. "no
    outbound calls to sibling contexts"), check the diff doesn't
    reintroduce exactly that.
 

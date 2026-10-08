@@ -70,7 +70,7 @@ packages and the standard library.
 - `receipt`: `ReceiptOpened`, `ReceiptLineReceived` (the handover event),
   `ReceiptClosed` (discrepancies).
 
-## Key use cases (application layer, built in the service phase)
+## Key use cases (`internal/application/usecases/`)
 
 - `RegisterAsn`, `CancelAsn`: SKU check against `known_skus` when
   `PRODUCT_MODE=kafka`.
