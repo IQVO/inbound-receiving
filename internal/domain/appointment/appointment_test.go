@@ -55,6 +55,15 @@ func assertHeader(t *testing.T, e Event, name string, at time.Time) {
 	}
 }
 
+func TestPolicyConstants(t *testing.T) {
+	if MaxWindow != 4*time.Hour {
+		t.Errorf("MaxWindow = %v, want 4h", MaxWindow)
+	}
+	if CheckInLeadTime != 30*time.Minute {
+		t.Errorf("CheckInLeadTime = %v, want 30m", CheckInLeadTime)
+	}
+}
+
 func TestBook(t *testing.T) {
 	brt := time.FixedZone("BRT", -3*3600)
 	d, events, err := Book(id1, "DOOR-1", "ACME Freight", start.In(brt), end.In(brt), []string{"ASN-1", "ASN-2"}, t0.In(brt))

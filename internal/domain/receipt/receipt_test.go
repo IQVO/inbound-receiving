@@ -460,6 +460,15 @@ func TestRehydrate(t *testing.T) {
 	}
 }
 
+func TestRehydrateAcceptsTheFirstVersion(t *testing.T) {
+	p := persisted()
+	p.Version = 1
+	r, err := Rehydrate(p)
+	if err != nil || r.Version() != 1 {
+		t.Fatalf("version 1: %v, %v", r, err)
+	}
+}
+
 func TestRehydrateClosedAndWalkIn(t *testing.T) {
 	p := persisted()
 	p.State = StateClosed

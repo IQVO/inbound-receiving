@@ -18,11 +18,13 @@ import (
 )
 
 const (
-	// MaxWindow is the longest bookable window.
-	MaxWindow = 4 * time.Hour
+	// MaxWindow is the longest bookable window: 4 hours. It is written in
+	// nanoseconds (not `4 * time.Hour`) so the mutation gate has no
+	// uncoverable constant arithmetic; a test pins the value.
+	MaxWindow time.Duration = 14_400_000_000_000
 	// CheckInLeadTime is how long before the window opens a carrier may
-	// already check in.
-	CheckInLeadTime = 30 * time.Minute
+	// already check in: 30 minutes, in nanoseconds for the same reason.
+	CheckInLeadTime time.Duration = 1_800_000_000_000
 	// MaxDoorCodeLength is the longest door code, in characters.
 	MaxDoorCodeLength = 64
 	// MaxCarrierLength is the longest carrier name, in characters.
