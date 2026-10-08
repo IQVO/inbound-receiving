@@ -226,6 +226,62 @@ mcp:
       cpu: 100m
       memory: 128Mi
 
+# --- Analytics read side (docs/adr/0006) ---
+# The receiving performance and accuracy data product: cmd/inbound-projector
+# consumes warehouse.inbound-receiving.analytics (written by the SAME outbox
+# as the integration topic) into a SEPARATE analytical database, and
+# cmd/inbound-reports serves GET /reports/receiving-performance and
+# /reports/freshness read-only from it. DISABLED by default (the default
+# render is unchanged). Enabling it renders component=analytics-projector
+# (Deployment) and component=analytics-reports (Deployment + Service
+# <release>-reports), plus the analytics Secret. Requires kafka.enabled and a
+# DSN source (the chart refuses to render otherwise); events only flow when
+# config.eventPublisher is "kafka".
+analytics:
+  enabled: false
+  database:
+    # The projector's read-write analytical DSN (DIRECT Postgres, not
+    # PgBouncer: it also runs the embedded analytical migrations). No password
+    # in committed values.
+    projectorUrl: ""
+    # The reports reader's DSN -- a read-only role where possible; falls back
+    # to projectorUrl when empty (local/dev).
+    reportsUrl: ""
+    # Name of an existing Secret holding ANALYTICS_DATABASE_URL (projector) and
+    # ANALYTICS_READER_DATABASE_URL (reports). Takes precedence over the URLs.
+    existingSecret: ""
+  projector:
+    # One replica is enough; N>1 is safe: one fixed group shares the
+    # partitions and every write dedupes on the CloudEvents id in the same
+    # transaction.
+    replicaCount: 1
+    adminAddr: ":8091"                  # ADMIN_ADDR (/healthz, /readyz)
+    # ANALYTICS_CONSUMER_GROUP: the projector's FIXED consumer group. A stable
+    # id lets a rescheduled pod resume from its committed offsets; a brand-new
+    # group starts at the earliest offset and rebuilds the model from history.
+    consumerGroup: "inbound-receiving-analytics"
+    resources:
+      limits:
+        cpu: 500m
+        memory: 256Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  reports:
+    replicaCount: 1
+    httpAddr: ":8092"                   # HTTP_ADDR
+    service:
+      type: ClusterIP
+      port: 80
+      targetPort: 8092
+    resources:
+      limits:
+        cpu: 500m
+        memory: 256Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
 nodeSelector: {}
 tolerations: []
 affinity: {}
