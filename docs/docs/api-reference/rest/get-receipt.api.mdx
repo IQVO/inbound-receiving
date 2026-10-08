@@ -1,0 +1,73 @@
+---
+id: get-receipt
+title: "Get a receipt"
+description: "Returns the receipt with its lines, state, version (also as the `ETag`)"
+sidebar_label: "Get a receipt"
+hide_title: true
+hide_table_of_contents: true
+api: eJztGmtz2zbyr+xgbiayS0qyo7yUtjO+JO34kjhpHF8/VLkhRK4k1CTAAKBljUf//WYXpERacuL2cjP9UH9IRBBY7PvJG2FKtNIro08zMRZz9B8wRVV6EYkMXWpVSS/FWHxAX1ntwC8QbNgDS+UXoLyDXGl0ETgvPUZwhdYpo6Enc2dAhjPJq49ynhxMtNQZL2TKpRZLqVOFrt61IhA6A22W0JspLXMwOsXOpcpNdPIiNw6z5KA/0SISXs6dGP8matyd+BQJi6402qET4xtxPBzSf12KPm6B9kUkFigztLydUN3df+6t0XNA7ZVfgZdzMLMaM2cqm+KYnz5XxmMGSc2FJIKZsYDXsihzhGQiHk5EQhe6dIGFpHv8qkQxFs5bpeciEvVmMRa8W6zX60ikRnvUnvbLssxVymIb/O4IuZtdaGb6O6YkR4ufK2UxIw7V9J5mIhLS6bOqmKIlXEhyIhIsSBGRWmjMTlgN2nISkajpIh6XltTHq8DkLewvkmTT0sfHxw9x9OjxkxifPpvGR8fZw1iOHj2OR8ePHx+Njp6MhsOhWLdx3IFJb8vSKO0L1Hfc2hXgu0J5Eg3JQ8JS5pex0pBhrq7QrvoEMTPGvjAZ3h/YcoG6o58L6UAbaOHGkAOH93FGVwWJ5l2JpMtBs4m7XnlmWK3V5wxg3choC0laK1ciEspj4b6mAHT4zJDELysWS4mpx+wXv+KNKaorzH42Jms9vpSFnAecuhKvgW2vVNrjnBVqZmwhfVh6eMwMuKz2CrGNwtcgPR7RiQ6a9zgSiUJpVRCbh+tdsv4ohPWOaN4ojYLWN2azR84bkJn0GHtVsDBTFve9T9zWwvcWHWq/z0tC4ySDYneseFd5boFFyz49AqX5BxiboY3AaCQHaFdQooVLpTPoJecLY30SQfLuCi39X3M2OXgOWJR+FYwEycr8Quk5FNKnC3T9P6m1dO+dyhuesoACPfx/1JZx+KqXqHkDP0CDHkwxN0tocG+41t4hp+YKtzsmesNQ+AGkhxyl8yyKmkqotPIhFDbehO8VkSDgIhItE2509+VGI1aviZb/yRTveeI2e8iCocwr11ASdHUru/tgsd5LE683seoPgmlyoDUH3tG+5OGtzAkAZvCv83dnQBFFQ6UvtVlqmCnMyTCKZlNMyozOJwcRSJjKDD5XaFcTXUorC/RooZcofSVzlcX8KuwslHNkL8lphkVpPOp0Fb/GVTLRvUS11i5xFTcGQ0c5wl3JvCKvID1MLcpLBxIyU0ilwVY5TnSPE7Pm3kMy3cMGjAvPWRVSDQyPS6Uzs4yVjkvpfAJSZxO9gZAanSliUAIur+auTs/uyFxKa6Y5Ft99PYO5lYn+9AKePB0+gRoAZCatKM5C5erozq4GtNHx8fU1NKlg/5ZX4WsaqYcIXTm+zkuV7/qNgNYX/HRlldiq0R6nUV9xP89To7EPjtKUJ6f7Lmmp8fvAn2DZnH7x1Rut/KfJ2MJcVRTSrna1ekobIsF61Lpq4X3pxoMBWmus6ys9NZUmHSdfoPS8v5QWF6ZyGLuVI//ez/BqsGMNYovq9uLtu4ZZo+FwywxRv2fcKMpp44G1L6BM0vcL5WBT2Ig2u8RAOu2YSy3zeY2rDxu96PCjtr9b5vfteHKXDbdYc+tuCHUKkd7afBevQmESpxalJ0Jq7jkoKufBoc5Asp2EOL1L537WBXs/D6Fxy67TsA7nry/AaJCcOnxDZtVuJiQBDX/oMuWgfnknL9xlFYieIhz1+49HkC6klalH67iQNZWH5UJ5dKVMMQLyWtbk7W3GwoPBg69w5Vd2kV3GhDXIjZ4j6afUMIKFqaz79twJLrrFoPrye/AoHA1sYtWYUWRSnqpy6x15e8gp95AeCuN8i4gOR7alj+MYGqLo6K4SPCgppZoUj0rpF5AZDKaN18r5MSTS6VgbH8+IFwnlRK1bWm9IRkmdBLeW/w5Ef8FARMW98T+RgLrmclHnUSfnZ9/OPjoa1DKPk/Mz1rRmfWsao5ZpSKc7u257gMHJ+Vl8cfb67N2vZ0x7rYNfJtBumm3fiMgdzRc7We09iLV7drYJrt+7AfdyhvVfvOef5m/jBh7tS6YvdFN5gEN7hRaY7P7fJvsXMtlvEaE8Wi3zmM+1U5z6RUf6Le181IlSXGhtFIb3gknTyoZUaE9sZs3blFrUKr4RWha4VfXTcFKMBYWfjqy9rfC2Gn1sd1qohmdDSGBm8twsqchfUfZjlmhT6RAuLk5ffrnlW0pPPBBj8R+G9dswfibj2aebp+vt79E9fh8dr//Rkdofabh+ikSBfmHqWUDAa9Ex+ZsNx9ZEEAsscLSyea0b48EgN6nMF8b58dPh0+GOHb6h15DhFeamJPsT6+gLEIbDgSzVYEfR7oDLfak0r5znbMuaar6A14ZU/BOJeRaaPxvtY6jwoYEKJ+9PW43usTjqD/u7NJAS/Pr2PPaKkqQaSGbSS1gaezmjLk89INgxByhz6clqJ7p38vIDDIfDo4MwPnAVuTm0DxzI7IoUGdxCleSLVYrQOzw8OT87PDyIeHcqreXNEz015hIzODxkFFrZ0eEhNDOX1FTa86ZaioeHUZji+AVOdHckw55/t7/NHUsHDd7HB3049ZBhqrKQs1GHb6LlNCTUaHHb2ZobkzmYm+fAnR/uZIO0CAupM8zAG8pRUXtjV7Hzxso5TrR05JS131768IBJct4sKTddUWoKH34CmZJsCF2L/Yme6FfszHfroOT9u/OPCfQSdhHU2ehkrbzQqDxnmy0DUNl6wJgnB00JxvfvNGnqUm3cauRc4mqiFTViRsMh3N3CoeaPxTKXq414wMkCCQCTTuXvRNvWUM5YNeeJWROyou4phiMhU7MZWop4TQUtYXR8TF2cHWQqbh8DKXrN2cA3B70kJdXMiVHpAlOapDCfWDuSA5BpiqVnDOqCdVp5yAznFDWZoPyYqKxl4hdY8HTP4oyj8XQVKKDBBxQyXVAjujcaPjtg2b6tvJzm2wLCsTWQ493M3qDXVC4ejiL47ojb1gE3zKi003OsZ5IydKUJExcmfTyyHMNEfF/D+3EiGqH24UR3mQKFXHFFPdHJ6Sx+S8CS5yAJ/xzrZlxg99HxBsW4UI7vJZEzFkurfOjaTXQwNQlWpkg08NxUejmloFKr0TNIUqM5/GkfFyZTszpLSphNJ11qg72V1TRXbkHNZgcvclNlr4KFGT3RycZf7QntwRKTjVuV4K3ULrCC5rWVn5pr6DlELtKUG0i30qksVX8li5yGAk5Nc+IzJ3fX3sElYskBk7x3asqg45pSMUhlnk8093RO3p8SF5oWEE1EgpVzHsKE3Zngkc7elUEmB2wdE51QWIYf4E8mON9T1/NHYjuZDD1AKr3MzbzCMexpB0dwq+sb7bXDjVO4y0ZbcLjM4ZFpANb0TOqwEluc0Xbatun0Bm/WAkILsTYMYdsBdpdVe9Otx8+V5Ml4e82iJPa2EWmX7Srrbg61S3eVJrJxajLsQKnjXntjaF7saVLfbhZsyG5c/5bCNvNgT1ubQXU7EXBHIyLa14ZozsvcosxWMXc3XCMPQtiauUW3WfJoC3LqnZuDGpLv23d9yAP2tkjYU2PGvhoSU3mnMowb/73hIAmduF7z0VyhzWXZpqjBn+ad7fUwzWQI9Syk0ZLmkZITlml7UTrdedyi3aHb3HoFSa2n4VUAsutXKSrd4SBZyO2iJLjMNyQVqgghrawzFko5V3o+pgsL5RPoHVGqQmUJZDiTVe7haDg82ORZppSfK/J/4XwShjAqBOrS4pUylSOo+MBBovHavwgbn3PcD/G76UpOdHtHA4X7cASB47PF0AsHWfkFfaESCIRcrmi2NMsR/URTksZf5hwPjx/Hw2fx0VFrRCNTLrPrwmjH5wENjrxUGrnht83VyVHOlV9U035qisHpL/9+tydT5w8XUtQOW5dcnL05ffHq7PzVSy4+S+N8IXVrw8/omSN7v0m62XYH/tqfJ4Vaj0LdoMyl0sQM5t9NXV9tPswhzo63NemnSFAFRBtubijoX9h8vaZlDhdi/Nsnah1ZRc6Ai7BMOfqdifFM5u524drmWK8ZeRzAny1n9xLWfFigW2MSQUN7XHXq7fWndfPRFWMe3odspXVy51unTpH686uPYr3+LyNmkTI=
+sidebar_class_name: "get api-method"
+info_path: docs/api-reference/rest/inbound-receiving-api
+custom_edit_url: null
+hide_send_button: true
+---
+
+import MethodEndpoint from "@theme/ApiExplorer/MethodEndpoint";
+import ParamsDetails from "@theme/ParamsDetails";
+import RequestSchema from "@theme/RequestSchema";
+import StatusCodes from "@theme/StatusCodes";
+import OperationTabs from "@theme/OperationTabs";
+import TabItem from "@theme/TabItem";
+import Heading from "@theme/Heading";
+import Translate from "@docusaurus/Translate";
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Get a receipt"}
+>
+</Heading>
+
+<MethodEndpoint
+  method={"get"}
+  path={"/receipts/{receiptId}"}
+  context={"endpoint"}
+>
+  
+</MethodEndpoint>
+
+
+
+Returns the receipt with its lines, state, version (also as the `ETag`)
+and the discrepancies as they stand now (final once the receipt is
+`Closed`).
+
+
+<Heading
+  id={"request"}
+  as={"h2"}
+  className={"openapi-tabs__heading"}
+>
+  <Translate id="theme.openapi.request.title">Request</Translate>
+</Heading>
+
+<ParamsDetails
+  {...require("./get-receipt.ParamsDetails.json")}
+>
+  
+</ParamsDetails>
+
+<RequestSchema
+  {...require("./get-receipt.RequestSchema.json")}
+>
+  
+</RequestSchema>
+
+<StatusCodes
+  {...require("./get-receipt.StatusCodes.json")}
+>
+  
+</StatusCodes>
+
+
+      

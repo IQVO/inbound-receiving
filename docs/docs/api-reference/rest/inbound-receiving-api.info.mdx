@@ -1,0 +1,102 @@
+---
+id: inbound-receiving-api
+title: "Inbound Receiving API"
+description: "The WMS-tier inbound dock workflow of the warehouse-systems platform"
+sidebar_label: Introduction
+sidebar_position: 0
+hide_title: true
+custom_edit_url: null
+---
+
+import ApiLogo from "@theme/ApiLogo";
+import Heading from "@theme/Heading";
+import SchemaTabs from "@theme/SchemaTabs";
+import TabItem from "@theme/TabItem";
+import Export from "@theme/ApiExplorer/Export";
+
+<span
+  className={"theme-doc-version-badge badge badge--secondary"}
+  children={"Version: 1.0.0"}
+>
+</span>
+
+<Heading
+  as={"h1"}
+  className={"openapi__heading"}
+  children={"Inbound Receiving API"}
+>
+</Heading>
+
+
+
+The WMS-tier inbound dock workflow of the warehouse-systems platform
+(ADR 0001): the supplier's advance ship notice (**ASN**), the carrier's
+booked **dock appointment** and the counted **receipt**, with the
+discrepancies found when the receipt closes (ADR 0002). It decides nothing
+about where received goods go; Good lines are handed to inventory-storage
+as events (ADR 0003) and stow stays an RF action there.
+
+Every resource-creating `POST` (`/asns`, `/appointments`, `/receipts`,
+`/receipts/{id}/lines`) requires an `Idempotency-Key` header: a missing key
+is a 400 `idempotency-key-required`, a replay with the same key and body
+returns the original response, the same key with a different body is a 422
+`idempotency-key-reused`. The action `POST`s (`cancel`, `check-in`,
+`close`) accept the header but do not require it: repeating them is
+refused by the state machine (409).
+
+Mutable resources carry a `version` (starts at 1, +1 per accepted change)
+and a matching strong `ETag: "<version>"` header. An action `POST` may send
+`If-Match`; a stale value is a 412 `version-mismatch`, and a write that
+loses a race at the database is a 409 `concurrent-modification`.
+
+Accepted changes are published as CloudEvents on
+`warehouse.inbound-receiving.events` through a transactional outbox (see
+`apis/asyncapi.yaml`); sibling contexts keep a local copy and never call
+this API at request time.
+
+Errors are RFC 7807 problem documents (`application/problem+json`) with
+`type = https://errors.inbound-receiving.warehouse-systems.dev/<slug>`.
+The slug catalogue: `malformed-request`, `invalid-query`,
+`idempotency-key-required`, `idempotency-key-reused`, `invalid-asn-number`,
+`invalid-supplier-ref`, `asn-requires-lines`, `invalid-line-no`,
+`duplicate-sku`, `invalid-sku`, `invalid-quantity`, `invalid-reason`,
+`invalid-appointment-id`, `invalid-receipt-id`, `invalid-door-code`,
+`invalid-carrier`, `invalid-window`, `window-in-past`,
+`appointment-requires-asns`, `duplicate-asn-number`, `invalid-condition`,
+`asn-not-found`, `appointment-not-found`, `receipt-not-found`,
+`asn-already-exists`, `asn-in-progress`, `asn-terminal`,
+`asn-not-receivable`, `appointment-not-booked`,
+`appointment-not-checked-in`, `outside-check-in-window`,
+`door-window-overlap`, `receipt-already-open`, `receipt-closed`,
+`unknown-sku`, `unknown-dock-door`, `unknown-asn`, `unknown-appointment`,
+`asn-not-on-appointment`, `line-not-on-asn`, `version-mismatch`,
+`concurrent-modification`, `internal-error`.
+
+Lists use cursor paging: `limit` (1 to 500, default 100) and the opaque
+`cursor` that is the previous page's `nextCursor`; a response without
+`nextCursor` is the last page. There is no authentication layer (fleet
+decision 2026-09-11).
+
+
+<div
+  style={{"display":"flex","flexDirection":"column","marginBottom":"var(--ifm-paragraph-margin-bottom)"}}
+>
+  <h3
+    style={{"marginBottom":"0.25rem"}}
+  >
+    Contact
+  </h3><span>
+    inbound-receiving maintainers: 
+  </span><span>
+    URL: [https://github.com/IQVO/inbound-receiving](https://github.com/IQVO/inbound-receiving)
+  </span>
+</div><div
+  style={{"marginBottom":"var(--ifm-paragraph-margin-bottom)"}}
+>
+  <h3
+    style={{"marginBottom":"0.25rem"}}
+  >
+    License
+  </h3>
+</div>
+      
