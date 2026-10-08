@@ -53,3 +53,11 @@ path prefix: `/api/inbound-receiving`.
   `version-mismatch`); a lost database race is 409 `concurrent-modification`.
 - Lists use cursor paging (`limit` 1..500 default 100, opaque `cursor`).
 - Auth: none (fleet-wide revert 2026-09-11; `TestNoAuthMiddlewareReintroduced`).
+- The seven GETs (`/asns`, `/asns/{asnNumber}`, `/appointments`,
+  `/appointments/{appointmentId}`, `/receipts`, `/receipts/{receiptId}`,
+  `/docks`) are also served read-only by `cmd/mcp` as the tools `list_asns`,
+  `get_asn`, `list_appointments`, `get_appointment`, `list_receipts`,
+  `get_receipt` and `list_docks` (`.claude/rules/mcp.md`). A new or changed
+  GET that has an MCP twin changes the tool registry golden too. Deployment:
+  the `Dockerfile` builds both binaries and `charts/inbound-receiving` runs
+  the api (always) and the mcp server (`mcp.enabled`, default off).

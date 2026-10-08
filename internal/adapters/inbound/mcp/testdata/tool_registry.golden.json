@@ -1,0 +1,689 @@
+[
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Read one carrier dock appointment by id: door_code, carrier, window_start and window_end (UTC), the asn_numbers it covers, state (Booked, CheckedIn, Completed or Cancelled) and version. Read-only; fails with appointment-not-found for an unknown id and invalid-appointment-id for a malformed one.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "appointment_id": {
+          "description": "the appointment id returned when it was booked, e.g. appt-1b4e28ba-2fa1-4d3c-8f6e-0a1b2c3d4e5f",
+          "type": "string"
+        }
+      },
+      "required": [
+        "appointment_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_appointment",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "appointment_id": {
+          "type": "string"
+        },
+        "asn_numbers": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "carrier": {
+          "type": "string"
+        },
+        "door_code": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "window_end": {
+          "type": "string"
+        },
+        "window_start": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "appointment_id",
+        "door_code",
+        "carrier",
+        "window_start",
+        "window_end",
+        "asn_numbers",
+        "state",
+        "version"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Read one advance ship notice (ASN) by number: supplier_ref, expected_arrival (omitted when none), state (Registered, Receiving, Closed or Cancelled), its lines (line_no, sku, expected_qty) and version. Read-only; fails with asn-not-found for an unknown number and invalid-asn-number for a malformed one.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "asn_number": {
+          "description": "the ASN number as supplied by the supplier, e.g. ASN-1001",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asn_number"
+      ],
+      "type": "object"
+    },
+    "name": "get_asn",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "asn_number": {
+          "type": "string"
+        },
+        "expected_arrival": {
+          "type": "string"
+        },
+        "lines": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "expected_qty": {
+                "type": "integer"
+              },
+              "line_no": {
+                "type": "integer"
+              },
+              "sku": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "line_no",
+              "sku",
+              "expected_qty"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "state": {
+          "type": "string"
+        },
+        "supplier_ref": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "asn_number",
+        "supplier_ref",
+        "state",
+        "lines",
+        "version"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Read one receipt by id: asn_number, appointment_id and door_code (omitted for a walk-in), state (Open or Closed), per-line expected_qty, received_good and received_damaged, opened_at, closed_at (omitted while open), the discrepancies as the receipt stands (kind Short, Over or Damaged; final once Closed, provisional while Open) and version. Read-only; fails with receipt-not-found for an unknown id and invalid-receipt-id for a malformed one.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "receipt_id": {
+          "description": "the receipt id returned when it was opened, e.g. rcpt-1b4e28ba-2fa1-4d3c-8f6e-0a1b2c3d4e5f",
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_receipt",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "appointment_id": {
+          "type": "string"
+        },
+        "asn_number": {
+          "type": "string"
+        },
+        "closed_at": {
+          "type": "string"
+        },
+        "discrepancies": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "damaged_qty": {
+                "type": "integer"
+              },
+              "expected_qty": {
+                "type": "integer"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "line_no": {
+                "type": "integer"
+              },
+              "received_qty": {
+                "type": "integer"
+              },
+              "sku": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "line_no",
+              "sku",
+              "kind",
+              "expected_qty",
+              "received_qty",
+              "damaged_qty"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "door_code": {
+          "type": "string"
+        },
+        "lines": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "expected_qty": {
+                "type": "integer"
+              },
+              "line_no": {
+                "type": "integer"
+              },
+              "received_damaged": {
+                "type": "integer"
+              },
+              "received_good": {
+                "type": "integer"
+              },
+              "sku": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "line_no",
+              "sku",
+              "expected_qty",
+              "received_good",
+              "received_damaged"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "opened_at": {
+          "type": "string"
+        },
+        "receipt_id": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "receipt_id",
+        "asn_number",
+        "state",
+        "lines",
+        "opened_at",
+        "discrepancies",
+        "version"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "List dock appointments in ascending window-start order, a page at a time (default 100, max 500), optionally only those at one door, in one state, and/or overlapping a from/to time range (from: window ends after it; to: window starts before it; both RFC 3339). Pass the returned next_cursor to get the next page; it is absent on the last page. Read-only; a bad limit, cursor, state or instant fails with invalid-query and a malformed door with invalid-door-code.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "description": "the opaque next_cursor returned by the previous page; omitted means the first page",
+          "type": "string"
+        },
+        "door": {
+          "description": "keep only appointments at this dock door code",
+          "type": "string"
+        },
+        "from": {
+          "description": "RFC 3339 instant; keep only appointments whose window ends after it",
+          "type": "string"
+        },
+        "limit": {
+          "description": "page size, 1..500; omitted or 0 means 100",
+          "type": "integer"
+        },
+        "state": {
+          "description": "keep only appointments in this state: Booked, CheckedIn, Completed or Cancelled",
+          "type": "string"
+        },
+        "to": {
+          "description": "RFC 3339 instant; keep only appointments whose window starts before it",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_appointments",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "appointment_id": {
+                "type": "string"
+              },
+              "asn_numbers": {
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "carrier": {
+                "type": "string"
+              },
+              "door_code": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              },
+              "window_end": {
+                "type": "string"
+              },
+              "window_start": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "appointment_id",
+              "door_code",
+              "carrier",
+              "window_start",
+              "window_end",
+              "asn_numbers",
+              "state",
+              "version"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "next_cursor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "List ASNs in ascending number order, a page at a time (default 100, max 500), optionally only those in one state. Pass the returned next_cursor to get the next page; it is absent on the last page. Read-only; a bad limit, cursor or state fails with invalid-query.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "description": "the opaque next_cursor returned by the previous page; omitted means the first page",
+          "type": "string"
+        },
+        "limit": {
+          "description": "page size, 1..500; omitted or 0 means 100",
+          "type": "integer"
+        },
+        "state": {
+          "description": "keep only ASNs in this state: Registered, Receiving, Closed or Cancelled",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_asns",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "asn_number": {
+                "type": "string"
+              },
+              "expected_arrival": {
+                "type": "string"
+              },
+              "lines": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "expected_qty": {
+                      "type": "integer"
+                    },
+                    "line_no": {
+                      "type": "integer"
+                    },
+                    "sku": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "line_no",
+                    "sku",
+                    "expected_qty"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "state": {
+                "type": "string"
+              },
+              "supplier_ref": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "asn_number",
+              "supplier_ref",
+              "state",
+              "lines",
+              "version"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "next_cursor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "List the inbound dock doors this service knows (door_code and dock_flow Inbound or Both) in ascending code order, with the mode the local copy runs in: permissive (any door code can be booked, the list may be empty) or kafka (only the listed doors can be booked). Takes no arguments. Read-only.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "name": "list_docks",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "dock_flow": {
+                "type": "string"
+              },
+              "door_code": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "door_code",
+              "dock_flow"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "mode": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "items"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "List receipts in ascending id order, a page at a time (default 100, max 500), optionally only those of one ASN (asn_number) and/or in one state (Open or Closed). Pass the returned next_cursor to get the next page; it is absent on the last page. Read-only; a bad limit, cursor or state fails with invalid-query and a malformed asn_number with invalid-asn-number.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "asn_number": {
+          "description": "keep only receipts of this ASN number",
+          "type": "string"
+        },
+        "cursor": {
+          "description": "the opaque next_cursor returned by the previous page; omitted means the first page",
+          "type": "string"
+        },
+        "limit": {
+          "description": "page size, 1..500; omitted or 0 means 100",
+          "type": "integer"
+        },
+        "state": {
+          "description": "keep only receipts in this state: Open or Closed",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_receipts",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "appointment_id": {
+                "type": "string"
+              },
+              "asn_number": {
+                "type": "string"
+              },
+              "closed_at": {
+                "type": "string"
+              },
+              "discrepancies": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "damaged_qty": {
+                      "type": "integer"
+                    },
+                    "expected_qty": {
+                      "type": "integer"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "line_no": {
+                      "type": "integer"
+                    },
+                    "received_qty": {
+                      "type": "integer"
+                    },
+                    "sku": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "line_no",
+                    "sku",
+                    "kind",
+                    "expected_qty",
+                    "received_qty",
+                    "damaged_qty"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "door_code": {
+                "type": "string"
+              },
+              "lines": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "expected_qty": {
+                      "type": "integer"
+                    },
+                    "line_no": {
+                      "type": "integer"
+                    },
+                    "received_damaged": {
+                      "type": "integer"
+                    },
+                    "received_good": {
+                      "type": "integer"
+                    },
+                    "sku": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "line_no",
+                    "sku",
+                    "expected_qty",
+                    "received_good",
+                    "received_damaged"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "opened_at": {
+                "type": "string"
+              },
+              "receipt_id": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "receipt_id",
+              "asn_number",
+              "state",
+              "lines",
+              "opened_at",
+              "discrepancies",
+              "version"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "next_cursor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    }
+  }
+]

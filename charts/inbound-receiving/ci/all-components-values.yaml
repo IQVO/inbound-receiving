@@ -1,0 +1,29 @@
+# Used by `helm lint` / `ct lint`: every optional component enabled at once.
+database:
+  existingSecret: "inbound-receiving-db"
+config:
+  eventPublisher: "kafka"
+  outboxRelayInterval: "500ms"
+  productMode: "kafka"
+  productConsumerGroup: "inbound-receiving-product"
+  dockDoorMode: "kafka"
+  dockDoorConsumerGroup: "inbound-receiving-dock-door"
+  shutdownDrainDelay: "5s"
+  corsAllowedOrigins: "http://localhost:5173"
+kafka:
+  enabled: true
+  brokers: "kafka.warehouse-systems.svc.cluster.local:9092"
+gatewayApi:
+  enabled: true
+  parentRefs:
+    - name: warehouse-gateway
+      namespace: kong
+      sectionName: http
+  hosts:
+    - path: /api/inbound-receiving
+      pathType: PathPrefix
+autoscaling:
+  api:
+    enabled: true
+mcp:
+  enabled: true

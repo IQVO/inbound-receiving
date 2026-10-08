@@ -1,0 +1,12 @@
+apiVersion: v2
+name: inbound-receiving
+description: Inbound Receiving — ASNs, dock appointments and receipts; publishes Inbound events on warehouse.inbound-receiving.events
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/IQVO/inbound-receiving
+keywords:
+  - ddd
+  - hexagonal-architecture
+  - warehouse-management-system
+  - golang

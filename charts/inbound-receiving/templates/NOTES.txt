@@ -1,0 +1,47 @@
+{{ .Chart.Name }} has been deployed.
+
+Release:   {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+Service:   {{ include "inbound-receiving.fullname" . }} ({{ .Values.service.type }}, port {{ .Values.service.port }})
+
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+Ingress:   http://{{ .host }}{{ (index .paths 0).path }}
+{{- end }}
+{{- else if .Values.gatewayApi.enabled }}
+Gateway API HTTPRoute enabled — routed via the parentRefs/hosts configured
+in gatewayApi.*.
+{{- else }}
+To reach it locally:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "inbound-receiving.fullname" . }} 8080:{{ .Values.service.port }}
+  curl http://localhost:8080/healthz
+{{- end }}
+
+{{- if .Values.mcp.enabled }}
+
+MCP server (read-only tools, Streamable HTTP, no auth):
+  http://{{ include "inbound-receiving.mcpFullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.mcp.service.port }}/mcp
+{{- end }}
+
+{{- if eq .Values.config.eventPublisher "kafka" }}
+
+config.eventPublisher is "kafka" — Inbound events are relayed from the
+transactional outbox onto warehouse.inbound-receiving.events ({{ .Values.kafka.brokers }}).
+{{- else }}
+
+NOTE: config.eventPublisher is "log" (the default) — outbox rows are drained
+to the log sink, nothing reaches warehouse.inbound-receiving.events.
+{{- end }}
+{{- if eq .Values.config.productMode "kafka" }}
+
+The product local-copy consumer is ON (group
+{{ .Values.config.productConsumerGroup }}, topic warehouse.product-master.events):
+unknown SKUs are refused when an ASN is registered.
+{{- end }}
+{{- if eq .Values.config.dockDoorMode "kafka" }}
+
+The dock-door local-copy consumer is ON (group
+{{ .Values.config.dockDoorConsumerGroup }}, topic warehouse.facility.events):
+only known inbound doors can be booked.
+{{- end }}
