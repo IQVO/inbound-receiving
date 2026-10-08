@@ -125,6 +125,65 @@ func TestHexagonalArchitecture(t *testing.T) {
 
 		assertPass(t, result)
 	})
+
+	t.Run("analytics read model depends on nothing internal except itself", func(t *testing.T) {
+		// internal/analytics/report is the read-model region (ADR 0006):
+		// like the domain, a dependency-free core the analytics adapters
+		// depend on. It must not import the OLTP domain/application layers,
+		// any adapter, or cmd.
+		rule := &configuration.DependenciesRule{
+			Package: "**.internal.analytics.**",
+			ShouldOnlyDependsOn: &configuration.Dependencies{
+				Internal: []string{"**.internal.analytics.**"},
+			},
+		}
+
+		result := archgo.CheckArchitecture(moduleInfo, configuration.Config{
+			DependenciesRules: []*configuration.DependenciesRule{rule},
+		})
+
+		assertPass(t, result)
+	})
+
+	t.Run("OLTP domain must not import the analytics store", func(t *testing.T) {
+		// Analytics is purely additive and never reaches back into the
+		// transactional core (ADR 0006).
+		rule := &configuration.DependenciesRule{
+			Package: "**.internal.domain.**",
+			ShouldNotDependsOn: &configuration.Dependencies{
+				Internal: []string{
+					"**.internal.analytics.**",
+					"**.internal.adapters.outbound.analyticsstore.**",
+				},
+			},
+		}
+
+		result := archgo.CheckArchitecture(moduleInfo, configuration.Config{
+			DependenciesRules: []*configuration.DependenciesRule{rule},
+		})
+
+		assertPass(t, result)
+	})
+
+	t.Run("OLTP application must not import the analytics store", func(t *testing.T) {
+		// The analytics pipeline consumes events; it is never called by the
+		// transactional use cases (ADR 0006).
+		rule := &configuration.DependenciesRule{
+			Package: "**.internal.application.**",
+			ShouldNotDependsOn: &configuration.Dependencies{
+				Internal: []string{
+					"**.internal.analytics.**",
+					"**.internal.adapters.outbound.analyticsstore.**",
+				},
+			},
+		}
+
+		result := archgo.CheckArchitecture(moduleInfo, configuration.Config{
+			DependenciesRules: []*configuration.DependenciesRule{rule},
+		})
+
+		assertPass(t, result)
+	})
 }
 
 func assertPass(t *testing.T, result *archgo.Result) {
