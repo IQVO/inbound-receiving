@@ -97,12 +97,17 @@ def check_components(docs: list[dict], failures: list[str]) -> None:
         container = deployments[mcp]["spec"]["template"]["spec"]["containers"][0]
         if container.get("command") != ["/app/mcp"]:
             failures.append("the MCP Deployment must run /app/mcp")
+        mcp_env = set(env_names(deployments[mcp]))
         stray = {
-            "KAFKA_BROKERS", "EVENT_PUBLISHER", "PRODUCT_MODE", "PRODUCT_CONSUMER_GROUP",
-            "DOCK_DOOR_MODE", "DOCK_DOOR_CONSUMER_GROUP",
-        } & set(env_names(deployments[mcp]))
+            "KAFKA_BROKERS", "EVENT_PUBLISHER", "OUTBOX_RELAY_INTERVAL", "PRODUCT_MODE", "PRODUCT_CONSUMER_GROUP",
+            "DOCK_DOOR_CONSUMER_GROUP",
+        } & mcp_env
         if stray:
             failures.append(f"the MCP Deployment must not get Kafka/relay/consumer env (it never dials Kafka): {sorted(stray)}")
+        # DOCK_DOOR_MODE is the one deliberate exception: it only labels list_docks.
+        for want in ("DATABASE_URL", "MIGRATIONS_DATABASE_URL", "MCP_ADDR", "DOCK_DOOR_MODE"):
+            if want not in mcp_env:
+                failures.append(f"the MCP Deployment does not render {want}")
 
     # Every Deployment's own selector must pin a component too, and be
     # satisfied by its pod labels.

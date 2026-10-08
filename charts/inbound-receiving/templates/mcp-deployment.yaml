@@ -1,4 +1,5 @@
 {{- if .Values.mcp.enabled }}
+{{- include "inbound-receiving.requireDatabase" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -38,14 +39,19 @@ spec:
               protocol: TCP
           # Env contract verified against cmd/mcp/main.go: MCP_ADDR,
           # LOG_LEVEL, SERVICE_VERSION, ENVIRONMENT,
-          # OTEL_EXPORTER_OTLP_ENDPOINT, DATABASE_URL and (migration step
-          # only) MIGRATIONS_DATABASE_URL. cmd/mcp has no auth env, starts no
-          # outbox relay and never dials Kafka (no KAFKA_BROKERS here).
+          # OTEL_EXPORTER_OTLP_ENDPOINT, DATABASE_URL, (migration step only)
+          # MIGRATIONS_DATABASE_URL and DOCK_DOOR_MODE. cmd/mcp has no auth
+          # env, starts no outbox relay, runs no local-copy consumer and never
+          # dials Kafka (no KAFKA_BROKERS, no consumer groups here).
+          # DOCK_DOOR_MODE is ONLY the label list_docks reports, so it matches
+          # what the api enforces; it starts nothing.
           env:
             - name: MCP_ADDR
               value: {{ .Values.mcp.httpAddr | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.config.logLevel | quote }}
+            - name: DOCK_DOOR_MODE
+              value: {{ .Values.config.dockDoorMode | quote }}
             - name: ENVIRONMENT
               value: {{ .Values.environment | quote }}
             - name: SERVICE_VERSION
