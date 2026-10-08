@@ -5,16 +5,16 @@ paths:
   - "apis/asyncapi*"
 ---
 
-<!-- TEMPLATE (warehouse-harness-template v2): fill in every "FILL IN" for
-     THIS repo, or delete this file if the repo publishes/consumes no Kafka
-     events. The "CloudEvents 1.0 is MANDATORY" section is NOT a
-     placeholder: keep it verbatim, only substitute the per-repo values. -->
 # Cross-service integration events (Kafka)
 
-FILL IN: state whether this service PUBLISHES, CONSUMES, or both, and
-to/from which topic(s). Fleet naming: `warehouse.<context>.events`
-(integration) and `warehouse.<context>.analytics` (consumed only by this
-service's own analytics projector).
+This service PUBLISHES the inbound dock workflow on
+`warehouse.inbound-receiving.events` (through the transactional outbox) and
+CONSUMES two producers' events into local copies (ADR 0003):
+product-master's `ProductRegistered` from `warehouse.product-master.events`
+(`known_skus`) and facility-layout's `LocationSlotRegistered` /
+`LocationSlotDecommissioned` from `warehouse.facility.events` (`dock_doors`).
+The analytics topic `warehouse.inbound-receiving.analytics` is reserved for a
+later phase and not produced yet.
 
 ## Events: CloudEvents 1.0 is MANDATORY
 
@@ -47,8 +47,7 @@ not a preference — there is nothing to "choose" here:
   `dataschema=urn:warehouse:<repo>:<events|analytics>:<EventName>:v<N>`.
   No custom extension attributes without an ADR.
 - `type` = `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`
-  (subdomain `wms` or `wes`; FILL IN this repo's exact prefix, e.g.
-  `com.warehouse.wes.order-management`). The SAME `type` names the
+  (this repo: `com.warehouse.wms.inbound-receiving`). The SAME `type` names the
   occurrence on both the integration and the analytics topic; `dataschema`
   names the payload shape. Breaking payload change => new `.v2` type + new
   dataschema version, never mutate an existing one.
@@ -63,39 +62,64 @@ not a preference — there is nothing to "choose" here:
   consumer; Kafka integration tests via testcontainers only.
 
 Full standard, subdomain table and the fleet's cross-service type
-catalogue: warehouse-docs `docs/strategic-design/event-standard-cloudevents.md`.
-Record it in this repo as its own ADR "CloudEvents 1.0 as the mandatory
-event envelope" under `docs/docs/adr/`.
+catalogue: the warehouse-docs repo's Event Standard page (in that repo, not
+this one).
+This repo's ADR: `docs/adr/0004-cloudevents-envelope-and-type-catalogue.md`.
 
 ### Published types
 
-FILL IN: one row per published event, exact strings.
+Topic `warehouse.inbound-receiving.events`. The `<entity>` segment is the
+raising aggregate, lowercase, no separators: `asn`, `dockappointment`,
+`receipt`. `subject` is the aggregate id; the Kafka key is shown per row.
+`data` is snake_case, optional fields are omitted when unset.
 
-| `type` | topic(s) | `subject` | `dataschema` |
-| --- | --- | --- | --- |
-| `com.warehouse.<sub>.<ctx>.<entity>.<EventName>` | `warehouse.<ctx>.events` | aggregate id | `urn:warehouse:<repo>:events:<EventName>:v1` |
+| `type` | Kafka key | `dataschema` |
+| --- | --- | --- |
+| `com.warehouse.wms.inbound-receiving.asn.ASNRegistered` | `asn_number` | `urn:warehouse:inbound-receiving:events:ASNRegistered:v1` |
+| `com.warehouse.wms.inbound-receiving.asn.ASNCancelled` | `asn_number` | `urn:warehouse:inbound-receiving:events:ASNCancelled:v1` |
+| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked` | `appointment_id` | `urn:warehouse:inbound-receiving:events:DockAppointmentBooked:v1` |
+| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCheckedIn` | `appointment_id` | `urn:warehouse:inbound-receiving:events:DockAppointmentCheckedIn:v1` |
+| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled` | `appointment_id` | `urn:warehouse:inbound-receiving:events:DockAppointmentCancelled:v1` |
+| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCompleted` | `appointment_id` | `urn:warehouse:inbound-receiving:events:DockAppointmentCompleted:v1` |
+| `com.warehouse.wms.inbound-receiving.receipt.ReceiptOpened` | `asn_number` | `urn:warehouse:inbound-receiving:events:ReceiptOpened:v1` |
+| `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived` | `asn_number` | `urn:warehouse:inbound-receiving:events:ReceiptLineReceived:v1` |
+| `com.warehouse.wms.inbound-receiving.receipt.ReceiptClosed` | `asn_number` | `urn:warehouse:inbound-receiving:events:ReceiptClosed:v1` |
+
+`ReceiptLineReceived` is the handover event inventory-storage consumes (Good
+quantities only, ADR 0003). `ReceiptClosed.discrepancies` is present and `[]`
+when everything matched. Golden exact-JSON tests pin every type.
 
 ### Consumed types
 
-FILL IN: one row per consumed event — the EXACT `type` string from the
-producer's catalogue (byte-identical; see the cross-service catalogue on the
-Event Standard page).
-
 | `type` | topic | producer |
 | --- | --- | --- |
+| `com.warehouse.wms.product-master.product.ProductRegistered` | `warehouse.product-master.events` | product-master |
+| `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | facility-layout |
+| `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | facility-layout |
+
+Facility-layout `data` is camelCase (`locationCode`, `role?`, `dockFlow?`, ...;
+an absent `role` means `Storage`); product-master `data` is snake_case
+(`sku`, `description`, `version`). Only `role=Dock` with `dockFlow` `Inbound`
+or `Both` becomes a door. Dedupe on `id` in the SAME DB transaction as the
+effect; commit the offset only after it (FetchMessage + CommitMessages).
 
 ## Consumer group id
 
-If this service consumes Kafka: state where the consumer group id comes
-from. It MUST be env-configurable, never a hardcoded string literal --
+Both consumers are optional local copies selected by mode env vars, default
+`permissive` (consumer not started): `PRODUCT_MODE` with group id env
+`PRODUCT_CONSUMER_GROUP`, and `DOCK_DOOR_MODE` with group id env
+`DOCK_DOOR_CONSUMER_GROUP`. Mode `kafka` with an unset group id is a BOOT
+ERROR. The groups are STABLE (the copy is a durable table, offsets are
+committed). Any consumer group id MUST be env-configurable, never a hardcoded string literal --
 `internal/architecture/fitness_test.go`'s
 TestKafkaConsumerGroupNeverHardcodedInline enforces this (a real incident:
 wes-work-planning's hardcoded group id let a locally-run e2e-tests process
 silently collide with the live in-cluster Deployment's consumer group on
 the shared fleet Kafka broker).
 
-If this consumer replays from FirstOffset on every start to build an
+If a consumer replays from FirstOffset on every start to build an
 in-memory read model (rather than resuming from a committed offset), the
 group id must additionally be UNIQUE PER PROCESS INSTANCE (hostname+PID+
 timestamp), not just configurable -- see HARNESS.md's Kafka section for
-why a shared group breaks that pattern specifically.
+why a shared group breaks that pattern specifically. (Not the case here: the
+copies live in Postgres.)
