@@ -420,10 +420,10 @@ jobs:
             --version "$CHART_VERSION" \
             --app-version "$CHART_VERSION" \
             -d /tmp/chart-out
-          echo "CHART_TGZ=/tmp/chart-out/inventory-storage-${CHART_VERSION}.tgz" >> "$GITHUB_ENV"
+          echo "CHART_TGZ=/tmp/chart-out/inbound-receiving-${CHART_VERSION}.tgz" >> "$GITHUB_ENV"
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
             -u "${{ github.actor }}" --password-stdin
-          helm push "/tmp/chart-out/inventory-storage-${CHART_VERSION}.tgz" \
+          helm push "/tmp/chart-out/inbound-receiving-${CHART_VERSION}.tgz" \
             oci://ghcr.io/claudioed
       - name: Create and push the git tag
         run: |

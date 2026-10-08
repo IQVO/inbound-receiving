@@ -3,8 +3,6 @@ name: how-to-add-an-integration-event
 description: Publish or consume a cross-service Kafka event: CloudEvents 1.0 type naming, AsyncAPI, transactional outbox, consumer-group rules. Use when touching internal/adapters kafka or outbox code, a publisher/consumer, or apis/asyncapi*.yaml.
 ---
 
-<!-- TEMPLATE NOTE (warehouse-harness-template v2): adapt every repo-specific example in this file (file paths, type names, field names) to THIS repo real code. Do not copy-paste verbatim. -->
-
 # How to add an integration event (publish and consume)
 
 Use when asked to publish a new cross-context integration event, or
@@ -17,14 +15,15 @@ shared-broker reality has already caused a real incident once.
 ### 1. Is it actually cross-service?
 
 Not every domain event this service raises belongs on the wire. Check
-`internal/adapters/outbound/kafka/publisher.go`'s doc comment — this repo
-forwards only `StockReserved`/`ReservationRevoked`; everything else is a
-local concern published only to the Postgres outbox
-(`internal/adapters/outbound/postgres/event_publisher.go`) for audit, not
-broadcast. Before adding a new event to the Kafka publisher, confirm a
-sibling context genuinely needs to react to it — check
-`docs/docs/ddd/context-map.md` or the equivalent ubiquitous-language doc
-for who's actually downstream.
+`internal/adapters/outbound/kafka/encoder.go`'s doc comment and
+`apis/asyncapi.yaml` — this repo publishes exactly the nine events of the
+Asn, DockAppointment and Receipt aggregates to
+`warehouse.inbound-receiving.events`, always through the transactional outbox
+(`internal/adapters/outbound/postgres/outbox_repository.go`), never straight
+to Kafka. `TestEventCatalogueMatchesContract` fails when the encoder and the
+contract disagree. Before adding a new event, confirm a sibling context
+genuinely needs to react to it — check `docs/adr/0003-local-copies-and-handover.md`
+for who is downstream today.
 
 ### 2. Envelope: CloudEvents 1.0, structured mode — MANDATORY
 
@@ -52,10 +51,10 @@ shape, no dual-write, no `EVENT_ENVELOPE_MODE` toggle (see
 `type` follows the platform-wide reverse-DNS convention
 `com.warehouse.<subdomain>.<bounded-context>.<entity>.<EventName>`, all
 lowercase except the final PascalCase event name — e.g.
-`com.warehouse.wms.inventory-storage.reservation.ReservationRevoked`. Take
-the subdomain/context segment from the subdomain table on warehouse-docs'
-Event Standard page (`docs/strategic-design/event-standard-cloudevents.md`);
-don't guess it. The same `type` is used on the analytics topic; only
+`com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived`. The
+context segment and the `<entity>` list (`asn`, `dockappointment`, `receipt`)
+are fixed by `docs/adr/0004-cloudevents-envelope-and-type-catalogue.md`;
+don't guess them. The same `type` is used on the analytics topic; only
 `dataschema` changes (`…:analytics:<EventName>:v1`).
 
 ### 3. Implementation
@@ -70,16 +69,16 @@ the adapter layer). In the Kafka publisher adapter:
   ```go
   value, err := cloudevents.New(cloudevents.Spec{
       ID:        evt.ID(),            // minted once; the outbox row stores it
-      Entity:    "reservation",
-      EventName: "ReservationRevoked",
-      Subject:   evt.ReservationID(),
+      Entity:    "receipt",
+      EventName: "ReceiptLineReceived",
+      Subject:   string(evt.ReceiptID()),
       Time:      evt.OccurredAt(),
       Stream:    cloudevents.StreamEvents,
       Version:   1,
       Data:      payload,              // unchanged wire payload
   })
   msg := kafkago.Message{
-      Key:     []byte(evt.ReservationID()),
+      Key:     []byte(evt.AsnNumber()), // asn_number for asn.* and receipt.*
       Value:   value,
       Headers: append(traceHeaders, cloudevents.ContentTypeHeader()),
   }
@@ -96,21 +95,18 @@ the adapter layer). In the Kafka publisher adapter:
   CloudEvents envelope schema with every attribute required), with its
   exact `type` const and `dataschema`, matching the entity-grouping
   convention already there (group by aggregate, not chronologically)
-- Regenerate the AsyncAPI HTML reference:
-  ```bash
-  cd docs && npm run gen-async-docs:all   # or gen-async-docs, check package.json
-  ```
-  This repo's `docs-api-drift` CI job fails the PR if the generated
-  `static/asyncapi/<ctx>/` output doesn't match a fresh regen — a nullable
-  field change here has bitten before.
+- Lint it: `spectral lint apis/asyncapi.yaml --ruleset .spectral.asyncapi.yaml`.
+  The generated AsyncAPI HTML reference belongs to the docs-site brief and does
+  not exist yet, so there is nothing to regenerate.
 
 ### 5. Test
 
 Add a golden exact-JSON unit test for the new `type` asserting every
 CloudEvents attribute, the `type` string and the `content-type` header,
-against a fake `Writer` (see `publisher_test.go` — never a real broker in
+against a fake `Writer` (see `internal/adapters/outbound/kafka/encoder_test.go` — never a real broker in
 a unit test). If this event
-now needs a `_integration_test.go` asserting real delivery, it MUST use
+now needs real-delivery coverage, extend
+`internal/adapters/outbound/outbox/relay_integration_test.go`; it MUST use
 testcontainers (see the fitness test `TestKafkaIntegrationTestsUseTestcontainers`
 in `internal/architecture/` — a skip-gated `KAFKA_BROKERS` test or a
 hardcoded `localhost:9092` fails CI).
@@ -120,10 +116,9 @@ hardcoded `localhost:9092` fails CI).
 ### 1. Never import the sibling's Go packages
 
 This service knows a sibling's topic name, its exact CloudEvents `type`
-strings and payload shape ONLY — never its Go types. See `internal/adapters/outbound/facilitycache/consumer.go`'s
-own doc comment: "This service has no business knowing anything else
-about that context beyond this topic name and the envelope/payload shapes
-below." Hand-mirror the payload struct locally; do not add a Go module
+strings and payload shape ONLY — never its Go types. See `internal/adapters/inbound/kafka/dock_door_consumer.go`'s
+`locationSlotData`: it restates facility-layout's camelCase payload locally,
+with the topic name and the exact `type` strings, and nothing else. Hand-mirror the payload struct locally; do not add a Go module
 dependency on the sibling repo (an architecture fitness test in most
 repos in this fleet would catch that anyway for the stricter contexts —
 check this repo's own `internal/architecture/` for a
@@ -141,8 +136,8 @@ if err != nil { // errors.Is(err, cloudevents.ErrNotCloudEvent): deterministic p
     return commit(msg) // never crash, never block the partition
 }
 switch evt.Type() {
-case "com.warehouse.wes.fulfillment-execution.task.TaskCompleted": // exact, byte-identical to the producer
-    var p taskCompletedData // local mirror of the payload
+case inboundkafka.TypeProductRegistered: // exact, byte-identical to the producer
+    var p productRegisteredData // local mirror of the payload
     if err := evt.DataAs(&p); err != nil { /* poison: skip as above */ }
     // dedupe on evt.ID(); use evt.Time() / evt.Subject() from attributes
 default:
@@ -162,16 +157,17 @@ was learned from a real incident (wes-work-planning#67).
 
 **Pattern A — long-lived, single-instance consumer group (a named
 constant).** Use when exactly ONE instance of this consumer ever runs at
-a time (e.g. this service's own analytics projector). The group id is a
-plain named constant (`AnalyticsConsumerGroup`), reused across restarts —
+a time (this service's two local-copy consumers). The group id is read from
+configuration (`PRODUCT_CONSUMER_GROUP`, `DOCK_DOOR_CONSUMER_GROUP`; unset with
+the mode `kafka` is a boot error) and reused across restarts —
 that's correct because Kafka's committed-offset resume semantics are
 EXACTLY what you want: pick up where the single instance left off.
 
 **Pattern B — per-process-unique consumer group (a generated id).** Use
 when this consumer rebuilds a complete read model from a topic's FULL
 history on every start (an event-sourced local cache, not a work queue) —
-see `facilitycache/consumer.go`'s `consumerGroupPrefix` +
-`uniqueConsumerGroup()`. The group id MUST be unique per process instance
+this repo has no such consumer, because its local copies are upserts of
+discrete registrations, not a replayed read model. The group id MUST be unique per process instance
 (hostname+PID+timestamp), NEVER a fixed shared string. Consumer group
 offsets are shared infrastructure state: a brand-new process joining a
 group an EARLIER instance already consumed resumes from that instance's

@@ -5,12 +5,10 @@ disable-model-invocation: true
 argument-hint: "[git range]"
 ---
 
-<!-- TEMPLATE NOTE (warehouse-harness-template v2): adapt every repo-specific example in this file (file paths, type names, field names) to THIS repo real code. Do not copy-paste verbatim. -->
-
 Perform a ubiquitous-language drift review of the current changes (or
 `$ARGUMENTS` if given), comparing new/changed code against
 `.claude/rules/domain-model.md` (or this repo's equivalent doc — check
-`AGENTS.md`/`CLAUDE.md` for where the ubiquitous language lives if that
+`SPEC.md` and `docs/adr/` for where the ubiquitous language lives if that
 file doesn't exist here).
 
 Ubiquitous language drift is the quiet failure mode DDD is supposed to
@@ -22,16 +20,16 @@ readers can no longer map code to domain conversation.
 
 1. **A new type/field/method that duplicates an existing domain concept
    under a different name.** If the domain-model doc already names a
-   concept (e.g. this repo's "Usable inventory" — on-hand minus active
-   reservations minus held/damaged), a new calculation that computes the
-   same thing under a different name (`AvailableQty`, `FreeStock`, etc.)
+   concept (e.g. this repo's "Discrepancy" — a line's Short/Over/Damaged
+   difference found when a receipt closes), a new calculation that computes
+   the same thing under a different name (`Variance`, `MismatchQty`, etc.)
    is drift — even if the math is correct, it fragments the vocabulary.
    Flag it and point at the existing name.
 2. **A domain type/method named in implementation terms instead of
    domain terms.** `internal/domain/` code should read like the ubiquitous
    language, not like database/HTTP vocabulary — a method called
    `UpdateRow` or `PatchState` where the domain-model doc would call the
-   equivalent operation `Stow`/`Revoke`/`RunCycleCount` is drift, and the
+   equivalent operation `BeginReceiving`/`Complete`/`ReceiveLine` is drift, and the
    fitness-test suite won't catch this because it's a naming problem, not
    an import-direction problem.
 3. **An invariant enforced in code that the domain-model doc doesn't
@@ -42,16 +40,17 @@ readers can no longer map code to domain conversation.
    accidentally remove it thinking it's dead code.
 4. **A value object that should be closed but was implemented open (or
    vice versa).** This repo's own domain-model doc calls out
-   `HandlingTag` as a deliberately CLOSED enum (unlike facility-layout's
-   open `LocationType`) because it carries real regulatory meaning —
+   `Condition` (`Good` | `Damaged`) as a deliberately CLOSED enum, because only
+   Good units are handed to inventory-storage (unlike facility-layout's open
+   `LocationType`) —
    check any new categorical field against whether the domain actually
    wants an open or closed set, and flag a mismatch either direction.
 5. **A cross-aggregate rule implemented as a cross-aggregate call instead
    of an explicit local check, or vice versa**, per whatever this repo's
    own domain-model doc says about which invariants are local vs. which
-   legitimately need external state (e.g. this repo's DOT segregation
-   check is explicitly documented as "purely LOCAL... no cross-context
-   call" — a change that quietly makes it call out to another service
+   legitimately need external state (e.g. SKU and door existence are checked only against the
+   LOCAL copies `known_skus` and `dock_doors`, never by a call to
+   product-master or facility-layout, per `docs/adr/0003-local-copies-and-handover.md` — a change that quietly makes it call out to another service
    would be a real regression worth flagging even if functionally it
    still "works").
 6. **New terminology introduced without updating the domain-model doc.**

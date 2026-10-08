@@ -3,12 +3,10 @@ name: how-to-test
 description: Write or review tests and diagnose a failing coverage, mutation, bdd or integration CI job: the four test layers, the 90% gate, gremlins threshold semantics, the testcontainers rule. Use when adding tests, killing a surviving mutant, or fixing a red check.
 ---
 
-<!-- TEMPLATE NOTE (warehouse-harness-template v2): adapt every repo-specific example in this file (file paths, type names, field names) to THIS repo real code. Do not copy-paste verbatim. -->
-
 # How to test
 
 Use when writing or reviewing tests in this repo, or diagnosing a failing
-`coverage`/`mutation-fast`/`bdd`/`integration` CI job. This fleet's quality
+`coverage`/`mutation`/`bdd`/`integration` CI job. This fleet's quality
 bar is layered — passing `go test` is necessary but is the WEAKEST signal
 of the four; mutation testing exists specifically because green tests can
 assert nothing.
@@ -22,7 +20,7 @@ assert nothing.
    `./internal/domain/...,./internal/application/...`) — proves lines
    executed. Proves nothing about whether the test asserted the right
    thing.
-3. **Mutation testing** (`make mutation-fast`, gremlins) — proves the
+3. **Mutation testing** (`make mutation`, gremlins) — proves the
    tests actually ASSERT, not merely execute. A mutant is a deliberately
    broken version of the code (`<` -> `<=`, `+` -> `-`, etc.); if the test
    suite still passes against the mutant, it "survived" (LIVED) — meaning
@@ -102,9 +100,9 @@ skip-gated test silently skips in CI and proves nothing there, while
 testcontainers actually exercises the assertions on the runner. A fitness
 test per technology enforces it (`TestKafkaIntegrationTestsUseTestcontainers`,
 `TestPostgresIntegrationTestsUseTestcontainers`). Share one container per
-package through a helper (e.g. an `outboxDB(t)` that runs
+package through a helper (e.g. an `startPostgresPool(t)` that runs
 `tcpostgres.Run` -> `ConnectionString` -> migrate -> pool -> `t.Cleanup`). See
-`internal/adapters/outbound/facilitycache/consumer_integration_test.go`
+`internal/adapters/inbound/kafka/consumers_integration_test.go`
 for the working recipe (unique topic per test, one shared container per
 package, explicit `CreateTopics` + poll for the partition leader before
 the first read/write).
@@ -115,6 +113,6 @@ the first read/write).
 make check-all   # check + coverage + arch-test + bdd (the full local gate)
 ```
 
-If `check-all` doesn't include `mutation-fast`/`vuln` locally, run them
+If `check-all` doesn't include `mutation`/`vuln` locally, run them
 explicitly too — CI runs them even when the local gate doesn't, so a PR
 can pass your local check and still go red in CI otherwise.
