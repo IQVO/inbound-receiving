@@ -66,6 +66,15 @@ unset group is a boot error. Every other type on those topics is ignored and a
 message that is not a valid CloudEvent is logged and skipped. The full list with
 producer use cases and consumers is on [Domain events](/docs/ddd/domain-events).
 
+## Analytics stream
+
+Every event above is also written to `warehouse.inbound-receiving.analytics`
+(DLQ `warehouse.inbound-receiving.analytics.dlq`) with the same `type`, `id`,
+subject, key and payload; only the `dataschema` differs
+(`urn:warehouse:inbound-receiving:analytics:<EventName>:v1`). It is consumed
+only by this service's `inbound-projector` (group from env
+`ANALYTICS_CONSUMER_GROUP`) and is not an integration contract (ADR 0006).
+
 ## Consumer rules
 
 - Dispatch on the **full** `type`; ignore unknown types.

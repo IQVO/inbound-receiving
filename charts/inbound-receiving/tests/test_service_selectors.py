@@ -11,11 +11,10 @@ Deployment. This test fails if that ever stops being true.
 
 It mirrors product-master's charts/.../tests/test_service_selectors.py (and
 warehouse-infra's scripts/check-chart-selectors.py), restricted to the
-components this chart has: api (always), mcp (optional, default off) and
-frontend (optional, default off). The frontend is the nginx pod serving the
-inbound_mfe remote: its own workload, component=frontend, a ClusterIP Service,
-never routed by this chart (warehouse-infra's Nginx web gateway owns
-/mfes/inbound-receiving/).
+components this chart has: api (always), mcp (optional, default off), frontend (optional, default off) and the
+analytics read side (ADR 0006: analytics-projector, analytics-reports; optional, default off). The frontend is the
+nginx pod serving the inbound_mfe remote: its own workload, component=frontend, a ClusterIP Service,
+never routed by this chart (warehouse-infra's Nginx web gateway owns /mfes/inbound-receiving/).
 
 Run: python3 charts/inbound-receiving/tests/test_service_selectors.py
 Needs: helm, PyYAML.
@@ -44,6 +43,9 @@ ENABLE_EVERYTHING = BASE + [
     "--set", "kafka.enabled=true",
     "--set", "gatewayApi.enabled=true",
     "--set", "ingress.enabled=true",
+    "--set", "analytics.enabled=true",
+    "--set", "analytics.database.projectorUrl=postgres://projector@example.invalid:5432/a",
+    "--set", "analytics.database.reportsUrl=postgres://reports@example.invalid:5432/a",
 ]
 
 
@@ -130,6 +132,7 @@ def check_components(docs: list[dict], failures: list[str]) -> None:
     for d in docs:
         if d.get("kind") in {"Ingress", "HTTPRoute"} and "frontend" in d["metadata"]["name"]:
             failures.append(f"{d['kind']} {d['metadata']['name']}: frontend routing must not live in this chart")
+    check_analytics(services, deployments, failures)
 
     # Every Deployment's own selector must pin a component too, and be
     # satisfied by its pod labels.
@@ -166,6 +169,42 @@ def check_components(docs: list[dict], failures: list[str]) -> None:
         failures.append(f"the api Deployment renders env vars twice: {duplicates}")
 
 
+def check_analytics(services: dict, deployments: dict, failures: list[str]) -> None:
+    """ADR 0006: the projector and the reports binaries, each its own component."""
+    projector, reports = f"{RELEASE}-projector", f"{RELEASE}-reports"
+    for name, component, command in (
+        (projector, "analytics-projector", ["/app/inbound-projector"]),
+        (reports, "analytics-reports", ["/app/inbound-reports"]),
+    ):
+        dep = deployments.get(name)
+        if dep is None:
+            failures.append(f"the {component} Deployment was not rendered with analytics.enabled=true")
+            continue
+        if dep["spec"]["selector"]["matchLabels"].get("app.kubernetes.io/component") != component:
+            failures.append(f"Deployment {name} must pin component={component}")
+        container = dep["spec"]["template"]["spec"]["containers"][0]
+        if container.get("command") != command:
+            failures.append(f"Deployment {name} must run {command}")
+        env = set(env_names(dep))
+        if "ANALYTICS_DATABASE_URL" not in env or "DATABASE_URL" in env:
+            failures.append(f"Deployment {name} must read ANALYTICS_DATABASE_URL and never the OLTP DATABASE_URL")
+    if projector in deployments and not {"KAFKA_BROKERS", "ANALYTICS_CONSUMER_GROUP"} <= set(env_names(deployments[projector])):
+        failures.append("the projector needs KAFKA_BROKERS and its fixed ANALYTICS_CONSUMER_GROUP")
+    if reports in deployments:
+        ref = next((e for e in deployments[reports]["spec"]["template"]["spec"]["containers"][0]["env"]
+                    if e["name"] == "ANALYTICS_DATABASE_URL"), {})
+        if ref.get("valueFrom", {}).get("secretKeyRef", {}).get("key") != "ANALYTICS_READER_DATABASE_URL":
+            failures.append("the reports Deployment must be fed the READER DSN")
+        if "KAFKA_BROKERS" in env_names(deployments[reports]):
+            failures.append("the reports Deployment never dials Kafka")
+    if projector in services:
+        failures.append("the projector has no Service (it serves only probes)")
+    if reports not in services:
+        failures.append("the reports Service was not rendered")
+    elif selector_of(services[reports]).get("app.kubernetes.io/component") != "analytics-reports":
+        failures.append("the reports Service selector must pin component=analytics-reports")
+
+
 def check_refusals(failures: list[str]) -> None:
     kafka_modes = BASE + ["--set", "config.productMode=kafka", "--set", "config.productConsumerGroup=g"]
     for label, args, needle in (
@@ -180,6 +219,8 @@ def check_refusals(failures: list[str]) -> None:
         ("a kafka consumer mode without kafka", kafka_modes, "PRODUCT_MODE/DOCK_DOOR_MODE=kafka requires KAFKA_BROKERS"),
         ("a product group in permissive mode", BASE + ["--set", "config.productConsumerGroup=g"], "would silently not start"),
         ("a dock-door group in permissive mode", BASE + ["--set", "config.dockDoorConsumerGroup=g"], "would silently not start"),
+        ("analytics without a DSN source", BASE + ["--set", "analytics.enabled=true", "--set", "kafka.enabled=true"], "neither analytics.database.projectorUrl"),
+        ("analytics without kafka", BASE + ["--set", "analytics.enabled=true", "--set", "analytics.database.existingSecret=s"], "analytics.enabled is true but kafka.enabled is false"),
     ):
         result = helm_template(args)
         if result.returncode == 0 or needle not in result.stderr:
@@ -193,7 +234,8 @@ def main() -> int:
 
     # Default values must not deploy the MCP component, an HPA or a route.
     defaults = render(BASE)
-    stray = [d["metadata"]["name"] for d in defaults if d["metadata"]["name"].endswith(("-mcp", "-frontend"))]
+    stray = [d["metadata"]["name"] for d in defaults
+             if d["metadata"]["name"].endswith(("-mcp", "-frontend", "-projector", "-reports", "-analytics"))]
     stray += [d["kind"] for d in defaults if d.get("kind") in {"HorizontalPodAutoscaler", "Ingress", "HTTPRoute"}]
     if stray:
         failures.append(f"optional components rendered with default values: {stray}")
@@ -211,9 +253,10 @@ def main() -> int:
             print(f"FAIL: {f}")
         return 1
 
-    print("PASS: every Service selects exactly one Deployment (api, mcp, frontend); mcp, frontend, HPA and routes are off by "
+    print("PASS: every Service selects exactly one Deployment (api, mcp, frontend, analytics-reports); mcp, frontend, analytics, HPA and routes are off by "
           "default; the chart refuses to render without a database source, with an unknown publisher/mode, "
-          "with a Kafka mode but no broker or no consumer group, or with a group set but its consumer off")
+          "with a Kafka mode but no broker or no consumer group, with a group set but its consumer off, "
+          "or with analytics but no analytical DSN or no Kafka")
     return 0
 
 

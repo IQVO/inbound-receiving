@@ -60,6 +60,7 @@ sidebar_position: 1
 | `Appointments` | `POST /appointments`, `GET /appointments`, `GET /appointments/{appointmentId}`, `POST /appointments/{appointmentId}/check-in`, `POST /appointments/{appointmentId}/cancel` |
 | `Receipts` | `POST /receipts`, `GET /receipts`, `GET /receipts/{receiptId}`, `POST /receipts/{receiptId}/lines`, `POST /receipts/{receiptId}/close` |
 | `Docks` | `GET /docks` |
+| `Reports` | `GET /reports/receiving-performance`, `GET /reports/freshness` (served by the separate `inbound-reports` binary on `:8092`, cluster-internal, ADR 0006) |
 | `Health` | `GET /healthz`, `GET /readyz` |
 
 `GET /metrics` (Prometheus) is served by the binary but is not part of

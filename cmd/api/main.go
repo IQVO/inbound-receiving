@@ -180,7 +180,7 @@ type adapters struct {
 func (a adapters) writer() usecases.Writer {
 	return usecases.Writer{
 		Asns: a.asns, Appointments: a.appointments, Receipts: a.receipts,
-		Outbox: a.outbox, Encoder: outboundkafka.NewEncoder(), UoW: a.uow,
+		Outbox: a.outbox, Encoder: outboundkafka.NewFanoutEncoder(), UoW: a.uow,
 		Clock: clock.System{}, IDs: idgen.UUID{},
 	}
 }
@@ -374,7 +374,7 @@ func startOutboxRelay(store outboxrelay.Store, logger *slog.Logger) (*worker, fu
 	interval := parseRelayInterval(os.Getenv("OUTBOX_RELAY_INTERVAL"), logger)
 	relay := outboxrelay.NewRelay(store, sink, logger, outboxrelay.WithInterval(interval))
 
-	logger.Info("outbox relay running", "publisher", mode, "interval", interval, "topic", outboundkafka.Topic)
+	logger.Info("outbox relay running", "publisher", mode, "interval", interval, "topics", []string{outboundkafka.Topic, outboundkafka.AnalyticsTopic})
 	w := startWorker(logger, "outbox-relay", relay.Run, func() {})
 	go func() {
 		<-w.done

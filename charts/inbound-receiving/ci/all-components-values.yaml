@@ -27,5 +27,11 @@ autoscaling:
     enabled: true
 mcp:
   enabled: true
+analytics:
+  enabled: true
+  database:
+    # Dummy DSNs, no password (a real one comes from a Secret in the cluster).
+    projectorUrl: "postgres://projector@example.invalid:5432/inbound_receiving_analytics"
+    reportsUrl: "postgres://reports@example.invalid:5432/inbound_receiving_analytics"
 frontend:
   enabled: true

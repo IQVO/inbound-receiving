@@ -86,12 +86,17 @@ Payload rules:
 Every other type on those topics is ignored. A message that is not a valid
 CloudEvent is logged and skipped, never retried forever.
 
-### Analytics topic (later phase)
+### Analytics topic (ADR 0006)
 
-The name `warehouse.inbound-receiving.analytics` is reserved. The analytics
-read side (same types, same `id`, `dataschema`
-`urn:warehouse:inbound-receiving:analytics:<EventName>:v1`) is added by its own
-ADR in a later phase; it is not part of this contract yet.
+Every published event above is ALSO written, in the same transaction and under
+the same `id`, to `warehouse.inbound-receiving.analytics` (dead-letter topic
+`warehouse.inbound-receiving.analytics.dlq`). The `type`, `subject`, Kafka key
+and payload are identical to the integration message; only the `dataschema`
+differs: `urn:warehouse:inbound-receiving:analytics:<EventName>:v1`. Only this
+service's `cmd/inbound-projector` consumes it (consumer group from env
+`ANALYTICS_CONSUMER_GROUP`); it is not an integration contract, and other
+contexts keep reading `warehouse.inbound-receiving.events`. The projection and
+its report are specified in ADR 0006.
 
 ## Consequences
 

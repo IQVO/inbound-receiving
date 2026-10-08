@@ -1,0 +1,25 @@
+---
+id: reports
+title: "Reports"
+description: "Reports"
+custom_edit_url: null
+---
+
+
+
+The read-only receiving performance and accuracy report of the analytics
+read side (ADR 0006), served by the separate `inbound-reports` binary
+(port 8092, cluster-internal Service `<release>-reports`) from the
+analytical database, never from the OLTP API. Like every sibling's
+reports API its JSON is snake_case.
+
+
+
+
+```mdx-code-block
+import DocCardList from '@theme/DocCardList';
+import {useCurrentSidebarCategory} from '@docusaurus/theme-common';
+
+<DocCardList items={useCurrentSidebarCategory().items}/>
+```
+      

@@ -81,7 +81,7 @@ Fully qualified name of the MCP server deployment/service.
 {{- end }}
 
 {{/*
-Image reference shared by every Deployment (api, mcp).
+Image reference shared by every Deployment (api, mcp, analytics-projector, analytics-reports).
 */}}
 {{- define "inbound-receiving.image" -}}
 {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
@@ -154,5 +154,51 @@ consumer never starts). Refuse it so the intent is never lost.
 {{- end -}}
 {{- if and .Values.config.dockDoorConsumerGroup (ne .Values.config.dockDoorMode "kafka") -}}
 {{- fail "config.dockDoorConsumerGroup is set but config.dockDoorMode is not \"kafka\" — the dock-door consumer would silently not start. Set dockDoorMode=kafka or clear the group." -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Fully qualified name of the analytics projector deployment (ADR 0006).
+*/}}
+{{- define "inbound-receiving.projectorFullname" -}}
+{{- include "inbound-receiving.fullname" . }}-projector
+{{- end }}
+
+{{/*
+Fully qualified name of the analytics reports deployment/service (ADR 0006).
+The reports Service is cluster-internal (component=analytics-reports); nothing
+in this chart routes external traffic to it (warehouse-infra owns the edge).
+*/}}
+{{- define "inbound-receiving.reportsFullname" -}}
+{{- include "inbound-receiving.fullname" . }}-reports
+{{- end }}
+
+{{/*
+Name of the Secret holding the analytical DSNs: the operator's own
+(analytics.database.existingSecret, keys ANALYTICS_DATABASE_URL and
+ANALYTICS_READER_DATABASE_URL) or the one this chart creates.
+*/}}
+{{- define "inbound-receiving.analyticsSecretName" -}}
+{{- if .Values.analytics.database.existingSecret }}
+{{- .Values.analytics.database.existingSecret }}
+{{- else }}
+{{- include "inbound-receiving.fullname" . }}-analytics
+{{- end }}
+{{- end }}
+
+{{/*
+analytics.enabled needs an analytical DSN source (both binaries refuse to boot
+without ANALYTICS_DATABASE_URL) and a broker (the projector consumes
+warehouse.inbound-receiving.analytics from kafka.brokers). Fail at render
+instead of crash-looping. Events only reach the analytics topic when
+config.eventPublisher is "kafka"; that is documented, not enforced, since the
+projector is harmless without events.
+*/}}
+{{- define "inbound-receiving.requireAnalyticsConfig" -}}
+{{- if not (or .Values.analytics.database.projectorUrl .Values.analytics.database.existingSecret) -}}
+{{- fail "analytics.enabled is true but neither analytics.database.projectorUrl nor analytics.database.existingSecret is set — the projector and reports binaries refuse to boot without ANALYTICS_DATABASE_URL." -}}
+{{- end -}}
+{{- if not .Values.kafka.enabled -}}
+{{- fail "analytics.enabled is true but kafka.enabled is false — the projector consumes warehouse.inbound-receiving.analytics and needs kafka.brokers. Set kafka.enabled=true." -}}
 {{- end -}}
 {{- end -}}

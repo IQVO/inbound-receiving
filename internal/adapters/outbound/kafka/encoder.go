@@ -160,13 +160,18 @@ func (e *Encoder) EncodeReceipt(events ...receipt.Event) ([]outbox.Message, erro
 }
 
 func encodeAll[T interface{ EventName() string }](e *Encoder, events []T, toRow func(T) (row, error)) ([]outbox.Message, error) {
-	newID := e.NewID
+	return encodeStream(e.NewID, e.Topic, Topic, cloudevents.StreamEvents, events, toRow)
+}
+
+// encodeStream encodes events in order onto one stream: each under a freshly
+// minted id, to override (or defaultTopic when empty).
+func encodeStream[T interface{ EventName() string }](newID func() string, override, defaultTopic, stream string, events []T, toRow func(T) (row, error)) ([]outbox.Message, error) {
 	if newID == nil {
 		newID = uuid.NewString
 	}
-	topic := e.Topic
+	topic := override
 	if topic == "" {
-		topic = Topic
+		topic = defaultTopic
 	}
 	out := make([]outbox.Message, 0, len(events))
 	for _, ev := range events {
@@ -174,7 +179,7 @@ func encodeAll[T interface{ EventName() string }](e *Encoder, events []T, toRow 
 		if err != nil {
 			return nil, err
 		}
-		msg, err := build(r, newID(), topic)
+		msg, err := build(r, newID(), topic, stream)
 		if err != nil {
 			return nil, err
 		}
@@ -183,14 +188,14 @@ func encodeAll[T interface{ EventName() string }](e *Encoder, events []T, toRow 
 	return out, nil
 }
 
-func build(r row, id, topic string) (outbox.Message, error) {
+func build(r row, id, topic, stream string) (outbox.Message, error) {
 	value, err := cloudevents.New(cloudevents.Spec{
 		ID:        id,
 		Entity:    r.entity,
 		EventName: r.eventName,
 		Subject:   r.subject,
 		Time:      r.at,
-		Stream:    cloudevents.StreamEvents,
+		Stream:    stream,
 		Version:   schemaVersion,
 		Data:      r.data,
 	})
@@ -204,7 +209,7 @@ func build(r row, id, topic string) (outbox.Message, error) {
 		EventType:  cloudevents.Type(r.entity, r.eventName),
 		Subject:    r.subject,
 		Key:        []byte(r.key),
-		DataSchema: cloudevents.DataSchema(cloudevents.StreamEvents, r.eventName, schemaVersion),
+		DataSchema: cloudevents.DataSchema(stream, r.eventName, schemaVersion),
 		Value:      value,
 		Headers:    []outbox.Header{{Key: ct.Key, Value: string(ct.Value)}},
 	}, nil
