@@ -27,3 +27,5 @@ autoscaling:
     enabled: true
 mcp:
   enabled: true
+frontend:
+  enabled: true
