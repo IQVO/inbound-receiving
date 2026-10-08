@@ -11,7 +11,11 @@ Deployment. This test fails if that ever stops being true.
 
 It mirrors product-master's charts/.../tests/test_service_selectors.py (and
 warehouse-infra's scripts/check-chart-selectors.py), restricted to the
-components this chart has: api (always) and mcp (optional, default off).
+components this chart has: api (always), mcp (optional, default off) and
+frontend (optional, default off). The frontend is the nginx pod serving the
+inbound_mfe remote: its own workload, component=frontend, a ClusterIP Service,
+never routed by this chart (warehouse-infra's Nginx web gateway owns
+/mfes/inbound-receiving/).
 
 Run: python3 charts/inbound-receiving/tests/test_service_selectors.py
 Needs: helm, PyYAML.
@@ -30,6 +34,7 @@ RELEASE = "inbound-receiving"
 BASE = ["--set", "database.url=postgres://u@example.invalid:5432/db"]
 ENABLE_EVERYTHING = BASE + [
     "--set", "mcp.enabled=true",
+    "--set", "frontend.enabled=true",
     "--set", "autoscaling.api.enabled=true",
     "--set", "config.eventPublisher=kafka",
     "--set", "config.productMode=kafka",
@@ -109,6 +114,23 @@ def check_components(docs: list[dict], failures: list[str]) -> None:
             if want not in mcp_env:
                 failures.append(f"the MCP Deployment does not render {want}")
 
+    frontend = f"{RELEASE}-frontend"
+    if frontend not in services:
+        failures.append("the frontend Service was not rendered with frontend.enabled=true")
+    else:
+        if selector_of(services[frontend]).get("app.kubernetes.io/component") != "frontend":
+            failures.append("the frontend Service selector must pin component=frontend")
+        if services[frontend]["spec"].get("type") != "ClusterIP":
+            failures.append("the frontend Service must be ClusterIP")
+    if frontend not in deployments:
+        failures.append("the frontend Deployment was not rendered with frontend.enabled=true")
+    elif {"DATABASE_URL", "KAFKA_BROKERS"} & set(env_names(deployments[frontend])):
+        failures.append("the frontend Deployment must not get database/Kafka env (it serves static bytes)")
+    # Frontend routing belongs to warehouse-infra's Nginx web gateway, not this chart.
+    for d in docs:
+        if d.get("kind") in {"Ingress", "HTTPRoute"} and "frontend" in d["metadata"]["name"]:
+            failures.append(f"{d['kind']} {d['metadata']['name']}: frontend routing must not live in this chart")
+
     # Every Deployment's own selector must pin a component too, and be
     # satisfied by its pod labels.
     for name, dep in deployments.items():
@@ -171,7 +193,7 @@ def main() -> int:
 
     # Default values must not deploy the MCP component, an HPA or a route.
     defaults = render(BASE)
-    stray = [d["metadata"]["name"] for d in defaults if d["metadata"]["name"].endswith("-mcp")]
+    stray = [d["metadata"]["name"] for d in defaults if d["metadata"]["name"].endswith(("-mcp", "-frontend"))]
     stray += [d["kind"] for d in defaults if d.get("kind") in {"HorizontalPodAutoscaler", "Ingress", "HTTPRoute"}]
     if stray:
         failures.append(f"optional components rendered with default values: {stray}")
@@ -189,7 +211,7 @@ def main() -> int:
             print(f"FAIL: {f}")
         return 1
 
-    print("PASS: every Service selects exactly one Deployment (api, mcp); mcp, HPA and routes are off by "
+    print("PASS: every Service selects exactly one Deployment (api, mcp, frontend); mcp, frontend, HPA and routes are off by "
           "default; the chart refuses to render without a database source, with an unknown publisher/mode, "
           "with a Kafka mode but no broker or no consumer group, or with a group set but its consumer off")
     return 0
