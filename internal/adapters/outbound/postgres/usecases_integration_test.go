@@ -27,7 +27,7 @@ import (
 func newWriter(pool *pgxpool.Pool) usecases.Writer {
 	return usecases.Writer{
 		Asns: postgres.NewAsnRepo(pool), Appointments: postgres.NewAppointmentRepo(pool), Receipts: postgres.NewReceiptRepo(pool),
-		Outbox: postgres.NewOutboxRepo(pool), Encoder: outboundkafka.NewEncoder(), UoW: postgres.NewUnitOfWork(pool),
+		Outbox: postgres.NewOutboxRepo(pool), Encoder: outboundkafka.NewFanoutEncoder(), UoW: postgres.NewUnitOfWork(pool),
 		Clock: clock.System{}, IDs: idgen.UUID{},
 	}
 }
@@ -73,8 +73,8 @@ func TestUseCasesCommitStateAndOutboxAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	prefix := "com.warehouse.wms.inbound-receiving.asn."
-	if got := outboxTypes(t, pool); len(got) != 2 || got[0] != prefix+"ASNRegistered" || got[1] != prefix+"ASNCancelled" {
-		t.Fatalf("outbox = %v", got)
+	if got := outboxTypes(t, pool); len(got) != 4 || got[0] != prefix+"ASNRegistered" || got[2] != prefix+"ASNCancelled" || got[1] != got[0] || got[3] != got[2] {
+		t.Fatalf("outbox = %v (want each event on both topics)", got)
 	}
 
 	boom := errors.New("boom")
@@ -95,7 +95,7 @@ func TestUseCasesCommitStateAndOutboxAtomically(t *testing.T) {
 	if _, err := w.Asns.Get(ctx, "ASN-2"); !errors.Is(err, repository.ErrAsnNotFound) {
 		t.Fatal("the ASN of a rolled-back unit of work survived")
 	}
-	if got := outboxTypes(t, pool); len(got) != 2 {
+	if got := outboxTypes(t, pool); len(got) != 4 {
 		t.Fatalf("the outbox row of a rolled-back unit of work survived: %v", got)
 	}
 }
@@ -304,8 +304,8 @@ func TestIdempotencyStoreJoinedUseCaseRefusalStaysStorable(t *testing.T) {
 	if err != nil || outcome != idempotency.Replayed || string(resp.Body) != "receipt-already-open" {
 		t.Fatalf("replayed refusal: %+v %v %v", resp, outcome, err)
 	}
-	if got := outboxTypes(t, pool); len(got) != 2 {
-		t.Fatalf("outbox = %v, want only ASNRegistered and ReceiptOpened", got)
+	if got := outboxTypes(t, pool); len(got) != 4 {
+		t.Fatalf("outbox = %v, want only ASNRegistered and ReceiptOpened on both topics", got)
 	}
 }
 
