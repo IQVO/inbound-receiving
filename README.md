@@ -8,8 +8,9 @@ Postgres, REST, Kafka (CloudEvents 1.0).
 
 This repository holds the contracts, the domain model, the service (REST,
 Postgres, transactional outbox, local-copy consumers), its packaging (image and
-Helm chart) and a read-only MCP server; analytics and web layers follow in later
-phases.
+Helm chart) and a read-only MCP server; the analytics read side (projector and
+reports, [ADR 0006](docs/adr/0006-analytics-read-side.md)) is in place and the
+web layer follows in a later phase.
 
 - Why it exists and how it relates to the other contexts:
   [ADR 0001](docs/adr/0001-inbound-receiving-bounded-context.md)

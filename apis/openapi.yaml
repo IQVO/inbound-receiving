@@ -71,6 +71,13 @@ tags:
     description: The inbound dock doors known from facility-layout events (ADR 0003).
   - name: Health
     description: Liveness and readiness probes.
+  - name: Reports
+    description: |
+      The read-only receiving performance and accuracy report of the analytics
+      read side (ADR 0006), served by the separate `inbound-reports` binary
+      (port 8092, cluster-internal Service `<release>-reports`) from the
+      analytical database, never from the OLTP API. Like every sibling's
+      reports API its JSON is snake_case.
 
 paths:
   /asns:
@@ -741,6 +748,110 @@ paths:
               schema:
                 $ref: "#/components/schemas/Status"
 
+  /reports/receiving-performance:
+    servers:
+      - url: http://localhost:8092
+        description: inbound-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getReceivingPerformance
+      summary: Receiving performance and accuracy per day, and the state right now
+      tags: [Reports]
+      description: |
+        How is the dock performing? `days[]` has one row per UTC calendar day
+        intersecting `[from, to)` (zeros included); a day's counts cover the
+        part of the day inside the range. `receipts_closed`, `discrepancies`
+        and `receipt_cycle` follow the receipt's `ReceiptClosed` time;
+        `lines_received` counts the receiving actions (`ReceiptLineReceived`)
+        and `units_good` / `units_damaged` sum their quantities by condition.
+        `receipt_cycle` (open to close) and `dock_dwell` (check-in to
+        completed) include only receipts and appointments whose opening or
+        check-in the projection also saw; their `p50_seconds` / `p95_seconds`
+        are linear-interpolated percentiles and are null when `count` is 0.
+        `appointments` counts each milestone that fell in the window.
+
+        `current` is the state right now, independent of the range:
+        `open_receipts` (opened, not yet closed), `expected_today` (ASNs not
+        cancelled whose expected arrival falls in today's UTC day) and
+        `expected_today_started` (those with a receipt already opened). The
+        data is as fresh as `GET /reports/freshness` says.
+      parameters:
+        - $ref: "#/components/parameters/ReportFrom"
+        - $ref: "#/components/parameters/ReportTo"
+      responses:
+        "200":
+          description: The report for the effective range.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReceivingPerformanceReport"
+              example:
+                from: "2026-10-05T00:00:00Z"
+                to: "2026-10-07T00:00:00Z"
+                days:
+                  - day: "2026-10-05"
+                    receipts_closed: 14
+                    lines_received: 52
+                    units_good: 1840
+                    units_damaged: 36
+                    discrepancies: { short: 3, over: 1, damaged: 4 }
+                    receipt_cycle: { count: 14, p50_seconds: 2700, p95_seconds: 6900 }
+                    appointments: { booked: 18, checked_in: 15, cancelled: 2, completed: 14 }
+                    dock_dwell: { count: 14, p50_seconds: 3300, p95_seconds: 8100 }
+                  - day: "2026-10-06"
+                    receipts_closed: 0
+                    lines_received: 0
+                    units_good: 0
+                    units_damaged: 0
+                    discrepancies: { short: 0, over: 0, damaged: 0 }
+                    receipt_cycle: { count: 0, p50_seconds: null, p95_seconds: null }
+                    appointments: { booked: 0, checked_in: 0, cancelled: 0, completed: 0 }
+                    dock_dwell: { count: 0, p50_seconds: null, p95_seconds: null }
+                current:
+                  open_receipts: 2
+                  expected_today: 9
+                  expected_today_started: 5
+        "400":
+          description: "`from` / `to` are not RFC 3339, empty or inverted, or span more than 366 days."
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              example:
+                type: https://errors.inbound-receiving.warehouse-systems.dev/invalid-report-range
+                title: from and to must form a valid RFC 3339 range of at most 366 days
+                status: 400
+                detail: from must be strictly before to
+                instance: /reports/receiving-performance
+        "500":
+          $ref: "#/components/responses/ReportStoreError"
+  /reports/freshness:
+    servers:
+      - url: http://localhost:8092
+        description: inbound-reports (cluster-internal Service <release>-reports)
+    get:
+      operationId: getReportsFreshness
+      summary: How far the analytics projection is behind
+      tags: [Reports]
+      description: |
+        The freshness lag of the projection the report reads: `as_of` is the
+        CloudEvents time of the newest event the projector has applied and
+        `lag_seconds` is now minus `as_of` (never negative). Both are null
+        until the first event is applied. A growing lag means the projector is
+        down or behind, not that the report is wrong: it catches up when the
+        projector does.
+      responses:
+        "200":
+          description: The freshness (null fields while nothing was projected).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportsFreshness"
+              example:
+                as_of: "2026-10-07T11:59:55Z"
+                lag_seconds: 4.2
+        "500":
+          $ref: "#/components/responses/ReportStoreError"
+
 components:
   headers:
     ETag:
@@ -750,6 +861,24 @@ components:
         example: '"3"'
 
   parameters:
+    ReportFrom:
+      name: from
+      in: query
+      required: false
+      description: RFC 3339 instant, inclusive. Defaults to `to` minus 30 days.
+      schema:
+        type: string
+        format: date-time
+      example: "2026-10-05T00:00:00Z"
+    ReportTo:
+      name: to
+      in: query
+      required: false
+      description: RFC 3339 instant, exclusive. Defaults to now. At most 366 days after `from`.
+      schema:
+        type: string
+        format: date-time
+      example: "2026-10-07T00:00:00Z"
     IdempotencyKeyRequired:
       name: Idempotency-Key
       in: header
@@ -832,6 +961,18 @@ components:
       example: rcpt-223e4567-e89b-12d3-a456-426614174000
 
   responses:
+    ReportStoreError:
+      description: The analytical database query failed (the cause is logged, never returned).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          example:
+            type: https://errors.inbound-receiving.warehouse-systems.dev/report-store-error
+            title: The report could not be served
+            status: 500
+            detail: the analytical database query failed
+            instance: /reports/receiving-performance
     BadRequest:
       description: |
         Malformed JSON or an unknown field (`malformed-request`), a bad query
@@ -1383,3 +1524,121 @@ components:
         status:
           type: string
           example: ok
+    ReceivingPerformanceReport:
+      type: object
+      required: [from, to, days, current]
+      properties:
+        from:
+          type: string
+          format: date-time
+          description: The effective range start (inclusive, UTC).
+        to:
+          type: string
+          format: date-time
+          description: The effective range end (exclusive, UTC).
+        days:
+          type: array
+          description: One row per UTC day intersecting the range, in day order, zeros included.
+          items:
+            $ref: "#/components/schemas/ReceivingPerformanceDay"
+        current:
+          $ref: "#/components/schemas/ReceivingCurrent"
+    ReceivingPerformanceDay:
+      type: object
+      required: [day, receipts_closed, lines_received, units_good, units_damaged, discrepancies, receipt_cycle, appointments, dock_dwell]
+      properties:
+        day:
+          type: string
+          format: date
+          description: The UTC calendar day.
+        receipts_closed:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Receipts whose close fell in the day's window.
+        lines_received:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Receiving actions against a line (`ReceiptLineReceived`) in the window.
+        units_good:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Units received in `Good` condition in the window.
+        units_damaged:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Units received in `Damaged` condition in the window.
+        discrepancies:
+          $ref: "#/components/schemas/DiscrepancyCounts"
+        receipt_cycle:
+          $ref: "#/components/schemas/TimingSummary"
+        appointments:
+          $ref: "#/components/schemas/AppointmentCounts"
+        dock_dwell:
+          $ref: "#/components/schemas/TimingSummary"
+    DiscrepancyCounts:
+      type: object
+      description: Discrepancies of the receipts closed in the window, by kind.
+      required: [short, over, damaged]
+      properties:
+        short: { type: integer, format: int32, minimum: 0 }
+        over: { type: integer, format: int32, minimum: 0 }
+        damaged: { type: integer, format: int32, minimum: 0 }
+    AppointmentCounts:
+      type: object
+      description: Appointment milestones that fell in the window.
+      required: [booked, checked_in, cancelled, completed]
+      properties:
+        booked: { type: integer, format: int32, minimum: 0 }
+        checked_in: { type: integer, format: int32, minimum: 0 }
+        cancelled: { type: integer, format: int32, minimum: 0 }
+        completed: { type: integer, format: int32, minimum: 0 }
+    TimingSummary:
+      type: object
+      description: |
+        A duration summary in seconds: how many durations there were and their
+        linear-interpolated median and 95th percentile. The percentiles are
+        null when `count` is 0.
+      required: [count, p50_seconds, p95_seconds]
+      properties:
+        count: { type: integer, format: int32, minimum: 0 }
+        p50_seconds: { type: number, format: double, nullable: true, minimum: 0 }
+        p95_seconds: { type: number, format: double, nullable: true, minimum: 0 }
+    ReceivingCurrent:
+      type: object
+      description: The state right now (not range-bound).
+      required: [open_receipts, expected_today, expected_today_started]
+      properties:
+        open_receipts:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Receipts opened and not yet closed.
+        expected_today:
+          type: integer
+          format: int32
+          minimum: 0
+          description: ASNs not cancelled whose expected arrival falls in today's UTC day.
+        expected_today_started:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Of those, the ASNs that already have a receipt opened.
+    ReportsFreshness:
+      type: object
+      required: [as_of, lag_seconds]
+      properties:
+        as_of:
+          type: string
+          format: date-time
+          nullable: true
+          description: CloudEvents time of the newest event applied; null when none.
+        lag_seconds:
+          type: number
+          format: double
+          nullable: true
+          minimum: 0
+          description: now - as_of, in seconds; null when nothing was applied.
