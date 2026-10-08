@@ -37,6 +37,8 @@ func (s *IdempotencyStore) Do(ctx context.Context, req idempotency.Request, hand
 		return prior.response, idempotency.Replayed, nil
 	}
 	resp := handle(ctx)
-	s.entries[req.Key] = storedRequest{bodyHash: req.BodyHash, response: resp}
+	if !resp.Transient {
+		s.entries[req.Key] = storedRequest{bodyHash: req.BodyHash, response: resp}
+	}
 	return resp, idempotency.Fresh, nil
 }

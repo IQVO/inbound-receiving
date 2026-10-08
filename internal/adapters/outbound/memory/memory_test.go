@@ -442,3 +442,22 @@ func TestIdempotencyStorePanicStoresNothing(t *testing.T) {
 		t.Fatalf("after a panic the key must be fresh again: %v calls=%d", outcome, calls)
 	}
 }
+
+func TestIdempotencyStoreTransientResponsesAreNotStored(t *testing.T) {
+	ctx := context.Background()
+	s := memory.NewIdempotencyStore()
+	req := idempotency.Request{Key: "k", BodyHash: "h"}
+	calls := 0
+	failing := func(context.Context) idempotency.Response {
+		calls++
+		return idempotency.Response{Status: 500, Transient: true}
+	}
+	for i := 0; i < 2; i++ {
+		if resp, outcome, _ := s.Do(ctx, req, failing); outcome != idempotency.Fresh || resp.Status != 500 {
+			t.Fatalf("attempt %d: %+v %v", i, resp, outcome)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("a transient failure must be retried: handler ran %d times", calls)
+	}
+}

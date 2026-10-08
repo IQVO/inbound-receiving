@@ -308,3 +308,32 @@ func TestIdempotencyStoreJoinedUseCaseRefusalStaysStorable(t *testing.T) {
 		t.Fatalf("outbox = %v, want only ASNRegistered and ReceiptOpened", got)
 	}
 }
+
+// TestIdempotencyStoreTransientResponseRollsBackAndIsNotStored: a 5xx stores
+// nothing and undoes the handler's writes, so the retry runs again.
+func TestIdempotencyStoreTransientResponseRollsBackAndIsNotStored(t *testing.T) {
+	ctx := context.Background()
+	pool := startPostgresPool(t)
+	store := postgres.NewIdempotencyStore(pool)
+	w := newWriter(pool)
+	req := idempotency.Request{Key: "flaky", BodyHash: "h"}
+	resp, outcome, err := store.Do(ctx, req, func(ctx context.Context) idempotency.Response {
+		_, err := (&usecases.RegisterAsn{Writer: w}).Handle(ctx, usecases.RegisterAsnCommand{
+			AsnNumber: "ASN-T", SupplierRef: "ACME", Lines: []usecases.AsnLineInput{{LineNo: 1, SKU: "SKU-1", ExpectedQty: 1}},
+		})
+		if err != nil {
+			t.Errorf("register inside the handler: %v", err)
+		}
+		return idempotency.Response{Status: http.StatusInternalServerError, Transient: true}
+	})
+	if err != nil || outcome != idempotency.Fresh || resp.Status != http.StatusInternalServerError {
+		t.Fatalf("transient: %+v %v %v", resp, outcome, err)
+	}
+	if _, err := w.Asns.Get(ctx, "ASN-T"); !errors.Is(err, repository.ErrAsnNotFound) {
+		t.Fatalf("the write of a failed request survived: %v", err)
+	}
+	_, outcome, err = store.Do(ctx, req, func(context.Context) idempotency.Response { return idempotency.Response{Status: 201} })
+	if err != nil || outcome != idempotency.Fresh {
+		t.Fatalf("the retry must run fresh: %v %v", outcome, err)
+	}
+}

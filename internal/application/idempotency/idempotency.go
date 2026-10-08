@@ -18,6 +18,11 @@ type Response struct {
 	Status int
 	Header map[string][]string
 	Body   []byte
+	// Transient marks a server failure (5xx): the store rolls everything the
+	// handler wrote back, stores nothing and returns the response as Fresh,
+	// so a retry with the same key runs the handler again instead of
+	// replaying the failure.
+	Transient bool
 }
 
 // Outcome says how Do resolved a request.

@@ -63,6 +63,10 @@ func (s *IdempotencyStore) Do(ctx context.Context, req idempotency.Request, hand
 	}
 
 	resp := handle(pgtx.With(ctx, tx))
+	if resp.Transient {
+		// Nothing is stored and everything the handler wrote rolls back.
+		return resp, idempotency.Fresh, nil
+	}
 	headers, err := json.Marshal(resp.Header)
 	if err != nil {
 		return idempotency.Response{}, 0, fmt.Errorf("encode idempotent response headers: %w", err)
