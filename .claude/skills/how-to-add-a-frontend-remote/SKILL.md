@@ -88,9 +88,9 @@ Three traps, in order of how much time they cost when hit blind:
      -t warehouse/<context>-frontend:local .
    ```
 
-This repo has no web app yet (it is a later brief); the Dockerfile that brief
-adds is meant to be the complete, working, heavily commented recipe — copy it
-rather than re-deriving these three traps from scratch for a new remote.
+This repo's `web/Dockerfile` is the complete, working, heavily commented recipe
+(federation name `inbound_mfe`, base `/mfes/inbound-receiving/`, dev port 5193);
+copy it rather than re-deriving these three traps from scratch for a new remote.
 
 ## Wiring into `warehouse-infra`'s deploy
 
