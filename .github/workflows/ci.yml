@@ -154,8 +154,8 @@ jobs:
   # Fast, BLOCKING mutation subset: runs on every push/PR so a drop in test
   # quality (tests that execute but stop asserting) is caught immediately.
   # Subset = every package under ./internal/domain (receipt, asn, appointment,
-  # shared): the domain is small enough that all of it completes in about
-  # 90 seconds, so nothing is left to the weekly run. Thresholds/workers/timeout come from .gremlins.yaml,
+  # shared): the domain is small enough that all of it completes in under 3
+  # minutes, so the weekly full run adds no uncovered code. Thresholds/workers/timeout come from .gremlins.yaml,
   # so this job, the scheduled `mutation` job below and `make mutation` all
   # agree. The exhaustive run stays in the `mutation` job.
   # ============================================================
