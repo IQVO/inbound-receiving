@@ -288,7 +288,8 @@ sequenceDiagram
 
 Source: `internal/application/usecases/receipt.go` (`CloseReceipt.Handle`,
 `completeAsn`, `completeAppointment`). The ASN completion raises no event. All
-three saves and both outbox rows commit together or not at all.
+three saves and every outbox row commit together or not at all. Each
+`Insert(encoded ...)` writes two rows, one per topic (`FanoutEncoder`, ADR 0006).
 
 ## Local-copy consumer (product and dock door)
 

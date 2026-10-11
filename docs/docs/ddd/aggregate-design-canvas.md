@@ -212,7 +212,7 @@ policy is a later, separately decided change (ADR 0002).
 
 One open and one close per delivery; one `ReceiveLine` per scan batch, so the
 highest write rate of the three aggregates (every call bumps the version and
-writes one outbox row).
+writes two outbox rows, one per topic, for its `ReceiptLineReceived`).
 
 ### 9. Size (estimate)
 
