@@ -70,7 +70,15 @@ ignores every other type on its topic, claims the CloudEvents `id` in
 after that, and skips with a WARN anything that is not a valid CloudEvent. See
 [Upstream contracts](/docs/ecosystem/upstream-contracts).
 
-## Reserved, not built
+## Analytics stream (internal)
 
-`warehouse.inbound-receiving.analytics` is reserved by ADR 0004 for a later
-analytics read side. Nothing publishes to it on `develop`.
+Since ADR 0006 every published event is also written, in the same unit of
+work and under the same CloudEvents `id`, `type`, `subject` and Kafka key, to
+`warehouse.inbound-receiving.analytics` (DLQ
+`warehouse.inbound-receiving.analytics.dlq`) with
+`dataschema=urn:warehouse:inbound-receiving:analytics:<EventName>:v1` and a
+payload byte-for-byte equal to the integration payload (`FanoutEncoder`,
+`internal/adapters/outbound/kafka/analytics_encoder.go`). Its only consumer is
+this context's own `inbound-projector` (group `ANALYTICS_CONSUMER_GROUP`,
+default `inbound-receiving-analytics`); it is not an integration contract, so
+sibling contexts keep reading `warehouse.inbound-receiving.events`.

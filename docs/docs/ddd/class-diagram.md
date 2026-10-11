@@ -220,7 +220,7 @@ classDiagram
 
   class Postgres { <<adapter>> postgres/* }
   class Memory { <<adapter>> memory/* }
-  class KafkaEncoder { <<adapter>> outbound/kafka Encoder }
+  class KafkaEncoder { <<adapter>> outbound/kafka FanoutEncoder }
   class OutboxRelay { <<adapter>> outbound/outbox Relay }
   class HttpServer { <<inbound adapter>> inbound/http Server }
   class ProductConsumer { <<inbound adapter>> inbound/kafka }
@@ -260,5 +260,12 @@ Source: `internal/application/ports/*.go`, `cmd/api/main.go` (`adapters`,
 Omits: `Clock` and `IDGenerator` (trivial `clock.System`, `idgen.UUID`), the
 in-memory implementations of every other port (the `Memory` adapter implements
 the same ports as `Postgres`; only two edges are drawn), the Kafka relay sink,
-telemetry and the Postgres pool. Adapters never import each other: only
-`cmd/api` wires them to the use cases.
+telemetry and the Postgres pool. `FanoutEncoder` wraps the integration
+`Encoder` and the `AnalyticsEncoder`, so every event yields two outbox rows
+under one CloudEvents id (ADR 0006). Also omitted: the read-only MCP adapter
+(`internal/adapters/inbound/mcp`, wired by `cmd/mcp` to the same read use
+cases as `HttpServer`) and the analytics read side
+(`internal/adapters/outbound/analyticsstore`, the projector's
+`AnalyticsConsumer` and the reports router over the `report.Reader` port), which
+never touch these ports' write side. Adapters never import each other: only the
+`cmd/*` composition roots wire them to the use cases.

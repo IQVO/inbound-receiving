@@ -43,7 +43,7 @@ or "how many are in stock" question (ADR 0001).
 | Specification context | Partly | The ASN is the supplier's specification of what should arrive. |
 | Gateway / Open Host Service | **Yes** | REST plus the `warehouse.inbound-receiving.events` Published Language. |
 | Analysis context | No | Discrepancy is a per-line comparison on close. |
-| Analytics / reporting | No (planned, ADR 0004 reserves `warehouse.inbound-receiving.analytics`) | No read side on `develop`. |
+| Analytics / reporting | **Yes** (own read side, ADR 0006) | `cmd/inbound-projector` projects `warehouse.inbound-receiving.analytics` into a separate analytical database; `cmd/inbound-reports` serves receiving performance and freshness. |
 
 ## Inbound Communication
 
@@ -58,13 +58,15 @@ or "how many are in stock" question (ADR 0001).
 | Dock staff | Close receipt | Command | REST `POST /receipts/{receiptId}/close` | OHS |
 | Operator, console, agent | Get / list ASNs, appointments, receipts | Query | REST `GET /asns`, `/asns/{asnNumber}`, `/appointments`, `/appointments/{appointmentId}`, `/receipts`, `/receipts/{receiptId}` | OHS |
 | Operator, console, agent | List known inbound dock doors | Query | REST `GET /docks` | OHS |
+| `warehouse-ops-agent` | Get / list ASNs, appointments, receipts; list docks | Query | MCP (`cmd/mcp`, Streamable HTTP): `get_asn`, `list_asns`, `get_appointment`, `list_appointments`, `get_receipt`, `list_receipts`, `list_docks` | OHS, read-only (ADR 0005) |
+| Dock manager, console | Receiving performance per day; projection freshness | Query | REST `GET /reports/receiving-performance`, `GET /reports/freshness` on `cmd/inbound-reports` | OHS over the analytical database (ADR 0006) |
 | `product-master` | `ProductRegistered` | Event | Kafka `warehouse.product-master.events`, `com.warehouse.wms.product-master.product.ProductRegistered` | Conformist with a local copy (`known_skus`); group `PRODUCT_CONSUMER_GROUP` |
 | `facility-layout` | `LocationSlotRegistered` | Event | Kafka `warehouse.facility.events`, `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | Conformist with a local copy (`dock_doors`); group `DOCK_DOOR_CONSUMER_GROUP` |
 | `facility-layout` | `LocationSlotDecommissioned` | Event | Kafka `warehouse.facility.events`, `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | Conformist; same group |
 
-No REST endpoint is authenticated (fleet-wide revert of 2026-09-11;
+No REST endpoint or MCP tool is authenticated (fleet-wide revert of 2026-09-11;
 `TestNoAuthMiddlewareReintroduced` fails the build if auth middleware returns).
-An MCP read-only server for `warehouse-ops-agent` is *planned*, not built.
+The MCP server is read-only: writes stay on REST.
 
 ## Outbound Communication
 
@@ -79,6 +81,7 @@ outbox and the relay in `cmd/api`.
 | `warehouse-planning` (**planned, not built**) | `DockAppointmentBooked` | Event | same topic, `...dockappointment.DockAppointmentBooked` | OHS + PL; would be inbound-labor demand, needs an inbound process path in its CapacityPlan first |
 | none today | `DockAppointmentCheckedIn`, `DockAppointmentCancelled`, `DockAppointmentCompleted` | Event | same topic, `...dockappointment.*` | OHS + PL |
 | none today | `ReceiptOpened`, `ReceiptClosed` | Event | same topic, `...receipt.*` | OHS + PL |
+| this context's own `inbound-projector` | all nine events, same `type` and `id` | Event | Kafka `warehouse.inbound-receiving.analytics` (DLQ `.dlq`), `dataschema=urn:warehouse:inbound-receiving:analytics:<EventName>:v1` | internal data stream, not an integration contract (ADR 0006) |
 
 ## Ubiquitous Language
 
@@ -127,10 +130,16 @@ Over / Damaged), **Walk-in**, **Snapshot**, **Local copy**, **Version**.
 - Outbox atomicity and relay delivery proven with testcontainers Postgres and
   Kafka (`TestUseCasesCommitStateAndOutboxAtomically`,
   `TestRelayRealPostgresAndKafkaPublishesCloudEventsWithTheRightTypeAndKey`,
-  `TestProductConsumerEndToEnd`, `TestDockDoorConsumerEndToEnd`).
+  `TestProductConsumerEndToEnd`, `TestDockDoorConsumerEndToEnd`), plus the
+  integration suites for the use-case wiring, `pgtx`, the Kafka publisher, the
+  REST adapter, MCP over Streamable HTTP and the analytics read side end to end
+  (`analytics_e2e_integration_test.go`).
 - One open receipt per ASN proven against Postgres
   (`TestReceiptRepoAtMostOneOpenReceiptPerAsn`).
-- No business metric is emitted yet.
+- The receiving KPIs (receipts closed, units good versus damaged,
+  discrepancies by kind, receipt cycle time, dock dwell, appointment
+  milestones) are served by `GET /reports/receiving-performance` (ADR 0006);
+  no business metric is emitted as telemetry.
 
 ## Open Questions
 
@@ -138,5 +147,3 @@ Over / Damaged), **Walk-in**, **Snapshot**, **Local copy**, **Version**.
   `DockAppointmentBooked` can become labor demand (planned, its own ADR there)?
 - A tolerance policy for over-receipt, and a quarantine flow for Damaged units,
   are later, separately decided changes (ADR 0002, ADR 0001).
-- Which later phases (MCP read tools, analytics read side, console remote) land
-  first?

@@ -16,7 +16,7 @@ diagram is Mermaid, derived from the code on `develop`, and carries a
 | --- | --- | --- |
 | [Core domain chart](/docs/ddd/core-domain-chart) | [Core Domain Charts](https://github.com/ddd-crew/core-domain-charts) | Where this context sits on business differentiation vs model complexity, and why it is Supporting. |
 | [Bounded context canvas](/docs/ddd/bounded-context-canvas) | [Bounded Context Canvas v5](https://github.com/ddd-crew/bounded-context-canvas) | Purpose, classification, roles, every inbound and outbound message, business decisions. |
-| [Context map](/docs/ddd/context-map) | [Context Mapping](https://github.com/ddd-crew/context-mapping) | This context's slice of the fleet map: upstream/downstream, patterns and technology per edge, with the planned edges labelled. |
+| [Context map](/docs/ddd/context-map) | [Context Mapping](https://github.com/ddd-crew/context-mapping) | This context's slice of the fleet map: upstream/downstream, patterns and technology per edge (Kafka, MCP, the console remote), with the planned edge labelled. |
 | [Aggregate design canvas](/docs/ddd/aggregate-design-canvas) | [Aggregate Design Canvas v1.1](https://github.com/ddd-crew/aggregate-design-canvas) | `Asn`, `DockAppointment`, `Receipt`: states, invariants, commands, events, size. |
 | [Domain message flow](/docs/ddd/domain-message-flow) | [Domain Message Flow Modelling](https://github.com/ddd-crew/domain-message-flow-modelling) | Key business scenarios as numbered command / event / query flows across contexts. |
 | [EventStorming](/docs/ddd/eventstorming) | [EventStorming glossary and cheat sheet](https://github.com/ddd-crew/eventstorming-glossary-cheat-sheet) | Design-level process flows with the sticky-note colours, plus hotspots. |
@@ -44,7 +44,12 @@ in `internal/adapters/outbound/kafka/encoder.go`, and decisions from the ADRs in
 :::
 
 :::info Not in this pack
-`develop` has no MCP server, analytics read side or web remote for this context
-(ADR 0001 names them as later phases), so there are no pages for them. Edges
-that depend on them are labelled *planned* wherever they appear.
+The pack models the OLTP domain. The read-only MCP server
+([ADR 0005](/docs/adr/0005-mcp-server-adoption)), the analytics read side
+([ADR 0006](/docs/adr/0006-analytics-read-side)) and the `web/` remote
+`inbound_mfe` add no aggregate and raise no event, so they have no dedicated
+artifact here; they appear as edges and messages on the canvas and context map
+and are described on [Runtime](/docs/overview/runtime). The ER diagram covers
+the OLTP schema only, not the analytical database
+(`analytics/migrations/0001_receiving_performance.up.sql`).
 :::

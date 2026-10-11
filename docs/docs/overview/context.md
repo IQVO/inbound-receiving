@@ -33,27 +33,31 @@ flowchart LR
   FL["facility-layout<br/>Supporting"]
   INV["inventory-storage<br/>Core"]
   WP["warehouse-planning<br/>planned, not built"]
-  OPS["warehouse-ops-agent<br/>planned, not built"]
-  CON["warehouse-console<br/>planned, not built"]
+  OPS["warehouse-ops-agent"]
+  CON["warehouse-console<br/>shell"]
 
   PM -- "ProductRegistered" --> IR
   FL -- "LocationSlotRegistered / Decommissioned" --> IR
   IR -- "ReceiptLineReceived" --> INV
   IR -. "DockAppointmentBooked (planned)" .-> WP
-  IR -. "REST and MCP read tools (planned)" .-> OPS
-  IR -. "REST (planned)" .-> CON
+  IR -- "MCP read tools" --> OPS
+  IR -- "web remote inbound_mfe, REST through Kong" --> CON
 ```
 
 Source: `docs/adr/0001-inbound-receiving-bounded-context.md` (Context map),
 `docs/adr/0003-local-copies-and-handover.md`,
+`docs/adr/0005-mcp-server-adoption.md`,
 `internal/adapters/inbound/kafka/{product_consumer,dock_door_consumer}.go`,
-`internal/adapters/outbound/kafka/encoder.go`; on the consumer side
-inventory-storage `internal/adapters/inbound/kafka/inbound_receipt_consumer.go`
-and its ADR 0037 (on `develop`).
-Omits: the Kafka broker and the patterns on each edge (see the
-[context map](/docs/ddd/context-map) for those). Dotted edges are **planned,
-not built**: nothing in this repository or in the named sibling depends on
-them today.
+`internal/adapters/outbound/kafka/encoder.go`, `web/vite.config.ts`; on the
+consumer side (on `develop`) inventory-storage
+`internal/adapters/inbound/kafka/inbound_receipt_consumer.go` and its ADR 0037,
+warehouse-ops-agent ADR 0021 (`INBOUND_RECEIVING_MCP_ENDPOINT`) and
+warehouse-console `vite.config.ts` (remote `inbound_mfe`).
+Omits: the Kafka broker, the internal analytics stream (consumed only by this
+context's own projector) and the patterns on each edge (see the
+[context map](/docs/ddd/context-map) for those). The dotted edge is **planned,
+not built**: nothing in this repository or in warehouse-planning depends on it
+today.
 
 ## No live cross-context lookup, in either direction
 
@@ -62,8 +66,11 @@ them today.
   relay sink, the clock and the id generator. "Does this SKU exist" and "is
   this an inbound dock door" are answered from local copies (`known_skus`,
   `dock_doors`) fed by events ([ADR 0003](/docs/adr/0003-local-copies-and-handover)).
-- No context calls `inbound-receiving` at request time either; the `GET`
-  endpoints exist for operators, a future console and agents.
+- No bounded context calls `inbound-receiving` at request time either. Its
+  read surfaces serve people and agents, not sibling contexts: the REST `GET`
+  endpoints back operators and the `inbound_mfe` console remote, the read-only
+  MCP tools back `warehouse-ops-agent`, and the reports endpoints answer from
+  the analytical database, never from the OLTP one.
 
 ## Local copies fail open by default
 
