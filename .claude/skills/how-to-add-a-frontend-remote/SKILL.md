@@ -25,10 +25,13 @@ export default defineConfig({
 
 Never convert this to the callback form
 (`defineConfig(({ command }) => ({...}))`) to compute `base` dynamically.
-Every remote's `vitest.config.ts` does `mergeConfig(viteConfig,
+Sibling remotes' `vitest.config.ts` do `mergeConfig(viteConfig,
 defineConfig({...}))`, and Vite throws `Error: Cannot merge config in
 form of callback` on a function export — killing the ENTIRE test suite
-for a one-line config change, not just the new test.
+for a one-line config change, not just the new test. This repo's
+`web/vitest.config.ts` is standalone on purpose (it never imports
+`vite.config.ts`), so the trap does not bite here today; keep the object
+form anyway so the fleet's remotes stay interchangeable.
 
 ## A tiny, relative `dist/remoteEntry.js` after build is CORRECT
 

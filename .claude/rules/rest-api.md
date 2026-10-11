@@ -27,6 +27,12 @@ path prefix: `/api/inbound-receiving`.
 - `GET  /docks`                             -> `ListDocks` (the `dock_doors` local copy)
 - `GET  /healthz`, `GET /readyz` (503 while draining), `GET /metrics`
 
+Served by `cmd/inbound-reports` on :8092 (the analytics read side, ADR 0006;
+read-only pool on the ANALYTICAL database, never the OLTP one):
+
+- `GET  /reports/receiving-performance?from=&to=` -> receiving performance and accuracy per day
+- `GET  /reports/freshness`                        -> projection lag
+
 ## Conventions
 
 - Errors: RFC 7807 `application/problem+json`,
@@ -41,7 +47,8 @@ path prefix: `/api/inbound-receiving`.
   `door-window-overlap`, `receipt-already-open`, `receipt-closed`,
   `unknown-sku`, `unknown-dock-door`, `unknown-asn`, `unknown-appointment`,
   `asn-not-on-appointment`, `line-not-on-asn`, `version-mismatch`,
-  `concurrent-modification`, `internal-error`).
+  `concurrent-modification`, `internal-error`; the reports binary adds
+  `invalid-report-range` and `report-store-error`).
 - Request bodies reject unknown fields (`DisallowUnknownFields`); JSON is
   camelCase (events are snake_case).
 - Every resource-creating POST requires `Idempotency-Key` (the fleet
