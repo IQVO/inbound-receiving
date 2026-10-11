@@ -13,8 +13,11 @@ CONSUMES two producers' events into local copies (ADR 0003):
 product-master's `ProductRegistered` from `warehouse.product-master.events`
 (`known_skus`) and facility-layout's `LocationSlotRegistered` /
 `LocationSlotDecommissioned` from `warehouse.facility.events` (`dock_doors`).
-The analytics topic `warehouse.inbound-receiving.analytics` is reserved for a
-later phase and not produced yet.
+It also PRODUCES the analytics topic `warehouse.inbound-receiving.analytics`
+(ADR 0006): the outbox's FanoutEncoder writes every event twice, once to the
+integration topic and once to the analytics topic, and `cmd/inbound-projector`
+consumes the analytics copy into the analytical database. The analytics topic
+is internal to this context; no sibling subscribes to it.
 
 ## Events: CloudEvents 1.0 is MANDATORY
 

@@ -40,7 +40,8 @@ check a design decision against this fleet's standing architecture.
    no mutating HTTP method or MCP tool without `ReadOnlyHint: true` was
    added to an outbound/inbound surface bound by that constraint.
 4. **Analytics isolation (ADR-0006-style, where this repo has an
-   analytics read side (not built in this repo yet)).** The OLTP domain/application layers
+   analytics read side: `internal/adapters/outbound/analyticsstore`,
+   `cmd/inbound-projector`, `cmd/inbound-reports`, ADR 0006).** The OLTP domain/application layers
    must never import the analytics store or read model; the analytics
    side must depend on nothing internal except itself. This is a real,
    already-fitness-tested rule in most repos — confirm the test exists

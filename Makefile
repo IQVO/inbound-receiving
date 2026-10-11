@@ -143,7 +143,7 @@ vuln:
 check: fmt-check vet build lint test
 
 # The fuller gate a human runs before pushing. Still excludes `integration`
-# (needs a DB) and `mutation` (slow).
+# (needs Docker, ~minutes; CI runs it on every push) and `mutation` (slow).
 check-all: check coverage arch-test bdd
 
 # --- agent harness (harness-template v3) -----------------------------------
