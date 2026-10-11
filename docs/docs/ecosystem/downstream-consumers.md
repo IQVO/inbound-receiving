@@ -27,8 +27,9 @@ Classifications of neighbours come from the warehouse-docs contexts table.
 
 ## Handover semantics
 
-- **Event-driven, never synchronous.** No REST or MCP call goes in either
-  direction and there is no acknowledgement event back.
+- **Event-driven, never synchronous.** No REST or MCP call goes between
+  `inbound-receiving` and `inventory-storage` in either direction and there is
+  no acknowledgement event back.
 - **Good only.** `Damaged` units are recorded on the receipt and counted in its
   discrepancies, but not booked as receivable stock. Quarantine is a later ADR.
 - **Stow stays an RF action** (item scan plus location scan in
@@ -37,16 +38,27 @@ Classifications of neighbours come from the warehouse-docs contexts table.
   that consumer's skip-and-log. This context has no compensation flow in v1; the
   receipt's counts remain the source of truth for the dock.
 
+## Read-side consumers (not event-driven)
+
+| Consumer | Surface | State | Evidence (on its `develop`) |
+| --- | --- | --- | --- |
+| `warehouse-ops-agent` | The seven read-only MCP tools of `cmd/mcp` ([ADR 0005](/docs/adr/0005-mcp-server-adoption)) | **Live**, opt-in by `INBOUND_RECEIVING_MCP_ENDPOINT` on the agent side (unset = disabled, fail-open) | its ADR 0021, `cmd/agent/main.go` |
+| `warehouse-console` | The `inbound_mfe` remote from `web/`, mounted at `/inbound-receiving/*`, calling REST through Kong | **Live** | its `vite.config.ts` (remote `inbound_mfe`, dev port 5193) and `src/App.tsx` |
+
+These read this context; they do not consume its events.
+
 ## Planned, not built
 
 | Candidate consumer | Event | State |
 | --- | --- | --- |
 | `warehouse-planning` | `DockAppointmentBooked` as inbound-labor demand | **Planned, not built.** Its CapacityPlan has no inbound process path, so this needs its own ADR there first (ADR 0001, ADR 0003). |
-| `warehouse-ops-agent`, `warehouse-console` | REST and MCP read tools | **Planned, not built** ("later phases", ADR 0001). |
 
 ## Events with no consumer yet
 
 `ASNRegistered`, `ASNCancelled`, `DockAppointmentBooked`,
 `DockAppointmentCheckedIn`, `DockAppointmentCancelled`,
 `DockAppointmentCompleted`, `ReceiptOpened` and `ReceiptClosed` are published but
-no sibling consumes them on `develop` today.
+no sibling consumes them on `develop` today. All nine events are also copied to
+the internal analytics topic, whose only consumer is this context's own
+`inbound-projector` ([ADR 0006](/docs/adr/0006-analytics-read-side)); it is not
+an integration contract.

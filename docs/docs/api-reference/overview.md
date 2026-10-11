@@ -9,9 +9,9 @@ sidebar_position: 1
 
 | Interface | Source of truth | Notes |
 | --- | --- | --- |
-| REST | `apis/openapi.yaml` (OpenAPI 3.0.3, version 1.0.0) | Pages under *REST* are generated from the spec; do not edit them by hand. Servers: `http://localhost:8080` (local) and `http://localhost:8000/api/inbound-receiving` (kind cluster through Kong, once the service is wired into the cluster). |
+| REST | `apis/openapi.yaml` (OpenAPI 3.0.3, version 1.0.0) | Pages under *REST* are generated from the spec; do not edit them by hand. Servers: `http://localhost:8080` (local) and `http://localhost:8000/api/inbound-receiving` (kind cluster through Kong; `warehouse-infra` routes it on its `develop`). |
 | Events | `apis/asyncapi.yaml` (AsyncAPI 2.6.0, version 1.0.0) | Summarised on the [event catalogue](/docs/api-reference/events). |
-| MCP | none yet | **Planned, not built** (ADR 0001, later phases). |
+| MCP | `internal/adapters/inbound/mcp/tools.go` (pinned by `testdata/tool_registry.golden.json`) | Read-only server `cmd/mcp` on `:8090` (Streamable HTTP at `/` and `/mcp`), [ADR 0005](/docs/adr/0005-mcp-server-adoption). See [MCP tools](#mcp-tools) below. |
 
 ## Conventions
 
@@ -41,7 +41,9 @@ sidebar_position: 1
   `outside-check-in-window`, `door-window-overlap`, `receipt-already-open`,
   `receipt-closed`, `unknown-sku`, `unknown-dock-door`, `unknown-asn`,
   `unknown-appointment`, `asn-not-on-appointment`, `line-not-on-asn`,
-  `version-mismatch`, `concurrent-modification` and `internal-error`.
+  `version-mismatch`, `concurrent-modification` and `internal-error`. The
+  reports binary adds `invalid-report-range` (400) and `report-store-error`
+  (500).
 - **Request bodies** reject unknown fields; JSON field names are camelCase on REST
   (`asnNumber`, `expectedQty`, `windowStart`) and snake_case on the events.
 - **Paging.** Lists use `limit` (1 to 500, default 100) and the opaque `cursor`
@@ -60,8 +62,28 @@ sidebar_position: 1
 | `Appointments` | `POST /appointments`, `GET /appointments`, `GET /appointments/{appointmentId}`, `POST /appointments/{appointmentId}/check-in`, `POST /appointments/{appointmentId}/cancel` |
 | `Receipts` | `POST /receipts`, `GET /receipts`, `GET /receipts/{receiptId}`, `POST /receipts/{receiptId}/lines`, `POST /receipts/{receiptId}/close` |
 | `Docks` | `GET /docks` |
-| `Reports` | `GET /reports/receiving-performance`, `GET /reports/freshness` (served by the separate `inbound-reports` binary on `:8092`, cluster-internal, ADR 0006) |
+| `Reports` | `GET /reports/receiving-performance`, `GET /reports/freshness` (served by the separate `inbound-reports` binary on `:8092` from the analytical database, server `http://localhost:8092` in the spec, ADR 0006) |
 | `Health` | `GET /healthz`, `GET /readyz` |
 
-`GET /metrics` (Prometheus) is served by the binary but is not part of
-`apis/openapi.yaml`.
+`GET /metrics` (Prometheus) is served by `cmd/api` but is not part of
+`apis/openapi.yaml`. The reports binary serves `GET /healthz` but no `/readyz`.
+
+## MCP tools
+
+`cmd/mcp` registers seven tools, all read-only (annotated `readOnlyHint` and
+`idempotentHint`) and backed by the same read use cases as the REST `GET`s:
+
+| Tool | Arguments |
+| --- | --- |
+| `get_asn` | `asn_number` |
+| `list_asns` | `state`, `limit`, `cursor` |
+| `get_appointment` | `appointment_id` |
+| `list_appointments` | `door`, `state`, `from`, `to`, `limit`, `cursor` |
+| `get_receipt` | `receipt_id` |
+| `list_receipts` | `asn_number`, `state`, `limit`, `cursor` |
+| `list_docks` | none |
+
+Writes (register, cancel, book, check in, open, receive, close) stay on REST;
+`internal/adapters/inbound/mcp/governance_test.go` fails the build on a
+write-verb tool name. `warehouse-ops-agent` consumes these tools through
+`INBOUND_RECEIVING_MCP_ENDPOINT` (its ADR 0021).
