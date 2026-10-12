@@ -13,11 +13,12 @@ addition inside an already-decided architecture doesn't.
 
 ## Numbering and location
 
-`docs/docs/adr/NNNN-kebab-case-title.md`, four-digit zero-padded,
+`docs/adr/NNNN-kebab-case-title.md` (served by the second docs instance, id `adr`), four-digit zero-padded,
 sequential — check the highest existing number
 (`git ls-tree --name-only origin/develop -- docs/adr/` and pick the
 next integer, never reuse or guess). `docs/adr/0001-inbound-receiving-bounded-context.md` is the model for the
-format; there is no index page to update when adding a new ADR.
+format. Add a row (number, title, the body's own Status) to
+`docs/adr/index.md` and a link entry in `docs/sidebarsAdr.ts` for every new ADR.
 
 ## Frontmatter (Docusaurus needs all five fields)
 
