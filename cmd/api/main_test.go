@@ -211,7 +211,7 @@ func TestBuildAdaptersInMemoryWiresEveryPort(t *testing.T) {
 }
 
 func TestBuildServerWiresEveryUseCase(t *testing.T) {
-	s := buildServer(memoryAdapters(t), config{productMode: usecases.ModePermissive, doorMode: usecases.ModePermissive}, &inboundhttp.Readiness{}, nil)
+	s := buildServer(memoryAdapters(t), config{productMode: usecases.ModePermissive, doorMode: usecases.ModePermissive}, &inboundhttp.Readiness{}, nil, nil)
 	useCases := []any{
 		s.RegisterAsn, s.CancelAsn, s.GetAsn, s.ListAsns, s.BookAppointment, s.CheckInAppointment, s.CancelAppointment,
 		s.GetAppointment, s.ListAppointments, s.OpenReceipt, s.ReceiveLine, s.CloseReceipt, s.GetReceipt, s.ListReceipts,
@@ -225,7 +225,7 @@ func TestBuildServerWiresEveryUseCase(t *testing.T) {
 }
 
 func TestCompositionRootServesTheAPI(t *testing.T) {
-	s := buildServer(memoryAdapters(t), config{productMode: usecases.ModePermissive, doorMode: usecases.ModePermissive}, &inboundhttp.Readiness{}, nil)
+	s := buildServer(memoryAdapters(t), config{productMode: usecases.ModePermissive, doorMode: usecases.ModePermissive}, &inboundhttp.Readiness{}, nil, nil)
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	defer srv.Close()
 	body := `{"asnNumber":"ASN-1","supplierRef":"ACME","lines":[{"lineNo":1,"sku":"SKU-1","expectedQty":3}]}`

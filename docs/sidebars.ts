@@ -19,6 +19,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       link: {type: 'doc', id: 'overview/context'},
       items: [
+        'overview/quickstart',
         'overview/aggregates',
         'overview/receiving-workflow',
         'overview/runtime',
@@ -26,10 +27,31 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Operations',
+      link: {type: 'doc', id: 'operations/runbook'},
+      items: [
+        'operations/configuration',
+        'operations/observability',
+        'operations/troubleshooting',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Development',
+      items: ['development/testing'],
+    },
+    {
+      type: 'category',
+      label: 'MCP',
+      items: ['mcp/tools'],
+    },
+    {
+      type: 'category',
       label: 'Domain-Driven Design',
       link: {type: 'doc', id: 'ddd/ubiquitous-language'},
       items: [
         'ddd/use-cases',
+        'ddd/subdomain-classification',
         {
           type: 'category',
           label: 'DDD artifacts (ddd-crew)',
