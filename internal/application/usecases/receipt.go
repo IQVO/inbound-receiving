@@ -3,8 +3,10 @@ package usecases
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
+	"github.com/claudioed/inbound-receiving/internal/application/ports"
 	"github.com/claudioed/inbound-receiving/internal/application/repository"
 	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
@@ -142,6 +144,14 @@ type ReceiveLineCommand struct {
 // not naturally idempotent: the HTTP adapter requires an Idempotency-Key.
 type ReceiveLine struct {
 	Writer
+	metrics ports.ReceiptMetrics
+}
+
+// WithMetrics attaches the business-metric port (ADR-0013 Tier 2). Optional:
+// a nil or never-called WithMetrics means "record nothing".
+func (uc *ReceiveLine) WithMetrics(m ports.ReceiptMetrics) *ReceiveLine {
+	uc.metrics = m
+	return uc
 }
 
 // Handle runs the use case and returns the receipt after the change.
@@ -176,6 +186,12 @@ func (uc *ReceiveLine) Handle(ctx context.Context, cmd ReceiveLineCommand) (*rec
 	})
 	if err != nil {
 		return nil, err
+	}
+	// Recorded here, once the unit of work has committed, so the metric
+	// tracks units actually accepted onto the receipt -- the real domain
+	// event -- not merely the request.
+	if uc.metrics != nil {
+		uc.metrics.LineReceived(ctx, strings.ToLower(string(condition)), cmd.Quantity)
 	}
 	return out, nil
 }
