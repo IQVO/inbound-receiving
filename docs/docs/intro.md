@@ -1,6 +1,7 @@
 ---
 id: intro
 title: Introduction
+sidebar_label: Introduction
 slug: /intro
 sidebar_position: 1
 ---
@@ -77,11 +78,16 @@ of scope").
 
 ## Where to go next
 
+- [Quickstart](/docs/overview/quickstart): run it locally and drive a full receiving flow with `curl`.
 - [Bounded context](/docs/overview/context): purpose, context map, the no-live-lookup rule.
 - [Aggregates](/docs/overview/aggregates): the three aggregates and their invariants.
 - [Receiving workflow](/docs/overview/receiving-workflow): announce, appoint, receive, reconcile.
+- [Architecture and runtime](/docs/overview/runtime): hexagonal layers, the four binaries, data stores, the outbox, the analytics read side and the web remote.
+- Operations: [Configuration](/docs/operations/configuration) (every env var per binary), [Runbook](/docs/operations/runbook) (deployment, probes, migrations, Kafka topics, reports API, procedures), [Observability](/docs/operations/observability) and [Troubleshooting](/docs/operations/troubleshooting).
+- [Testing](/docs/development/testing): unit, BDD, integration, fitness and mutation tests and the CI jobs.
+- [MCP tools](/docs/mcp/tools): the seven read-only tools.
+- [Use cases](/docs/ddd/use-cases) and [Subdomain classification](/docs/ddd/subdomain-classification).
 - [DDD artifacts](/docs/ddd/ddd-artifacts): the ddd-crew pack (core domain chart, canvases, context map, EventStorming, class, ER and sequence diagrams).
 - [Downstream consumers](/docs/ecosystem/downstream-consumers) and the [upstream contracts](/docs/ecosystem/upstream-contracts).
-- [Runtime](/docs/overview/runtime): the four binaries, configuration, the outbox, the analytics read side and the web remote.
 - [API reference](/docs/api-reference): REST (generated from `apis/openapi.yaml`, including the reports endpoints), MCP tools and the event catalogue.
 - [Architecture decision records](/docs/adr): the index with each ADR's status.
