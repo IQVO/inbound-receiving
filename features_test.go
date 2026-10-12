@@ -52,6 +52,8 @@ const eventTypePrefix = "com.warehouse.wms.inbound-receiving."
 
 // world is the per-scenario state.
 type world struct {
+	// wave2 holds the consumer-feed state of the wave-2 scenarios.
+	wave2  wave2State
 	server *httptest.Server
 	clock  *steppingClock
 	outbox *memory.OutboxRepo
@@ -82,6 +84,7 @@ func (w *world) start() {
 	w.clock = &steppingClock{now: bddStart}
 	w.skuMode, w.doorMode = usecases.ModePermissive, usecases.ModePermissive
 	w.status, w.header, w.body, w.keys, w.appointment, w.receipt, w.listQuery = 0, nil, nil, 0, "", "", ""
+	w.wave2 = wave2State{}
 	uow := memory.NewUnitOfWork(asns, appts, receipts, w.skus, w.doors, ob, processed)
 	w.uow = uow
 	writer := usecases.Writer{
@@ -480,4 +483,5 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the outbox event types are "([^"]*)"$`, w.theOutboxEventTypesAre)
 	sc.Step(`^the outbox is empty$`, w.theOutboxIsEmpty)
 	sc.Step(`^the listed "([^"]*)" values are "([^"]*)"$`, w.theListedItemsAre)
+	w.registerWave2(sc)
 }
