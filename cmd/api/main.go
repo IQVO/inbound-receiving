@@ -93,10 +93,14 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("metrics handler: %w", err)
 	}
+	receiptMetrics, err := telemetry.NewReceiptMetrics()
+	if err != nil {
+		return fmt.Errorf("receipt metrics: %w", err)
+	}
 	readiness := &inboundhttp.Readiness{}
 	httpServer := &http.Server{
 		Addr:              getenv("HTTP_ADDR", ":8080"),
-		Handler:           inboundhttp.NewRouter(buildServer(ad, cfg, readiness, metrics)),
+		Handler:           inboundhttp.NewRouter(buildServer(ad, cfg, readiness, metrics, receiptMetrics)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -185,7 +189,7 @@ func (a adapters) writer() usecases.Writer {
 	}
 }
 
-func buildServer(ad adapters, cfg config, readiness *inboundhttp.Readiness, metrics http.Handler) *inboundhttp.Server {
+func buildServer(ad adapters, cfg config, readiness *inboundhttp.Readiness, metrics http.Handler, receiptMetrics ports.ReceiptMetrics) *inboundhttp.Server {
 	w := ad.writer()
 	return &inboundhttp.Server{
 		RegisterAsn:        &usecases.RegisterAsn{Writer: w, SkuMode: cfg.productMode, Skus: ad.skus},
@@ -198,7 +202,7 @@ func buildServer(ad adapters, cfg config, readiness *inboundhttp.Readiness, metr
 		GetAppointment:     &usecases.GetAppointment{Appointments: ad.appointments},
 		ListAppointments:   &usecases.ListAppointments{Appointments: ad.appointments},
 		OpenReceipt:        &usecases.OpenReceipt{Writer: w},
-		ReceiveLine:        &usecases.ReceiveLine{Writer: w},
+		ReceiveLine:        (&usecases.ReceiveLine{Writer: w}).WithMetrics(receiptMetrics),
 		CloseReceipt:       &usecases.CloseReceipt{Writer: w},
 		GetReceipt:         &usecases.GetReceipt{Receipts: ad.receipts},
 		ListReceipts:       &usecases.ListReceipts{Receipts: ad.receipts},
