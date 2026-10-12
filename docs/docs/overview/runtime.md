@@ -1,10 +1,59 @@
 ---
 id: runtime
 title: Runtime and integration mechanics
+sidebar_label: Architecture and runtime
 sidebar_position: 4
 ---
 
 # Runtime and integration mechanics
+
+This is the architecture page of the context: the hexagonal layout, every
+binary with its role and port, the data stores and how events flow in and out.
+
+## Container view
+
+```mermaid
+flowchart LR
+  console["warehouse-console<br/>(inbound_mfe remote)"] -->|"REST via Kong /api/inbound-receiving"| api
+  agent["warehouse-ops-agent"] -->|"MCP Streamable HTTP"| mcp
+
+  subgraph ir["inbound-receiving (one image, four binaries)"]
+    api["cmd/api :8080<br/>REST + outbox relay<br/>+ local-copy consumers"]
+    mcp["cmd/mcp :8090<br/>read-only MCP"]
+    proj["cmd/inbound-projector<br/>admin :8091"]
+    rep["cmd/inbound-reports :8092<br/>read-only reports"]
+  end
+
+  oltp[("OLTP Postgres<br/>asns, appointments, receipts,<br/>known_skus, dock_doors,<br/>outbox_events, processed_events,<br/>idempotency_keys")]
+  ana[("Analytical Postgres<br/>asn_facts, appointment_facts,<br/>receipt_facts, receipt_line_events,<br/>receipt_discrepancies,<br/>analytics_processed_events")]
+
+  api --> oltp
+  mcp -->|"reads"| oltp
+  pm["warehouse.product-master.events"] -->|"ProductRegistered"| api
+  fac["warehouse.facility.events"] -->|"LocationSlot events"| api
+  api -->|"outbox relay"| evt["warehouse.inbound-receiving.events"]
+  api -->|"outbox relay"| an["warehouse.inbound-receiving.analytics"]
+  evt -->|"ReceiptLineReceived"| inv["inventory-storage"]
+  an --> proj
+  proj -->|"poison"| dlq["warehouse.inbound-receiving.analytics.dlq"]
+  proj --> ana
+  rep -->|"read-only"| ana
+```
+
+Source: `cmd/api/main.go`, `cmd/mcp/main.go`, `cmd/inbound-projector/main.go`,
+`cmd/inbound-reports/main.go`, `internal/adapters/outbound/kafka/analytics_encoder.go`,
+`internal/adapters/inbound/kafka/*.go`, `internal/adapters/outbound/postgres/migrations/0001_inbound_receiving.up.sql`,
+`analytics/migrations/0001_receiving_performance.up.sql`.
+
+## Data stores
+
+| Store | Used by | Schema |
+|---|---|---|
+| OLTP Postgres (`DATABASE_URL`; in-memory adapters when unset) | `cmd/api` read/write, `cmd/mcp` read | `internal/adapters/outbound/postgres/migrations` (embedded, applied at boot by api and mcp) |
+| Analytical Postgres (`ANALYTICS_DATABASE_URL`, required) | `cmd/inbound-projector` (only writer), `cmd/inbound-reports` (read-only pool) | `analytics/migrations` (embedded, applied at boot by the projector) |
+| Kafka (one fleet broker) | `cmd/api` (relay + 2 consumers), `cmd/inbound-projector` | topics on the [Runbook](../operations/runbook.md#kafka) |
+
+Table-by-table descriptions are on the [Runbook](../operations/runbook.md#databases-and-migrations).
 
 ## Deployables
 
@@ -130,60 +179,25 @@ CI lints, type-checks, tests and builds it in the `web` job.
 
 ## Configuration
 
-### `cmd/api`
+Every environment variable of the four binaries (default, required flag,
+meaning and source file) is on [Configuration](../operations/configuration.md).
+The rules that shape the runtime:
 
-| Variable | Meaning | Default |
-| --- | --- | --- |
-| `HTTP_ADDR` | listen address | `:8080` |
-| `DATABASE_URL` | Postgres DSN; unset = in-memory adapters | unset |
-| `MIGRATIONS_DATABASE_URL` | direct DSN for the boot migrations | `DATABASE_URL` |
-| `EVENT_PUBLISHER` | `kafka` or `log` | `log` |
-| `KAFKA_BROKERS` | comma-separated brokers; required by `EVENT_PUBLISHER=kafka` and by either mode below being `kafka` | unset |
-| `OUTBOX_RELAY_INTERVAL` | relay poll interval (Go duration or seconds) | `1s` |
-| `PRODUCT_MODE` | `permissive` or `kafka`: enforce known SKUs | `permissive` |
-| `PRODUCT_CONSUMER_GROUP` | consumer group of the product consumer; **required** when `PRODUCT_MODE=kafka` | unset |
-| `DOCK_DOOR_MODE` | `permissive` or `kafka`: enforce known inbound doors | `permissive` |
-| `DOCK_DOOR_CONSUMER_GROUP` | consumer group of the dock-door consumer; **required** when `DOCK_DOOR_MODE=kafka` | unset |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/gRPC collector | `localhost:4317` |
-| `SHUTDOWN_DRAIN_DELAY` | wait after flipping `/readyz` before closing | `5s` |
-| `CORS_ALLOWED_ORIGINS` | comma-separated allowed origins | `http://localhost:5173` (the console shell's dev port; add `http://localhost:5193` to call the API from the standalone remote) |
-| `LOG_LEVEL`, `SERVICE_VERSION`, `ENVIRONMENT` | log level and telemetry resource attributes | `info`, `dev`, `local` |
-
-A `kafka` mode with an unset group, or without brokers, is a boot error
-(`loadConfig`), not a silent no-op. With `permissive` the consumer is not
-started and its group id is ignored. The first start under a new group replays
-the topic from the first offset; readiness does not wait for the replay, which
-is why the cluster flips to `kafka` only afterwards.
-
-### `cmd/mcp`
-
-`MCP_ADDR` (`:8090`), `DATABASE_URL` (unset = in-memory), `MIGRATIONS_DATABASE_URL`
-(default `DATABASE_URL`), `DOCK_DOOR_MODE` (only the mode `list_docks` reports,
-so it matches `cmd/api`; no consumer runs here), `OTEL_EXPORTER_OTLP_ENDPOINT`,
-`LOG_LEVEL`, `SERVICE_VERSION`, `ENVIRONMENT`. Run in-memory, the MCP server
-has its own empty store, separate from a local `cmd/api`.
-
-### `cmd/inbound-projector`
-
-| Variable | Meaning | Default |
-| --- | --- | --- |
-| `ANALYTICS_DATABASE_URL` | analytical Postgres DSN, direct | **required** |
-| `KAFKA_BROKERS` | comma-separated brokers | **required** |
-| `ANALYTICS_CONSUMER_GROUP` | fixed consumer group | `inbound-receiving-analytics` |
-| `ADMIN_ADDR` | `/healthz` and `/readyz` listen address | `:8091` |
-| `LOG_LEVEL` | log level | `info` |
-
-### `cmd/inbound-reports`
-
-`ANALYTICS_DATABASE_URL` (**required**; the chart passes the reader DSN),
-`HTTP_ADDR` (`:8092`), `OTEL_EXPORTER_OTLP_ENDPOINT`, `LOG_LEVEL`,
-`SERVICE_VERSION`, `ENVIRONMENT`.
+- `cmd/api` refuses to boot on a `kafka` mode without its consumer group or
+  without `KAFKA_BROKERS`, and on `EVENT_PUBLISHER=kafka` without brokers
+  (`loadConfig`, `startOutboxRelay`). With `permissive` the consumer is not
+  started.
+- The first start under a new consumer group replays the topic from the first
+  offset; readiness does not wait for the replay, which is why the cluster
+  flips a mode to `kafka` only after the copy is filled.
+- `cmd/inbound-projector` and `cmd/inbound-reports` require
+  `ANALYTICS_DATABASE_URL`; the projector also requires `KAFKA_BROKERS`.
 
 ## Boot and shutdown
 
 `cmd/api`: migrations (golang-migrate, embedded in `postgres/migrations`) and
-the first Postgres ping retry with backoff (`internal/bootretry`); on
-exhaustion the process refuses to boot. Shutdown order: `/readyz` flips to 503,
+the first Postgres ping retry with backoff (`internal/bootretry`: 5 attempts,
+1 + 2 + 4 + 8 = 15 s of sleeps); on exhaustion the process refuses to boot. Shutdown order: `/readyz` flips to 503,
 the drain delay elapses, HTTP drains, the consumers (outbox writers) stop, the
 relay stops last so nothing committed is stranded, then the pool closes.
 
@@ -199,3 +213,7 @@ names `inbound-receiving`, `inbound-receiving-mcp`, `inbound-receiving-reports`)
 Only `cmd/api` serves a Prometheus handler on `GET /metrics`. `GET /healthz` is
 liveness on every binary; `GET /readyz` (readiness, 503 while draining) exists
 on `cmd/api` and `cmd/inbound-projector` only.
+
+Instruments, span names, log fields and suggested alerts:
+[Observability](../operations/observability.md). Deployment, probes, topics
+and routine procedures: [Runbook](../operations/runbook.md).

@@ -30,6 +30,28 @@ reports, [ADR 0006](docs/adr/0006-analytics-read-side.md)) and the
   `warehouse.inbound-receiving.events` and the consumed channels)
 - Agent guides: `.claude/rules/` ; harness: [`HARNESS.md`](HARNESS.md)
 
+## Documentation
+
+Published site: <https://iqvo.github.io/inbound-receiving/> (built from
+`docs/`; Pages publishes from `main`).
+
+| Page | Source |
+| --- | --- |
+| Introduction | [`docs/docs/intro.md`](docs/docs/intro.md) |
+| Quickstart | [`docs/docs/overview/quickstart.md`](docs/docs/overview/quickstart.md) |
+| Architecture and runtime | [`docs/docs/overview/runtime.md`](docs/docs/overview/runtime.md) |
+| Configuration (every env var per binary) | [`docs/docs/operations/configuration.md`](docs/docs/operations/configuration.md) |
+| Runbook | [`docs/docs/operations/runbook.md`](docs/docs/operations/runbook.md) |
+| Observability | [`docs/docs/operations/observability.md`](docs/docs/operations/observability.md) |
+| Troubleshooting | [`docs/docs/operations/troubleshooting.md`](docs/docs/operations/troubleshooting.md) |
+| Testing | [`docs/docs/development/testing.md`](docs/docs/development/testing.md) |
+| MCP tools | [`docs/docs/mcp/tools.md`](docs/docs/mcp/tools.md) |
+| Integration: upstream / downstream | [`docs/docs/ecosystem/upstream-contracts.md`](docs/docs/ecosystem/upstream-contracts.md), [`docs/docs/ecosystem/downstream-consumers.md`](docs/docs/ecosystem/downstream-consumers.md) |
+| Use cases | [`docs/docs/ddd/use-cases.md`](docs/docs/ddd/use-cases.md) |
+| Subdomain classification | [`docs/docs/ddd/subdomain-classification.md`](docs/docs/ddd/subdomain-classification.md) |
+| DDD artifacts (ddd-crew pack) | [`docs/docs/ddd/ddd-artifacts.md`](docs/docs/ddd/ddd-artifacts.md) |
+| ADR index | [`docs/adr/index.md`](docs/adr/index.md) |
+
 ## Domain (`internal/domain`)
 
 | Package | Aggregate | Highlights |

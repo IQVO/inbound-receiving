@@ -1,6 +1,7 @@
 ---
 id: use-cases
 title: Use cases
+sidebar_label: Use cases
 sidebar_position: 2
 ---
 
@@ -49,6 +50,20 @@ that is the previous page's `nextCursor`; a bad value is `400 invalid-query`
 | `ApplyLocationSlotRegistered` | `LocationSlotRegistered` on `warehouse.facility.events` | Ignores anything but `role=Dock` with `dockFlow` `Inbound` or `Both` (`ignored`); otherwise claims the id (consumer `dock-door-registry`) and upserts the door. |
 | `ApplyLocationSlotDecommissioned` | `LocationSlotDecommissioned` | Claims the id and removes the door; a code that is not a known door is a no-op success. |
 
+## Analytics read side (outside `internal/application`)
+
+The analytics binaries do not use the application layer; their "use cases"
+are the ports in `internal/analytics/report`
+([ADR 0006](/docs/adr/0006-analytics-read-side)):
+
+| Port | Trigger | What it does |
+| --- | --- | --- |
+| `report.Projection.Apply` | each of the nine events on `warehouse.inbound-receiving.analytics`, consumed by `cmd/inbound-projector` | Claims the CloudEvents id in `analytics_processed_events` and folds the event into `asn_facts`, `appointment_facts`, `receipt_facts`, `receipt_line_events` or `receipt_discrepancies` in one analytical transaction. A deterministic rejection (`report.ErrRejected`) is dead-lettered to `warehouse.inbound-receiving.analytics.dlq`. |
+| `report.Reader.PerformanceDays` + `Current` | `GET /reports/receiving-performance` on `cmd/inbound-reports` | Per-UTC-day counts and p50/p95 timings over `[from, to)` (default the last 30 days, at most 366) plus today's open receipts and expected arrivals. |
+| `report.Reader.LastEventAt` | `GET /reports/freshness` | `as_of` and `lag_seconds` of the projection. |
+
+Response shapes: [Runbook — Reports API](../operations/runbook.md#reports-api-cmdinbound-reports).
+
 ## Cross-cutting behaviour
 
 - **Idempotency.** `Idempotency-Key` on the creating `POST`s: a replay returns
@@ -60,6 +75,8 @@ that is the previous page's `nextCursor`; a bad value is `400 invalid-query`
 - **Errors** are RFC 7807 problems from one table, `problemCatalogue` in
   `internal/adapters/inbound/http/errors.go`.
 
-Acceptance scenarios are in `features/*.feature` (`register_asn`,
-`dock_appointments`, `receiving`, `idempotent_replays`; godog,
-`features_test.go`).
+Acceptance scenarios are in `features/*.feature` (7 files, 71 scenarios:
+`register_asn`, `dock_appointments`, `receiving`, `idempotent_replays`,
+`list_receipts_and_docks`, `dock_door_registry`, `probes`; godog,
+`features_test.go` and `features_wave2_test.go`). See
+[Testing](../development/testing.md).
