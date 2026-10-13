@@ -39,12 +39,15 @@ spec:
               protocol: TCP
           # Env contract verified against cmd/inbound-reports/main.go:
           # ANALYTICS_DATABASE_URL, HTTP_ADDR, LOG_LEVEL, SERVICE_VERSION,
-          # OTEL_EXPORTER_OTLP_ENDPOINT. No Kafka, no OLTP database.
+          # ENVIRONMENT (gap fix D21: read by the telemetry adapter, like the
+          # api's), OTEL_EXPORTER_OTLP_ENDPOINT. No Kafka, no OLTP database.
           env:
             - name: HTTP_ADDR
               value: {{ .Values.analytics.reports.httpAddr | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.config.logLevel | quote }}
+            - name: ENVIRONMENT
+              value: {{ .Values.environment | quote }}
             - name: SERVICE_VERSION
               value: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
             {{- if .Values.otel.enabled }}

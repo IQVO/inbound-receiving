@@ -23,6 +23,12 @@ Evidence (on the consumer's `develop`): inventory-storage
 (inventory-storage stamps with its own clock). A brand-new group starts at the
 earliest offset. Every other type on the topic is committed past untouched.
 
+Every message also carries the optional W3C `traceparent` (and `tracestate` /
+`baggage` when present) of the request that wrote the outbox row
+([ADR 0009](/docs/adr/0009-trace-context-crosses-the-outbox)); a consumer that
+opens a span can `Extract` it to continue that trace. Messages relayed from rows
+written without an active span carry only `content-type`.
+
 Classifications of neighbours come from the warehouse-docs contexts table.
 
 ## Handover semantics

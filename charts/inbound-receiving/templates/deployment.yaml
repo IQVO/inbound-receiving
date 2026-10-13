@@ -52,6 +52,17 @@ spec:
             - name: http
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
+          # D14 (2026-10-12): every config.* value (OUTBOX_RELAY_INTERVAL,
+          # OUTBOX_MAX_ATTEMPTS, SHUTDOWN_DRAIN_DELAY, the housekeeping knobs,
+          # ...) reaches cmd/api through the chart ConfigMap. The explicit
+          # `env` entries below win over envFrom for the same key and carry
+          # the same values, so nothing changes for the variables already set
+          # here; the checksum/config annotation above rolls the pods when the
+          # ConfigMap changes. Only this Deployment mounts it: the other
+          # binaries read their own explicit env.
+          envFrom:
+            - configMapRef:
+                name: {{ include "inbound-receiving.fullname" . }}
           # Env contract verified against cmd/api/main.go's header comment.
           # Values that have a dedicated chart key are rendered here, never
           # through extraEnv, so the same variable is never set twice.
@@ -66,6 +77,10 @@ spec:
             - name: OUTBOX_RELAY_INTERVAL
               value: {{ . | quote }}
             {{- end }}
+            # D12 / ADR 0007: the relay excludes a row after this many
+            # failures (0 = unlimited).
+            - name: OUTBOX_MAX_ATTEMPTS
+              value: {{ .Values.config.outboxMaxAttempts | quote }}
             # ADR 0003 local copies. PRODUCT_MODE / DOCK_DOOR_MODE are always
             # rendered (permissive = the consumer is not started). The
             # consumer group ids come from values, never a literal: a stable

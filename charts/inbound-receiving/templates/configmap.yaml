@@ -25,6 +25,11 @@ data:
   {{- with .Values.config.outboxRelayInterval }}
   OUTBOX_RELAY_INTERVAL: {{ . | quote }}
   {{- end }}
+  OUTBOX_MAX_ATTEMPTS: {{ .Values.config.outboxMaxAttempts | quote }}
+  HOUSEKEEPING_INTERVAL: {{ .Values.config.housekeepingInterval | quote }}
+  IDEMPOTENCY_KEY_TTL: {{ .Values.config.idempotencyKeyTTL | quote }}
+  OUTBOX_RETENTION: {{ .Values.config.outboxRetention | quote }}
+  PROCESSED_EVENTS_RETENTION: {{ .Values.config.processedEventsRetention | quote }}
   {{- with .Values.config.shutdownDrainDelay }}
   SHUTDOWN_DRAIN_DELAY: {{ . | quote }}
   {{- end }}

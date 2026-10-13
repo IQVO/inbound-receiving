@@ -18,7 +18,11 @@
 //	KAFKA_BROKERS             comma-separated brokers (required)
 //	ANALYTICS_CONSUMER_GROUP  fixed consumer group (default inbound-receiving-analytics)
 //	ADMIN_ADDR                /healthz and /readyz listen address (default :8091)
-//	LOG_LEVEL                 debug | info | warn | error (default info)
+//	LOG_LEVEL                 debug | info | warn (or warning) | error (default info)
+//	OTEL_EXPORTER_OTLP_ENDPOINT  OTLP/gRPC collector (default localhost:4317)
+//	SERVICE_VERSION, ENVIRONMENT  OTel resource attributes (service name inbound-receiving-projector)
+//	HOUSEKEEPING_INTERVAL     analytics sweeper interval (default 1h, 0 = off)
+//	PROCESSED_EVENTS_RETENTION  analytics_processed_events retention (default 720h, 0 = keep forever)
 package main
 
 import (
@@ -39,7 +43,9 @@ import (
 	inboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/inbound/kafka"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/analyticsstore"
 	outboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/outbound/kafka"
+	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/telemetry"
 	"github.com/claudioed/inbound-receiving/internal/bootretry"
+	"github.com/claudioed/inbound-receiving/internal/housekeeping"
 )
 
 const (
@@ -52,6 +58,9 @@ const (
 	// charter's `<ctx>-analytics` naming, distinct from the product and
 	// dock-door consumers' groups.
 	defaultConsumerGroup = "inbound-receiving-analytics"
+
+	// projectorServiceName is the OTel service.name of this binary.
+	projectorServiceName = "inbound-receiving-projector"
 )
 
 // config is the projector's environment.
@@ -111,11 +120,20 @@ func run() error {
 	logger := newLogger(cfg.logLevel)
 	slog.SetDefault(logger)
 
+	otelShutdown, err := setupTelemetry(logger)
+	if err != nil {
+		return err
+	}
+	defer flushTelemetry(logger, otelShutdown) // runs after the pool and the consumer are closed
+
 	pool, err := openAnalyticsPool(context.Background(), logger, cfg.analyticsURL)
 	if err != nil {
 		return err
 	}
 	defer pool.Close() // runs last: after the consumer loop has stopped touching it
+
+	stopSweeper := startAnalyticsSweeper(pool, os.Getenv, logger)
+	defer stopSweeper() // runs before pool.Close
 
 	consumer := inboundkafka.NewAnalyticsConsumer(cfg.brokers, outboundkafka.AnalyticsTopic, cfg.group,
 		analyticsstore.NewProjection(pool), logger)
@@ -209,6 +227,73 @@ func openAnalyticsPool(ctx context.Context, logger *slog.Logger, url string) (*p
 		return nil, err
 	}
 	return pool, nil
+}
+
+// newAnalyticsSweeper builds the analytics_processed_events sweeper (gap fix
+// D24, ADR 0010) from HOUSEKEEPING_INTERVAL and PROCESSED_EVENTS_RETENTION.
+func newAnalyticsSweeper(pool *pgxpool.Pool, env func(string) string, logger *slog.Logger) *analyticsstore.Sweeper {
+	return analyticsstore.NewSweeper(pool,
+		analyticsstore.WithSweepInterval(housekeeping.Duration(env, housekeeping.EnvInterval, analyticsstore.DefaultSweepInterval, logger)),
+		analyticsstore.WithProcessedEventsRetention(housekeeping.Duration(env, housekeeping.EnvProcessedEventsRetention,
+			analyticsstore.DefaultProcessedEventsRetention, logger)),
+		analyticsstore.WithSweeperLogger(logger),
+	)
+}
+
+// startAnalyticsSweeper runs the sweeper in the background and returns the
+// function that stops it and waits (bounded) for it to return.
+func startAnalyticsSweeper(pool *pgxpool.Pool, env func(string) string, logger *slog.Logger) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	sweeper := newAnalyticsSweeper(pool, env, logger)
+	logger.Info("analytics housekeeping sweeper running")
+	go func() {
+		defer close(done)
+		_ = sweeper.Run(ctx) // logs its own failed passes; nil on cancel
+	}()
+	return func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(shutdownTimeout):
+			logger.Warn("analytics housekeeping sweeper did not stop before the shutdown deadline")
+		}
+	}
+}
+
+// setupTelemetry installs the OTLP trace and metric providers exactly like
+// the other three binaries (gap fix D21): service name
+// inbound-receiving-projector, SERVICE_VERSION, ENVIRONMENT (read by the
+// telemetry adapter) and OTEL_EXPORTER_OTLP_ENDPOINT. Export never blocks:
+// an unreachable Collector only drops telemetry.
+func setupTelemetry(logger *slog.Logger) (func(context.Context) error, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	version := getenv("SERVICE_VERSION", "dev")
+	endpoint := getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint)
+	shutdown, err := telemetry.Setup(ctx, projectorServiceName, version, endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("telemetry setup: %w", err)
+	}
+	logger.Info("telemetry configured", "service_name", projectorServiceName, "service_version", version,
+		"environment", telemetry.Environment(), "otlp_endpoint", endpoint)
+	return shutdown, nil
+}
+
+// flushTelemetry flushes and closes the providers, bounded.
+func flushTelemetry(logger *slog.Logger, shutdown func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := shutdown(ctx); err != nil {
+		logger.Error("telemetry shutdown failed", "error", err)
+	}
+}
+
+func getenv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func newLogger(level string) *slog.Logger {
