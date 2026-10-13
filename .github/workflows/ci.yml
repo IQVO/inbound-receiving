@@ -345,6 +345,7 @@ jobs:
         run: |
           pip install --require-hashes -r .github/requirements/chart-tests.txt
           python3 charts/inbound-receiving/tests/test_service_selectors.py
+          python3 charts/inbound-receiving/tests/test_kong_config.py
 
   # ============================================================
   # CLASSIFICATION: DOCS/API DRIFT (non-required)
