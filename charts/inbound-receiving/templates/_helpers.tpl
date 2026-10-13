@@ -202,3 +202,20 @@ projector is harmless without events.
 {{- fail "analytics.enabled is true but kafka.enabled is false — the projector consumes warehouse.inbound-receiving.analytics and needs kafka.brokers. Set kafka.enabled=true." -}}
 {{- end -}}
 {{- end -}}
+
+
+{{/*
+Comma-joined names of this chart's enabled KongPlugins, for the
+konghq.com/plugins annotation on every HTTPRoute this chart renders.
+Empty string (annotation omitted) when none are enabled — standalone
+installs without Kong are unaffected.
+*/}}
+{{- define "inbound-receiving.kongPluginNames" -}}
+{{- $names := list -}}
+{{- range $name, $cfg := .Values.kongPlugins -}}
+{{- if $cfg.enabled -}}
+{{- $names = append $names (printf "%s-%s" (include "inbound-receiving.fullname" $) $name) -}}
+{{- end -}}
+{{- end -}}
+{{- join "," $names -}}
+{{- end -}}
