@@ -66,6 +66,10 @@ spec:
             - name: OUTBOX_RELAY_INTERVAL
               value: {{ . | quote }}
             {{- end }}
+            # D12 / ADR 0007: the relay excludes a row after this many
+            # failures (0 = unlimited).
+            - name: OUTBOX_MAX_ATTEMPTS
+              value: {{ .Values.config.outboxMaxAttempts | quote }}
             # ADR 0003 local copies. PRODUCT_MODE / DOCK_DOOR_MODE are always
             # rendered (permissive = the consumer is not started). The
             # consumer group ids come from values, never a literal: a stable

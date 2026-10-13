@@ -156,12 +156,37 @@ with the consumer names `product-registry` and `dock-door-registry`.
   batch is followed immediately by another pass;
 - rows are sent one at a time in id order; each success sets `published_at`;
   the **first failure stops the pass**, increments `attempts`, stores
-  `last_error` and is retried on the next pass (head-of-line by design, so a
-  later event never overtakes an earlier one);
+  `last_error` and is retried on the next pass (head-of-line, so a later
+  event never overtakes an earlier one that is still being retried);
+- **attempt cap** ([ADR 0007](/docs/adr/0007-outbox-relay-attempt-cap)):
+  a row that has failed `OUTBOX_MAX_ATTEMPTS` times (default **20**, chart
+  `config.outboxMaxAttempts`, `0` = unlimited) is no longer claimed. The pass
+  that records the last attempt logs
+  `outbox relay: row reached the attempt cap and is excluded from future claims; ...`
+  at ERROR with `outbox_id`, `topic`, `event_type`, `key`, `attempts`,
+  `max_attempts` and `error`. From then on later rows, **including rows with
+  the same key**, overtake it; the row stays in `outbox_events` (unpublished,
+  with `attempts` and `last_error`) until re-armed (below);
 - `EVENT_PUBLISHER=log` (the chart default) logs each row as
   `event published (log sink)` and marks it published: nothing reaches Kafka;
 - every domain event is **two** rows (integration first, analytics second)
   sharing one CloudEvents `id`; `(event_id, topic)` is unique.
+
+#### Re-arm a row excluded by the attempt cap
+
+Find the excluded rows, fix the cause shown in `last_error` (broker limit,
+topic, payload), then reset `attempts` so the next pass claims the row again:
+
+```sql
+SELECT id, topic, event_type, key, attempts, last_error
+FROM outbox_events
+WHERE published_at IS NULL AND attempts >= 20;   -- 20 = OUTBOX_MAX_ATTEMPTS
+
+UPDATE outbox_events SET attempts = 0 WHERE id = <id>;
+```
+
+The re-armed row is delivered late, with its original CloudEvents `id`;
+consumers dedupe on it.
 
 ### Housekeeping
 

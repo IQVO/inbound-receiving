@@ -87,8 +87,10 @@ All four binaries log JSON to stdout via `log/slog` (`LOG_LEVEL`, default
 | `http server listening` / `mcp server listening (Streamable HTTP)` / `reports server listening` / `projector admin server listening` | INFO | `addr` | each |
 | `DATABASE_URL not configured; using in-memory adapters` | INFO | — | api, mcp |
 | `retrying` / `succeeded after retry` | WARN / INFO | `op` (`run migrations`, `ping postgres`, `run analytics migrations`, `ping analytics database`), `attempt`, `in`, `err` | all (boot retry) |
-| `outbox relay running` | INFO | `publisher`, `interval`, `topics` | api |
+| `outbox relay running` | INFO | `publisher`, `interval`, `max_attempts`, `topics` | api |
 | `outbox relay pass failed` | ERROR | `error` (contains `outbox row <id> (<type>)`) | api |
+| `outbox relay: row reached the attempt cap and is excluded from future claims; re-arm it with attempts = 0 after fixing the cause` | ERROR (once per row) | `outbox_id`, `topic`, `event_type`, `key`, `attempts`, `max_attempts`, `error` | api ([ADR 0007](/docs/adr/0007-outbox-relay-attempt-cap)) |
+| `invalid OUTBOX_MAX_ATTEMPTS; using the default` | WARN | `value`, `default` | api |
 | `event published (log sink)` | INFO | `topic`, `type`, `subject`, `id` | api with `EVENT_PUBLISHER=log` |
 | `product consumer running` / `dock door consumer running` / `analytics consumer running` | INFO | `topic`, `group_id`, `brokers` | api / projector |
 | `PRODUCT_MODE is permissive; product consumer not started` (and the dock-door twin) | INFO | — | api |
@@ -127,7 +129,8 @@ These are suggestions built from the signals above; none exist today.
 
 | Alert | Signal | Why |
 |---|---|---|
-| Outbox backlog | `SELECT count(*) FROM outbox_events WHERE published_at IS NULL` above a threshold for 5 min, or any row with `attempts > 5` | the relay stops at the first failing row; a stuck head blocks every later event |
+| Outbox backlog | `SELECT count(*) FROM outbox_events WHERE published_at IS NULL` above a threshold for 5 min, or any row with `attempts > 5` | the relay stops at the first failing row; a stuck head blocks every later event until it reaches the attempt cap |
+| Outbox row excluded | any `outbox relay: row reached the attempt cap ...` ERROR line, or `SELECT count(*) FROM outbox_events WHERE published_at IS NULL AND attempts >= 20` > 0 | the row will never be delivered until an operator re-arms it (runbook) |
 | Relay failing | rate of `outbox relay pass failed` log lines | Kafka unreachable or rejecting writes |
 | Consumer stuck | repeated `handling failed; retrying the same message` for the same `partition`/`offset` | a transient failure blocks the partition indefinitely |
 | Analytics DLQ growth | any message on `warehouse.inbound-receiving.analytics.dlq` | every DLQ entry is a deterministic projection failure |

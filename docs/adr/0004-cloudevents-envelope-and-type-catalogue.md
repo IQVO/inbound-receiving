@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-10-08).
+Accepted (2026-10-08). Per-key ordering amended by [ADR 0007](./0007-outbox-relay-attempt-cap.md) (a row excluded by the relay attempt cap is overtaken).
 
 ## Context
 

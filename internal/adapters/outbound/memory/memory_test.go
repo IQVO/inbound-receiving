@@ -371,7 +371,7 @@ func TestOutboxRepoDrainStopsAtTheFirstFailure(t *testing.T) {
 	_ = ob.Insert(ctx, outbox.Message{EventType: "a"}, outbox.Message{EventType: "b"}, outbox.Message{EventType: "c"})
 	boom := errors.New("boom")
 	var sent []string
-	n, err := ob.Drain(ctx, 10, func(_ context.Context, m outbox.Message) error {
+	n, err := ob.Drain(ctx, 10, 0, func(_ context.Context, m outbox.Message) error {
 		if m.EventType == "b" {
 			return boom
 		}
@@ -381,7 +381,7 @@ func TestOutboxRepoDrainStopsAtTheFirstFailure(t *testing.T) {
 	if n != 1 || !errors.Is(err, boom) || len(sent) != 1 || ob.Unpublished() != 2 || ob.LastError(1) == "" {
 		t.Fatalf("n=%d err=%v sent=%v unpublished=%d", n, err, sent, ob.Unpublished())
 	}
-	n, err = ob.Drain(ctx, 1, func(context.Context, outbox.Message) error { return nil })
+	n, err = ob.Drain(ctx, 1, 0, func(context.Context, outbox.Message) error { return nil })
 	if n != 1 || err != nil || ob.Unpublished() != 1 || ob.LastError(1) != "" {
 		t.Fatalf("limited drain: n=%d err=%v unpublished=%d", n, err, ob.Unpublished())
 	}

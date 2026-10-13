@@ -117,7 +117,10 @@ outbox together.
   immediately by another pass. `OutboxRepo.Drain` claims rows with
   `FOR UPDATE SKIP LOCKED`, sends them one at a time in id order, marks each
   published, and stops at the first failure (recording `attempts` and
-  `last_error`). Delivery is at-least-once.
+  `last_error`). A row that has failed `OUTBOX_MAX_ATTEMPTS` times (default
+  20, `0` = unlimited) is no longer claimed and is logged once at ERROR
+  ([ADR 0007](/docs/adr/0007-outbox-relay-attempt-cap)). Delivery is
+  at-least-once.
 - `EVENT_PUBLISHER=kafka` uses `RelaySink` (kafka-go writer, `RequireAll` acks,
   10 ms batch timeout, the `Hash` balancer on the message key); the default
   `log` sink only logs each message so the outbox still drains without a broker.

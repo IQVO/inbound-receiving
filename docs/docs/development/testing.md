@@ -57,6 +57,7 @@ gate (enforced by the fitness tests below).
 | `internal/adapters/outbound/postgres/helper_integration_test.go` | shared container helper |
 | `internal/adapters/outbound/postgres/pgtx/pgtx_integration_test.go` | transaction propagation through `context` |
 | `internal/adapters/outbound/outbox/relay_integration_test.go` | relay draining Postgres to Kafka |
+| `internal/adapters/outbound/outbox/relay_cap_integration_test.go` | relay attempt cap over real Postgres: a poison row is excluded after N failures and the good row behind it (same key) publishes; the re-arm SQL; `0` = unlimited ([ADR 0007](/docs/adr/0007-outbox-relay-attempt-cap)) |
 | `internal/adapters/outbound/kafka/publisher_integration_test.go` | `RelaySink` against a real broker |
 | `internal/adapters/inbound/kafka/consumers_integration_test.go` | product and dock-door consumers end to end |
 | `internal/adapters/inbound/kafka/analytics_consumer_integration_test.go` | projector consumer, DLQ |
@@ -84,6 +85,7 @@ covered.
 | `TestEventCatalogueMatchesContract`, `TestEventCatalogueDetector` | published event types match `apis/asyncapi.yaml` |
 | `TestKafkaIntegrationTestsUseTestcontainers`, `TestPostgresIntegrationTestsUseTestcontainers`, `TestPostgresIntegrationSensorFailsOnBadFixtures` | integration tests use testcontainers, never an external DSN or a skip |
 | `TestMCPOptionalToolInputsCarryOmitempty`, `TestMCPOptionalToolInputsSensorFailsOnBadFixtures` | every MCP tool input field whose `jsonschema` description calls it optional ("optional" or "omitted") carries `omitempty`, so the SDK does not mark it required (gap fix D16) |
+| `TestOutboxRelaysPassAttemptCap`, `TestOutboxRelayCapSensorFailsOnBadFixtures` | every non-test file under `cmd/` that builds an outbox relay (`NewRelay`) passes `WithMaxAttempts(...)` ([ADR 0007](/docs/adr/0007-outbox-relay-attempt-cap)) |
 
 `violation_test.go` holds deliberately failing fixtures that prove the
 detectors work.

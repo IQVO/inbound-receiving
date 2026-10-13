@@ -10,6 +10,7 @@
 //	EVENT_PUBLISHER               kafka | log (default log)
 //	KAFKA_BROKERS                 comma-separated brokers (EVENT_PUBLISHER=kafka, consumers)
 //	OUTBOX_RELAY_INTERVAL         relay poll interval (Go duration or seconds, default 1s)
+//	OUTBOX_MAX_ATTEMPTS           failures before the relay excludes a row (default 20, 0 = unlimited)
 //	PRODUCT_MODE                  permissive | kafka (default permissive): enforce known SKUs
 //	PRODUCT_CONSUMER_GROUP        stable group of the product consumer; required when PRODUCT_MODE=kafka
 //	DOCK_DOOR_MODE                permissive | kafka (default permissive): enforce known inbound doors
@@ -351,6 +352,22 @@ func parseRelayInterval(raw string, logger *slog.Logger) time.Duration {
 	return d
 }
 
+// outboxMaxAttempts reads OUTBOX_MAX_ATTEMPTS (gap fix D12): how many times
+// an outbox row may fail before the relay excludes it from claims. Unset =
+// the fleet default (20); 0 = unlimited; negative or unparsable values log
+// a warning and use the default, so a typo never silently removes the cap.
+func outboxMaxAttempts(raw string, logger *slog.Logger) int {
+	if raw == "" {
+		return outboxrelay.DefaultMaxAttempts
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		logger.Warn("invalid OUTBOX_MAX_ATTEMPTS; using the default", "value", raw, "default", outboxrelay.DefaultMaxAttempts)
+		return outboxrelay.DefaultMaxAttempts
+	}
+	return n
+}
+
 // startOutboxRelay starts the relay goroutine with the EVENT_PUBLISHER sink.
 // Kafka is dialled lazily on the first send, never here.
 func startOutboxRelay(store outboxrelay.Store, logger *slog.Logger) (*worker, func(), error) {
@@ -376,9 +393,11 @@ func startOutboxRelay(store outboxrelay.Store, logger *slog.Logger) (*worker, fu
 		}
 	}
 	interval := parseRelayInterval(os.Getenv("OUTBOX_RELAY_INTERVAL"), logger)
-	relay := outboxrelay.NewRelay(store, sink, logger, outboxrelay.WithInterval(interval))
+	maxAttempts := outboxMaxAttempts(os.Getenv("OUTBOX_MAX_ATTEMPTS"), logger)
+	relay := outboxrelay.NewRelay(store, sink, logger, outboxrelay.WithInterval(interval), outboxrelay.WithMaxAttempts(maxAttempts))
 
-	logger.Info("outbox relay running", "publisher", mode, "interval", interval, "topics", []string{outboundkafka.Topic, outboundkafka.AnalyticsTopic})
+	logger.Info("outbox relay running", "publisher", mode, "interval", interval, "max_attempts", maxAttempts,
+		"topics", []string{outboundkafka.Topic, outboundkafka.AnalyticsTopic})
 	w := startWorker(logger, "outbox-relay", relay.Run, func() {})
 	go func() {
 		<-w.done
