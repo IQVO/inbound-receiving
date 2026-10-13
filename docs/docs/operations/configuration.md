@@ -128,5 +128,17 @@ The chart `charts/inbound-receiving` renders these variables per Deployment:
 | `projector-deployment.yaml` | `ADMIN_ADDR`, `KAFKA_BROKERS`, `ANALYTICS_CONSUMER_GROUP`, `LOG_LEVEL`, `ANALYTICS_DATABASE_URL` |
 | `reports-deployment.yaml` | `HTTP_ADDR`, `LOG_LEVEL`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `ANALYTICS_DATABASE_URL` |
 
+The chart ConfigMap (`templates/configmap.yaml`, named `<release>`) holds the
+non-secret `cmd/api` variables (`HTTP_ADDR`, `LOG_LEVEL`, `EVENT_PUBLISHER`,
+the modes and groups, `OUTBOX_RELAY_INTERVAL`, `OUTBOX_MAX_ATTEMPTS`,
+`SHUTDOWN_DRAIN_DELAY`, `CORS_ALLOWED_ORIGINS`, `ENVIRONMENT`,
+`OTEL_EXPORTER_OTLP_ENDPOINT`, `KAFKA_BROKERS`). The api Deployment mounts it
+with `envFrom` (gap fix D14), so every `config.*` value really reaches the
+process; its explicit `env` entries carry the same values and win for the same
+key. Only the api Deployment mounts it: the MCP, projector and reports
+Deployments read their own explicit env (the ConfigMap's `HTTP_ADDR` would
+otherwise move the reports listener). `charts/inbound-receiving/tests/render_test.sh`
+(CI job `chart-tests`) asserts the mount.
+
 See the [runbook](./runbook.md) for deployment, probes and routine
 procedures.

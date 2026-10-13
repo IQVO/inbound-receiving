@@ -24,6 +24,7 @@ every push and pull request into `develop`/`main`.
 | Integration (testcontainers) | 15 files with `//go:build integration` | `make integration` | Docker |
 | Mutation | gremlins over `internal/domain` | `make mutation` / `make mutation-full` | `gremlins` v0.6.0 |
 | Frontend remote | `web/` (vitest + Testing Library) | `npm test` in `web/` | Node 22, sibling `warehouse-ui-kit` checkout |
+| Chart render tests | `charts/inbound-receiving/tests/render_test.sh`, `charts/inbound-receiving/tests/test_service_selectors.py` | `bash .../render_test.sh`, `python3 .../test_service_selectors.py` (CI `chart-tests`) | `helm`, PyYAML |
 
 There are **61** `*_test.go` files; 15 of them are integration-tagged.
 
@@ -146,6 +147,7 @@ lefthook (`lefthook.yml`) runs `fmt-check`, `vet` and `lint` on pre-commit and
 | `api-lint` | Spectral on `apis/openapi.yaml` and `apis/asyncapi.yaml` (`--fail-severity=warn`) | push + PR |
 | `vuln` | govulncheck | push + PR |
 | `helm-lint` | `ct lint` + `charts/inbound-receiving/tests/test_service_selectors.py` | PR only |
+| `chart-tests` | `bash charts/inbound-receiving/tests/render_test.sh` (api Deployment mounts the ConfigMap via `envFrom`, `OUTBOX_MAX_ATTEMPTS` default, `ENVIRONMENT` on every backend Deployment) + `test_service_selectors.py` | push + PR |
 | `docs-api-drift` | `npm run clean-api-docs && npm run gen-api-docs`, fails on a diff under `docs/api-reference/rest` | push + PR |
 | `web` | in `web/`: `npm run lint`, `npx tsc -b`, `npm test`, `npm run build` (after building `warehouse-ui-kit` from its `develop`) | push + PR |
 | `arch-test` | `go test ./internal/architecture/... -v` | push + PR |
