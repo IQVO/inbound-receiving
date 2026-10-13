@@ -19,3 +19,4 @@ the authority; ADR bodies are never edited after acceptance.
 | [0005](./0005-mcp-server-adoption.md) | MCP server adoption (read-only, unauthenticated, additive) | Accepted (2026-10-08) |
 | [0006](./0006-analytics-read-side.md) | Analytics read side: analytics stream, projector and receiving performance report over a separate analytical database | Accepted (2026-10-08) |
 | [0007](./0007-outbox-relay-attempt-cap.md) | Outbox relay attempt cap (`OUTBOX_MAX_ATTEMPTS`) | Accepted (2026-10-12) |
+| [0008](./0008-projector-telemetry-and-environment.md) | The analytics projector sets up telemetry; every backend Deployment sets ENVIRONMENT | Accepted (2026-10-12) |

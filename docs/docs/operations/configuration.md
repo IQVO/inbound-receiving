@@ -80,8 +80,10 @@ group variables.
 ## `cmd/inbound-projector`
 
 The projector is the only writer of the **analytical** database (ADR 0006).
-It never opens the OLTP database and has **no OpenTelemetry setup**: it reads
-neither `OTEL_EXPORTER_OTLP_ENDPOINT` nor `SERVICE_VERSION` nor `ENVIRONMENT`.
+It never opens the OLTP database. Since gap fix D21 it sets up OpenTelemetry
+like the other binaries ([ADR 0008](/docs/adr/0008-projector-telemetry-and-environment)):
+service name `inbound-receiving-projector`, Go runtime metrics and the W3C
+propagator; it opens no spans of its own and serves no `/metrics`.
 
 | Variable | Default | Required? | Meaning | Source |
 |---|---|---|---|---|
@@ -90,6 +92,9 @@ neither `OTEL_EXPORTER_OTLP_ENDPOINT` nor `SERVICE_VERSION` nor `ENVIRONMENT`.
 | `ANALYTICS_CONSUMER_GROUP` | `inbound-receiving-analytics` | no | Consumer group on `warehouse.inbound-receiving.analytics`. The chart always sets it. | `cmd/inbound-projector/main.go` |
 | `ADMIN_ADDR` | `:8091` | no | Admin listener serving only `GET /healthz` and `GET /readyz`. | `cmd/inbound-projector/main.go` |
 | `LOG_LEVEL` | `info` | no | `debug`, `info`, `warn`/`warning`, `error`. | `cmd/inbound-projector/main.go` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | OTLP/gRPC collector endpoint. A missing collector never blocks boot. | `cmd/inbound-projector/main.go` |
+| `SERVICE_VERSION` | `dev` | no | `service.version` resource attribute (service name `inbound-receiving-projector`). | `cmd/inbound-projector/main.go` |
+| `ENVIRONMENT` | `local` | no | `deployment.environment.name` resource attribute. | `internal/adapters/outbound/telemetry/telemetry.go` |
 
 ## `cmd/inbound-reports`
 
@@ -101,7 +106,7 @@ The reports binary is read-only: it never opens the OLTP database or Kafka.
 | `HTTP_ADDR` | `:8092` | no | Listen address for `GET /healthz`, `GET /reports/receiving-performance` and `GET /reports/freshness`. | `cmd/inbound-reports/main.go` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | OTLP/gRPC collector endpoint. | `cmd/inbound-reports/main.go` |
 | `SERVICE_VERSION` | `dev` | no | `service.version` resource attribute (service name `inbound-receiving-reports`). | `cmd/inbound-reports/main.go` |
-| `ENVIRONMENT` | `local` | no | `deployment.environment.name` resource attribute. The chart's reports Deployment does not set it, so in-cluster it reports `local`. | `internal/adapters/outbound/telemetry/telemetry.go` |
+| `ENVIRONMENT` | `local` | no | `deployment.environment.name` resource attribute. The chart's reports Deployment sets it from `environment` (gap fix D21). | `internal/adapters/outbound/telemetry/telemetry.go` |
 | `LOG_LEVEL` | `info` | no | `debug`, `info`, `warn`/`warning`, `error`. | `cmd/inbound-reports/main.go` |
 
 ## Boot retry
@@ -125,8 +130,8 @@ The chart `charts/inbound-receiving` renders these variables per Deployment:
 |---|---|
 | `deployment.yaml` (`cmd/api`) | `HTTP_ADDR`, `LOG_LEVEL`, `EVENT_PUBLISHER`, `OUTBOX_RELAY_INTERVAL`, `OUTBOX_MAX_ATTEMPTS`, `PRODUCT_MODE`, `PRODUCT_CONSUMER_GROUP`, `DOCK_DOOR_MODE`, `DOCK_DOOR_CONSUMER_GROUP`, `SHUTDOWN_DRAIN_DELAY`, `CORS_ALLOWED_ORIGINS`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `DATABASE_URL`, `MIGRATIONS_DATABASE_URL`, `KAFKA_BROKERS` |
 | `mcp-deployment.yaml` | `MCP_ADDR`, `LOG_LEVEL`, `DOCK_DOOR_MODE`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `DATABASE_URL`, `MIGRATIONS_DATABASE_URL` |
-| `projector-deployment.yaml` | `ADMIN_ADDR`, `KAFKA_BROKERS`, `ANALYTICS_CONSUMER_GROUP`, `LOG_LEVEL`, `ANALYTICS_DATABASE_URL` |
-| `reports-deployment.yaml` | `HTTP_ADDR`, `LOG_LEVEL`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `ANALYTICS_DATABASE_URL` |
+| `projector-deployment.yaml` | `ADMIN_ADDR`, `KAFKA_BROKERS`, `ANALYTICS_CONSUMER_GROUP`, `LOG_LEVEL`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `ANALYTICS_DATABASE_URL` |
+| `reports-deployment.yaml` | `HTTP_ADDR`, `LOG_LEVEL`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `ANALYTICS_DATABASE_URL` |
 
 The chart ConfigMap (`templates/configmap.yaml`, named `<release>`) holds the
 non-secret `cmd/api` variables (`HTTP_ADDR`, `LOG_LEVEL`, `EVENT_PUBLISHER`,

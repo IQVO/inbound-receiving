@@ -18,7 +18,9 @@
 //	KAFKA_BROKERS             comma-separated brokers (required)
 //	ANALYTICS_CONSUMER_GROUP  fixed consumer group (default inbound-receiving-analytics)
 //	ADMIN_ADDR                /healthz and /readyz listen address (default :8091)
-//	LOG_LEVEL                 debug | info | warn | error (default info)
+//	LOG_LEVEL                 debug | info | warn (or warning) | error (default info)
+//	OTEL_EXPORTER_OTLP_ENDPOINT  OTLP/gRPC collector (default localhost:4317)
+//	SERVICE_VERSION, ENVIRONMENT  OTel resource attributes (service name inbound-receiving-projector)
 package main
 
 import (
@@ -39,6 +41,7 @@ import (
 	inboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/inbound/kafka"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/analyticsstore"
 	outboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/outbound/kafka"
+	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/telemetry"
 	"github.com/claudioed/inbound-receiving/internal/bootretry"
 )
 
@@ -52,6 +55,9 @@ const (
 	// charter's `<ctx>-analytics` naming, distinct from the product and
 	// dock-door consumers' groups.
 	defaultConsumerGroup = "inbound-receiving-analytics"
+
+	// projectorServiceName is the OTel service.name of this binary.
+	projectorServiceName = "inbound-receiving-projector"
 )
 
 // config is the projector's environment.
@@ -110,6 +116,12 @@ func run() error {
 	}
 	logger := newLogger(cfg.logLevel)
 	slog.SetDefault(logger)
+
+	otelShutdown, err := setupTelemetry(logger)
+	if err != nil {
+		return err
+	}
+	defer flushTelemetry(logger, otelShutdown) // runs after the pool and the consumer are closed
 
 	pool, err := openAnalyticsPool(context.Background(), logger, cfg.analyticsURL)
 	if err != nil {
@@ -209,6 +221,41 @@ func openAnalyticsPool(ctx context.Context, logger *slog.Logger, url string) (*p
 		return nil, err
 	}
 	return pool, nil
+}
+
+// setupTelemetry installs the OTLP trace and metric providers exactly like
+// the other three binaries (gap fix D21): service name
+// inbound-receiving-projector, SERVICE_VERSION, ENVIRONMENT (read by the
+// telemetry adapter) and OTEL_EXPORTER_OTLP_ENDPOINT. Export never blocks:
+// an unreachable Collector only drops telemetry.
+func setupTelemetry(logger *slog.Logger) (func(context.Context) error, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	version := getenv("SERVICE_VERSION", "dev")
+	endpoint := getenv("OTEL_EXPORTER_OTLP_ENDPOINT", telemetry.DefaultOTLPEndpoint)
+	shutdown, err := telemetry.Setup(ctx, projectorServiceName, version, endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("telemetry setup: %w", err)
+	}
+	logger.Info("telemetry configured", "service_name", projectorServiceName, "service_version", version,
+		"environment", telemetry.Environment(), "otlp_endpoint", endpoint)
+	return shutdown, nil
+}
+
+// flushTelemetry flushes and closes the providers, bounded.
+func flushTelemetry(logger *slog.Logger, shutdown func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := shutdown(ctx); err != nil {
+		logger.Error("telemetry shutdown failed", "error", err)
+	}
+}
+
+func getenv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func newLogger(level string) *slog.Logger {

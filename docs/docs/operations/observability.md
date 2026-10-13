@@ -17,7 +17,7 @@ OTel contrib runtime `v0.72.0`, prometheus `client_golang`).
 | `cmd/api` | yes | yes | `inbound-receiving` |
 | `cmd/mcp` | yes | no | `inbound-receiving-mcp` |
 | `cmd/inbound-reports` | yes | no | `inbound-receiving-reports` |
-| `cmd/inbound-projector` | **no** (no telemetry setup at all; JSON logs only) | no | — |
+| `cmd/inbound-projector` | yes since gap fix D21 ([ADR 0008](/docs/adr/0008-projector-telemetry-and-environment)): providers, propagator and Go runtime metrics; no spans of its own | no | `inbound-receiving-projector` |
 
 - **OTLP:** `telemetry.Setup` installs a batching TracerProvider and a
   MeterProvider with a periodic reader every **30 s**, both exporting
@@ -47,7 +47,7 @@ a library:
 | Instrument | Type | Unit | Attributes | Emitted by |
 |---|---|---|---|---|
 | `http.server.request.duration` | Float64Histogram (buckets 5 ms … 10 s) | `s` | `http.method`, `http.scheme`, `http.route` (chi pattern, e.g. `/asns/{asnNumber}`) | otelchi `NewServerRequestDuration` on the api, mcp and reports routers |
-| `go.memory.used` | UpDownCounter (observable) | `By` | `go.memory.type` (`stack`, `other`) | contrib runtime (api, mcp, reports) |
+| `go.memory.used` | UpDownCounter (observable) | `By` | `go.memory.type` (`stack`, `other`) | contrib runtime (api, mcp, reports, projector) |
 | `go.memory.limit` | UpDownCounter (observable) | `By` | — | contrib runtime |
 | `go.memory.allocated` | Counter (observable) | `By` | — | contrib runtime |
 | `go.memory.allocations` | Counter (observable) | `{allocation}` | — | contrib runtime |
@@ -85,6 +85,7 @@ All four binaries log JSON to stdout via `log/slog` (`LOG_LEVEL`, default
 | Message | Level | Fields | Binary |
 |---|---|---|---|
 | `http server listening` / `mcp server listening (Streamable HTTP)` / `reports server listening` / `projector admin server listening` | INFO | `addr` | each |
+| `telemetry configured` | INFO | `service_name`, `service_version`, `environment`, `otlp_endpoint` | projector |
 | `DATABASE_URL not configured; using in-memory adapters` | INFO | — | api, mcp |
 | `retrying` / `succeeded after retry` | WARN / INFO | `op` (`run migrations`, `ping postgres`, `run analytics migrations`, `ping analytics database`), `attempt`, `in`, `err` | all (boot retry) |
 | `outbox relay running` | INFO | `publisher`, `interval`, `max_attempts`, `topics` | api |

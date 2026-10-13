@@ -49,4 +49,14 @@ for template in reports-deployment.yaml projector-deployment.yaml mcp-deployment
   fi
 done
 
+# D21: every backend Deployment that sets up telemetry gets ENVIRONMENT
+# (deployment.environment.name) and SERVICE_VERSION; the projector also gets
+# the OTLP endpoint now that it calls telemetry.Setup.
+for template in deployment.yaml mcp-deployment.yaml projector-deployment.yaml reports-deployment.yaml; do
+  rendered="$(helm template "$release" "$chart_dir" "${base[@]}" "${analytics[@]}" --set mcp.enabled=true --set environment=staging --show-only "templates/$template")"
+  grep -A1 'name: ENVIRONMENT' <<<"$rendered" | grep -q 'value: "staging"' || fail "$template does not set ENVIRONMENT from .Values.environment"
+  grep -q 'name: SERVICE_VERSION' <<<"$rendered" || fail "$template does not set SERVICE_VERSION"
+  grep -q 'name: OTEL_EXPORTER_OTLP_ENDPOINT' <<<"$rendered" || fail "$template does not set OTEL_EXPORTER_OTLP_ENDPOINT with otel.enabled"
+done
+
 echo "PASS: inbound-receiving chart render assertions"
