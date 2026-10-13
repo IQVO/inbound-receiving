@@ -88,7 +88,7 @@ MCP and reports binaries simply drain HTTP (10 s cap).
 
 | Database | Owner binaries | Migrations | Tables |
 |---|---|---|---|
-| OLTP (`inbound_receiving` in kind) | `cmd/api` (read/write), `cmd/mcp` (reads) | `internal/adapters/outbound/postgres/migrations/0001_inbound_receiving.up.sql`, embedded | `asns`, `asn_lines`, `appointments`, `appointment_asns`, `receipts`, `receipt_lines`, `known_skus`, `dock_doors`, `outbox_events`, `processed_events`, `idempotency_keys` |
+| OLTP (`inbound_receiving` in kind) | `cmd/api` (read/write), `cmd/mcp` (reads) | `internal/adapters/outbound/postgres/migrations/0001_inbound_receiving.up.sql` (+ `0002_housekeeping_indexes.up.sql`, sweeper indexes), embedded | `asns`, `asn_lines`, `appointments`, `appointment_asns`, `receipts`, `receipt_lines`, `known_skus`, `dock_doors`, `outbox_events`, `processed_events`, `idempotency_keys` |
 | Analytical (`inbound_receiving_analytics` in kind) | `cmd/inbound-projector` (only writer), `cmd/inbound-reports` (read-only) | `analytics/migrations/0001_receiving_performance.up.sql`, embedded | `analytics_processed_events`, `asn_facts`, `appointment_facts`, `receipt_facts`, `receipt_line_events`, `receipt_discrepancies` |
 
 - **When migrations run:** at process start, before the pool opens, inside
@@ -156,19 +156,63 @@ with the consumer names `product-registry` and `dock-door-registry`.
   batch is followed immediately by another pass;
 - rows are sent one at a time in id order; each success sets `published_at`;
   the **first failure stops the pass**, increments `attempts`, stores
-  `last_error` and is retried on the next pass (head-of-line by design, so a
-  later event never overtakes an earlier one);
+  `last_error` and is retried on the next pass (head-of-line, so a later
+  event never overtakes an earlier one that is still being retried);
+- **attempt cap** ([ADR 0007](/docs/adr/0007-outbox-relay-attempt-cap)):
+  a row that has failed `OUTBOX_MAX_ATTEMPTS` times (default **20**, chart
+  `config.outboxMaxAttempts`, `0` = unlimited) is no longer claimed. The pass
+  that records the last attempt logs
+  `outbox relay: row reached the attempt cap and is excluded from future claims; ...`
+  at ERROR with `outbox_id`, `topic`, `event_type`, `key`, `attempts`,
+  `max_attempts` and `error`. From then on later rows, **including rows with
+  the same key**, overtake it; the row stays in `outbox_events` (unpublished,
+  with `attempts` and `last_error`) until re-armed (below);
 - `EVENT_PUBLISHER=log` (the chart default) logs each row as
   `event published (log sink)` and marks it published: nothing reaches Kafka;
 - every domain event is **two** rows (integration first, analytics second)
   sharing one CloudEvents `id`; `(event_id, topic)` is unique.
 
+#### Re-arm a row excluded by the attempt cap
+
+Find the excluded rows, fix the cause shown in `last_error` (broker limit,
+topic, payload), then reset `attempts` so the next pass claims the row again:
+
+```sql
+SELECT id, topic, event_type, key, attempts, last_error
+FROM outbox_events
+WHERE published_at IS NULL AND attempts >= 20;   -- 20 = OUTBOX_MAX_ATTEMPTS
+
+UPDATE outbox_events SET attempts = 0 WHERE id = <id>;
+```
+
+The re-armed row is delivered late, with its original CloudEvents `id`;
+consumers dedupe on it.
+
 ### Housekeeping
 
-There is **no sweeper** in this repo. Published `outbox_events` rows,
-`processed_events`, `idempotency_keys` and `analytics_processed_events` are
-never deleted by the code. Plan periodic manual cleanup if volume matters
-(for example `DELETE FROM outbox_events WHERE published_at < now() - interval '7 days'`).
+Two in-process sweepers bound the append-only tables
+([ADR 0010](/docs/adr/0010-housekeeping-sweeper), gap fix D24). Each sweeps
+once at start, then every `HOUSEKEEPING_INTERVAL` (default `1h`), in
+1000-row batches:
+
+| Binary | Table | Deleted when | Knob (default) |
+|---|---|---|---|
+| `cmd/api` | `idempotency_keys` | `created_at` older than the TTL | `IDEMPOTENCY_KEY_TTL` (`24h`) |
+| `cmd/api` | `outbox_events` | **published** and `published_at` older than the retention; unpublished rows (including rows excluded at the attempt cap) are never swept | `OUTBOX_RETENTION` (`168h`) |
+| `cmd/api` | `processed_events` | `processed_at` older than the retention | `PROCESSED_EVENTS_RETENTION` (`720h`) |
+| `cmd/inbound-projector` | `analytics_processed_events` | `occurred_at` older than the retention, except the newest mark (the projection's freshness) | `PROCESSED_EVENTS_RETENTION` (`720h`) |
+
+The chart sets them under `config.*` (`housekeepingInterval`,
+`idempotencyKeyTTL`, `outboxRetention`, `processedEventsRetention`). `0`
+disables one part; `config.housekeepingInterval: "0"` disables both
+sweepers. Keep `processedEventsRetention` above the consumed topics'
+retention, or an older redelivery is applied again (harmless: every apply is
+idempotent). A failed pass logs `housekeeping sweep failed` (or
+`analytics housekeeping sweep failed`) and retries on the next tick; it
+never affects serving. A pass that deleted rows logs `housekeeping sweep`
+with the per-table counts. Several replicas may sweep at once; the bounded
+DELETEs only ever remove eligible rows. Migration 0002 adds the indexes the
+sweeps use.
 
 ## Scaling
 

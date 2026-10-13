@@ -29,9 +29,11 @@ type Writer interface {
 // RelaySink writes already-encoded outbox messages to the topic each names.
 // Its Writer has NO fixed Topic (kafka-go requires exactly one of
 // Writer.Topic / Message.Topic). Settings follow the fleet's sync writer:
-// RequireAll acks, short BatchTimeout, the Hash balancer on the key (the
-// SKU, so one product's events stay ordered on one partition) and
-// AllowAutoTopicCreation. Constructing it never dials.
+// RequireAll acks, short BatchTimeout, the Hash balancer on the key (the ASN
+// number for ASN and receipt events, the appointment id for dock-appointment
+// events -- ADR 0004 -- so one ASN's or one appointment's events stay
+// ordered on one partition) and AllowAutoTopicCreation. Constructing it
+// never dials.
 type RelaySink struct {
 	writer Writer
 }

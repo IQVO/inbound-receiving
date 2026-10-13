@@ -117,7 +117,10 @@ outbox together.
   immediately by another pass. `OutboxRepo.Drain` claims rows with
   `FOR UPDATE SKIP LOCKED`, sends them one at a time in id order, marks each
   published, and stops at the first failure (recording `attempts` and
-  `last_error`). Delivery is at-least-once.
+  `last_error`). A row that has failed `OUTBOX_MAX_ATTEMPTS` times (default
+  20, `0` = unlimited) is no longer claimed and is logged once at ERROR
+  ([ADR 0007](/docs/adr/0007-outbox-relay-attempt-cap)). Delivery is
+  at-least-once.
 - `EVENT_PUBLISHER=kafka` uses `RelaySink` (kafka-go writer, `RequireAll` acks,
   10 ms batch timeout, the `Hash` balancer on the message key); the default
   `log` sink only logs each message so the outbox still drains without a broker.
@@ -199,10 +202,13 @@ The rules that shape the runtime:
 the first Postgres ping retry with backoff (`internal/bootretry`: 5 attempts,
 1 + 2 + 4 + 8 = 15 s of sleeps); on exhaustion the process refuses to boot. Shutdown order: `/readyz` flips to 503,
 the drain delay elapses, HTTP drains, the consumers (outbox writers) stop, the
-relay stops last so nothing committed is stranded, then the pool closes.
+relay stops last so nothing committed is stranded, then the pool closes. With
+Postgres, the housekeeping sweeper ([ADR 0010](/docs/adr/0010-housekeeping-sweeper))
+runs alongside and stops with the consumers.
 
 `cmd/inbound-projector`: flips `/readyz` to 503, drains the admin server, lets
-the in-flight message finish (commit or dead-letter), then closes the pool.
+the in-flight message finish (commit or dead-letter), stops the
+`analytics_processed_events` sweeper, then closes the pool.
 
 ## Observability
 

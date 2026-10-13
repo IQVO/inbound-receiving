@@ -17,7 +17,7 @@ OTel contrib runtime `v0.72.0`, prometheus `client_golang`).
 | `cmd/api` | yes | yes | `inbound-receiving` |
 | `cmd/mcp` | yes | no | `inbound-receiving-mcp` |
 | `cmd/inbound-reports` | yes | no | `inbound-receiving-reports` |
-| `cmd/inbound-projector` | **no** (no telemetry setup at all; JSON logs only) | no | — |
+| `cmd/inbound-projector` | yes since gap fix D21 ([ADR 0008](/docs/adr/0008-projector-telemetry-and-environment)): providers, propagator and Go runtime metrics; no spans of its own | no | `inbound-receiving-projector` |
 
 - **OTLP:** `telemetry.Setup` installs a batching TracerProvider and a
   MeterProvider with a periodic reader every **30 s**, both exporting
@@ -30,10 +30,15 @@ OTel contrib runtime `v0.72.0`, prometheus `client_golang`).
   (`SERVICE_VERSION`, default `dev`; the chart sets the image tag) and
   `deployment.environment.name` (`ENVIRONMENT`, default `local`), merged with
   the SDK defaults.
-- **Propagation:** W3C `traceparent` + `baggage` on inbound HTTP. Nothing is
-  propagated through Kafka: outbox rows store only the content-type header, so
-  a consumer-side trace is never linked to the HTTP request that produced the
-  event.
+- **Propagation:** W3C `traceparent` + `baggage` on inbound HTTP, and across
+  the outbox to Kafka (gap fix D27, [ADR 0009](/docs/adr/0009-trace-context-crosses-the-outbox)):
+  `postgres.OutboxRepo.Insert` injects the request span's trace context with
+  the global propagator into `outbox_events.headers` (after `content-type`),
+  and the relay copies those headers onto the Kafka message, so a consumer
+  that extracts them continues the producing request's trace. A row written
+  without an active span (or by the in-memory outbox) carries only
+  `content-type`. This service's own consumers open no spans, so they do not
+  extract.
 - **`GET /metrics` (api only):** a private Prometheus registry with the Go
   collector (`go_*`) and the process collector (`process_*`). The HTTP and
   runtime OTel metrics below are **not** on this endpoint; they go through
@@ -47,7 +52,7 @@ a library:
 | Instrument | Type | Unit | Attributes | Emitted by |
 |---|---|---|---|---|
 | `http.server.request.duration` | Float64Histogram (buckets 5 ms … 10 s) | `s` | `http.method`, `http.scheme`, `http.route` (chi pattern, e.g. `/asns/{asnNumber}`) | otelchi `NewServerRequestDuration` on the api, mcp and reports routers |
-| `go.memory.used` | UpDownCounter (observable) | `By` | `go.memory.type` (`stack`, `other`) | contrib runtime (api, mcp, reports) |
+| `go.memory.used` | UpDownCounter (observable) | `By` | `go.memory.type` (`stack`, `other`) | contrib runtime (api, mcp, reports, projector) |
 | `go.memory.limit` | UpDownCounter (observable) | `By` | — | contrib runtime |
 | `go.memory.allocated` | Counter (observable) | `By` | — | contrib runtime |
 | `go.memory.allocations` | Counter (observable) | `{allocation}` | — | contrib runtime |
@@ -85,10 +90,13 @@ All four binaries log JSON to stdout via `log/slog` (`LOG_LEVEL`, default
 | Message | Level | Fields | Binary |
 |---|---|---|---|
 | `http server listening` / `mcp server listening (Streamable HTTP)` / `reports server listening` / `projector admin server listening` | INFO | `addr` | each |
+| `telemetry configured` | INFO | `service_name`, `service_version`, `environment`, `otlp_endpoint` | projector |
 | `DATABASE_URL not configured; using in-memory adapters` | INFO | — | api, mcp |
 | `retrying` / `succeeded after retry` | WARN / INFO | `op` (`run migrations`, `ping postgres`, `run analytics migrations`, `ping analytics database`), `attempt`, `in`, `err` | all (boot retry) |
-| `outbox relay running` | INFO | `publisher`, `interval`, `topics` | api |
+| `outbox relay running` | INFO | `publisher`, `interval`, `max_attempts`, `topics` | api |
 | `outbox relay pass failed` | ERROR | `error` (contains `outbox row <id> (<type>)`) | api |
+| `outbox relay: row reached the attempt cap and is excluded from future claims; re-arm it with attempts = 0 after fixing the cause` | ERROR (once per row) | `outbox_id`, `topic`, `event_type`, `key`, `attempts`, `max_attempts`, `error` | api ([ADR 0007](/docs/adr/0007-outbox-relay-attempt-cap)) |
+| `invalid OUTBOX_MAX_ATTEMPTS; using the default` | WARN | `value`, `default` | api |
 | `event published (log sink)` | INFO | `topic`, `type`, `subject`, `id` | api with `EVENT_PUBLISHER=log` |
 | `product consumer running` / `dock door consumer running` / `analytics consumer running` | INFO | `topic`, `group_id`, `brokers` | api / projector |
 | `PRODUCT_MODE is permissive; product consumer not started` (and the dock-door twin) | INFO | — | api |
@@ -97,6 +105,11 @@ All four binaries log JSON to stdout via `log/slog` (`LOG_LEVEL`, default
 | `<name> handling failed; retrying the same message` / `<name> offset commit failed; ...` | ERROR | `error`, `partition`, `offset`, `attempt`, `retry_in` | api consumers, projector |
 | `analytics: skipping message that is not a CloudEvents 1.0 event ...` | WARN (at most once a minute) | `topic`, `partition`, `offset`, `suppressed_since_last_warning` | projector |
 | `analytics: dead-lettering a message that can never be projected` | ERROR | `error`, `dlq_topic`, `partition`, `offset` | projector |
+| `housekeeping sweeper running` / `analytics housekeeping sweeper running` | INFO | — | api (Postgres only) / projector |
+| `housekeeping sweep` | INFO (only when rows were deleted) | `idempotency_keys_deleted`, `outbox_events_deleted`, `processed_events_deleted` | api ([ADR 0010](/docs/adr/0010-housekeeping-sweeper)) |
+| `analytics housekeeping sweep` | INFO (only when rows were deleted) | `analytics_processed_events_deleted` | projector |
+| `housekeeping sweep failed` / `analytics housekeeping sweep failed` | ERROR | `error` and the counts deleted before the failure | api / projector |
+| `invalid housekeeping duration; using the default` | WARN | `key`, `value`, `default` | api, projector |
 | `idempotency store failed` | ERROR | `error`, `method`, `path` | api |
 | `report query failed` | ERROR | `error`, `path` | reports |
 | `shutdown: readiness flipped to not-ready; waiting for traffic to drain` | INFO | `drain_delay` | api |
@@ -127,7 +140,8 @@ These are suggestions built from the signals above; none exist today.
 
 | Alert | Signal | Why |
 |---|---|---|
-| Outbox backlog | `SELECT count(*) FROM outbox_events WHERE published_at IS NULL` above a threshold for 5 min, or any row with `attempts > 5` | the relay stops at the first failing row; a stuck head blocks every later event |
+| Outbox backlog | `SELECT count(*) FROM outbox_events WHERE published_at IS NULL` above a threshold for 5 min, or any row with `attempts > 5` | the relay stops at the first failing row; a stuck head blocks every later event until it reaches the attempt cap |
+| Outbox row excluded | any `outbox relay: row reached the attempt cap ...` ERROR line, or `SELECT count(*) FROM outbox_events WHERE published_at IS NULL AND attempts >= 20` > 0 | the row will never be delivered until an operator re-arms it (runbook) |
 | Relay failing | rate of `outbox relay pass failed` log lines | Kafka unreachable or rejecting writes |
 | Consumer stuck | repeated `handling failed; retrying the same message` for the same `partition`/`offset` | a transient failure blocks the partition indefinitely |
 | Analytics DLQ growth | any message on `warehouse.inbound-receiving.analytics.dlq` | every DLQ entry is a deterministic projection failure |

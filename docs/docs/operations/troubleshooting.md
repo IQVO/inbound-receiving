@@ -56,7 +56,8 @@ see [Observability](./observability.md) for their fields.
 | Symptom | Cause | Check | Fix |
 |---|---|---|---|
 | Events never reach Kafka, but `outbox_events.published_at` is set | `EVENT_PUBLISHER=log` (chart default) | `event published (log sink)` INFO lines | set `config.eventPublisher: kafka` and `kafka.enabled` |
-| Outbox backlog grows; `outbox relay pass failed` every interval | broker unreachable or rejecting the head row | `SELECT id, event_type, attempts, last_error FROM outbox_events WHERE published_at IS NULL ORDER BY id LIMIT 5` | fix Kafka; the relay resumes by itself. A row that can never be sent blocks all later rows by design — inspect `last_error` before touching it |
+| Outbox backlog grows; `outbox relay pass failed` every interval | broker unreachable or rejecting the head row | `SELECT id, event_type, attempts, last_error FROM outbox_events WHERE published_at IS NULL ORDER BY id LIMIT 5` | fix Kafka; the relay resumes by itself. A row that keeps failing blocks later rows only until it reaches `OUTBOX_MAX_ATTEMPTS` (default 20); then it is excluded and logged at ERROR |
+| `outbox relay: row reached the attempt cap ...` ERROR; one event never reaches Kafka | a poison row (too large, rejected by the broker) failed `OUTBOX_MAX_ATTEMPTS` times and is excluded; later rows, same key included, overtook it ([ADR 0007](/docs/adr/0007-outbox-relay-attempt-cap)) | `SELECT id, topic, event_type, key, attempts, last_error FROM outbox_events WHERE published_at IS NULL AND attempts >= 20` | fix the cause, then `UPDATE outbox_events SET attempts = 0 WHERE id = <id>` (runbook, "Re-arm a row") |
 | Downstream sees the same event twice | at-least-once relay (crash between send and `published_at` update) | identical CloudEvents `id` | expected; consumers dedupe on `id` |
 | Every event appears on two topics | intended: `FanoutEncoder` writes an integration row and an analytics row with the same `id` | `outbox_events.topic` | none |
 | Local-copy consumer lag grows, same `partition`/`offset` in `handling failed; retrying the same message` | a transient error (usually Postgres) — the loop never skips | ERROR lines | fix the dependency; the message is retried with 200 ms → 5 s backoff |
@@ -75,10 +76,19 @@ see [Observability](./observability.md) for their fields.
 | `500 report-store-error` | analytical query failed or hit the 15 s `statement_timeout` | reports log `report query failed` | check the analytical database; narrow the range |
 | Reports reachable through Kong return 404 | Kong routes only to the api Service; reports are served by `cmd/inbound-reports` | Service `<release>-reports` | call the reports Service in-cluster |
 
+## Housekeeping
+
+| Symptom | Likely cause | Check | Fix |
+|---|---|---|---|
+| `housekeeping sweep failed` / `analytics housekeeping sweep failed` every interval | the database rejects the DELETE (permissions, lock timeout, outage) | the `error` field; `SELECT count(*) FROM idempotency_keys WHERE created_at < now() - interval '24 hours'` | fix the database; the next tick retries. Serving is not affected |
+| A client retry after a day runs the handler again instead of replaying | the key passed `IDEMPOTENCY_KEY_TTL` (default `24h`) and was swept | `idempotency_keys` for that key (gone) | intended; raise `config.idempotencyKeyTTL` if clients retry later |
+| `outbox_events` still grows | unpublished rows are never swept (relay backlog or rows excluded at the attempt cap) | `SELECT count(*) FROM outbox_events WHERE published_at IS NULL` | fix the relay (see above); re-arm or delete excluded rows |
+
 ## Not present in this service
 
 - **Circuit breakers:** none. There are no synchronous calls to other
   contexts; outbound dependencies are Postgres and Kafka only.
-- **Sweepers:** no housekeeping job; `outbox_events`, `processed_events`,
-  `idempotency_keys` and `analytics_processed_events` grow until cleaned up
-  manually (see [Runbook](./runbook.md#housekeeping)).
+- **Unbounded tables:** none since gap fix D24. `idempotency_keys`,
+  published `outbox_events`, `processed_events` and
+  `analytics_processed_events` are swept (see
+  [Runbook](./runbook.md#housekeeping), [ADR 0010](/docs/adr/0010-housekeeping-sweeper)).
