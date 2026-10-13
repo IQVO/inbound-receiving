@@ -5,6 +5,10 @@ metadata:
   name: {{ include "inbound-receiving.fullname" . }}
   labels:
     {{- include "inbound-receiving.labels" . | nindent 4 }}
+  {{- with include "inbound-receiving.kongPluginNames" . }}
+  annotations:
+    konghq.com/plugins: {{ . | quote }}
+  {{- end }}
 spec:
   parentRefs:
     {{- range .Values.gatewayApi.parentRefs }}
