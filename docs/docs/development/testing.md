@@ -83,6 +83,7 @@ covered.
 | `TestCloudEventsOnly`, `TestNoEventEnvelopeToggleOrFlatEnvelope` | every Kafka message is a CloudEvents 1.0 envelope built by `internal/adapters/kafka/cloudevents`; no envelope toggle |
 | `TestEventCatalogueMatchesContract`, `TestEventCatalogueDetector` | published event types match `apis/asyncapi.yaml` |
 | `TestKafkaIntegrationTestsUseTestcontainers`, `TestPostgresIntegrationTestsUseTestcontainers`, `TestPostgresIntegrationSensorFailsOnBadFixtures` | integration tests use testcontainers, never an external DSN or a skip |
+| `TestMCPOptionalToolInputsCarryOmitempty`, `TestMCPOptionalToolInputsSensorFailsOnBadFixtures` | every MCP tool input field whose `jsonschema` description calls it optional ("optional" or "omitted") carries `omitempty`, so the SDK does not mark it required (gap fix D16) |
 
 `violation_test.go` holds deliberately failing fixtures that prove the
 detectors work.

@@ -41,7 +41,7 @@ variable (for example `PRODUCT_MODE=kafka requires PRODUCT_CONSUMER_GROUP`).
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | OTLP/gRPC collector endpoint (insecure) for traces and metrics. A missing collector never blocks boot; telemetry is dropped. | `cmd/api/main.go`, `internal/adapters/outbound/telemetry/telemetry.go` |
 | `SERVICE_VERSION` | `dev` | no | `service.version` resource attribute on every span and metric. | `cmd/api/main.go` |
 | `ENVIRONMENT` | `local` | no | `deployment.environment.name` resource attribute. | `internal/adapters/outbound/telemetry/telemetry.go` |
-| `LOG_LEVEL` | `info` | no | `debug`, `info`, `warn` or `error` (case-insensitive; anything else = `info`). Logs are JSON on stdout. | `cmd/api/main.go` |
+| `LOG_LEVEL` | `info` | no | `debug`, `info`, `warn`/`warning` or `error` (case-insensitive; anything else = `info`). Logs are JSON on stdout. | `cmd/api/main.go` |
 
 Validation rules enforced by `loadConfig` and `startOutboxRelay`:
 
@@ -113,9 +113,8 @@ Istio-injected pod is reset shortly after start.
 The budget is **5 attempts** with exponential backoff starting at 1 s. The
 helper sleeps only *between* attempts, so the total wait is
 1 + 2 + 4 + 8 = **15 s** before the last error is returned and the process
-exits non-zero. (The package comment in `internal/bootretry/bootretry.go`
-says "~31s (1+2+4+8+16)"; the code never sleeps after the fifth attempt.)
-None of this is configurable.
+exits non-zero (the package comment in `internal/bootretry/bootretry.go` and
+the chart's `values.yaml` say the same). None of this is configurable.
 
 ## Helm chart mapping
 
