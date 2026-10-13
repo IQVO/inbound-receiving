@@ -13,6 +13,84 @@ Every message row below maps to a route in `NewRouter`
 in `internal/adapters/inbound/kafka/{product_consumer,dock_door_consumer}.go` /
 `internal/adapters/outbound/kafka/encoder.go`.
 
+## Canvas at a glance
+
+One picture of the sections below, laid out like the ddd-crew canvas:
+inbound collaborators on the left, this context in the middle (purpose,
+domain roles and the business decisions it enforces), outbound
+collaborators on the right. Arrows follow the message type: **solid blue**
+commands (`cmd`), **dotted green** queries (`qry`), **thick orange** events
+(`evt`); each arrow names its channel and the messages it carries. Box shapes
+mark the collaborator kind: rounded = people, UI or any client; blue =
+sibling bounded context; double border = external system or platform;
+grey = this context's own projector, reports or dead-letter path; dashed =
+published today with no consumer. Channel names on the arrows are
+abbreviated (REST, MCP, Kafka, HTTP, port); the Inbound and Outbound
+Communication tables carry the exact route, tool, topic and CloudEvents
+type for every message.
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 18, "rankSpacing": 36, "padding": 8}}}%%
+flowchart LR
+    classDef bc fill:#fff3bf,stroke:#e67700,stroke-width:1.5px,color:#000
+    classDef card fill:#fff9db,stroke:#f08c00,color:#000,text-align:left
+    classDef ctx fill:#e7f5ff,stroke:#1c7ed6,color:#000
+    classDef actor fill:#fff4e6,stroke:#e8590c,color:#000
+    classDef ext fill:#ffe3e3,stroke:#c92a2a,color:#000
+    classDef self fill:#f1f3f5,stroke:#868e96,color:#000
+    classDef none fill:#f8f9fa,stroke:#adb5bd,stroke-dasharray:5 5,color:#495057
+    subgraph IN["Inbound - who commands, queries or feeds it"]
+        direction TB
+        in0(["Supplier-facing operator, dock planner, gate, dock staff"]):::actor
+        in1(["Operator, console, dock manager"]):::actor
+        in2["warehouse-ops-agent"]:::ctx
+        in3["product-master"]:::ctx
+        in4["facility-layout"]:::ctx
+    end
+    subgraph BC["inbound-receiving - Supporting subdomain - WMS tier"]
+        direction TB
+        purpose["<b>Purpose</b><br/>Own the inbound dock workflow up to,<br/>not including, stock placement: the<br/>ASN, the dock appointment and the<br/>counted receipt with its<br/>discrepancies. Publish every<br/>accepted change so inventory-storage<br/>books Good units without a call."]:::card
+        roles["<b>Domain roles</b><br/>- Execution context (document-level)<br/>- Specification context (the ASN)<br/>- Gateway / Open Host Service<br/>- Own analytics read side"]:::card
+        rules["<b>Business decisions it enforces</b><br/>- A receipt opens against a snapshot<br/>of a Registered or Receiving ASN<br/>- Over-receipt is accepted and shown<br/>as an Over discrepancy<br/>- A door window is half-open, at most<br/>4 h, never overlapping on one door<br/>- At most one open receipt per ASN<br/>- Only Good units go to<br/>inventory-storage; Damaged units are<br/>counted, not booked<br/>- Every difference is reported; no<br/>tolerance policy in v1"]:::card
+        purpose ~~~ roles ~~~ rules
+    end
+    subgraph OUT["Outbound - whom it calls or notifies"]
+        direction TB
+        out0["inventory-storage"]:::ctx
+        out1["warehouse-planning (planned, not built)"]:::none
+        out2["no consumer today"]:::none
+        out3["own inbound-projector"]:::self
+    end
+    in0 -->|"cmd - REST<br/>Register ASN, Cancel ASN, Book<br/>dock appointment, Check in,<br/>Cancel appointment, Open<br/>receipt, Receive a quantity<br/>against a line, Close receipt"| BC
+    in1 -.->|"qry - REST<br/>Get / list ASNs, appointments,<br/>receipts, List dock doors"| BC
+    in1 -.->|"qry - REST (reports)<br/>Receiving performance per day,<br/>freshness"| BC
+    in2 -.->|"qry - MCP<br/>get_asn, list_asns,<br/>get_appointment,<br/>list_appointments, get_receipt,<br/>list_receipts, list_docks"| BC
+    in3 ==>|"evt - Kafka<br/>warehouse.product-master.events<br/>ProductRegistered"| BC
+    in4 ==>|"evt - Kafka<br/>warehouse.facility.events<br/>LocationSlotRegistered,<br/>LocationSlotDecommissioned"| BC
+    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>ReceiptLineReceived"| out0
+    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>DockAppointmentBooked"| out1
+    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>ASNRegistered, ASNCancelled,<br/>DockAppointmentCheckedIn,<br/>DockAppointmentCancelled,<br/>DockAppointmentCompleted,<br/>ReceiptOpened, ReceiptClosed"| out2
+    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.analytics<br/>all nine events (analytics copy)"| out3
+    linkStyle 0 stroke:#1971c2,stroke-width:1.5px
+    linkStyle 1 stroke:#2f9e44,stroke-width:1.5px
+    linkStyle 2 stroke:#2f9e44,stroke-width:1.5px
+    linkStyle 3 stroke:#2f9e44,stroke-width:1.5px
+    linkStyle 4 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 5 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 6 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 7 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 8 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 9 stroke:#e8590c,stroke-width:2.5px
+    class BC bc
+```
+
+Source: the Inbound Communication and Outbound Communication tables of this
+page, which map to `internal/adapters/inbound/{http,kafka,mcp}` and `internal/adapters/outbound/`. The diagram omits assumptions, verification metrics, open
+questions and the ubiquitous language (sections below), the relationship
+pattern per message (OHS, ACL, Conformist, Customer/Supplier - see the
+tables) and anything the tables mark as deprecated or platform-only
+(health probes).
+
 ## Name
 
 **Inbound Receiving** (`inbound-receiving`, Go module
