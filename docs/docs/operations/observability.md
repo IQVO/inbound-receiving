@@ -30,10 +30,15 @@ OTel contrib runtime `v0.72.0`, prometheus `client_golang`).
   (`SERVICE_VERSION`, default `dev`; the chart sets the image tag) and
   `deployment.environment.name` (`ENVIRONMENT`, default `local`), merged with
   the SDK defaults.
-- **Propagation:** W3C `traceparent` + `baggage` on inbound HTTP. Nothing is
-  propagated through Kafka: outbox rows store only the content-type header, so
-  a consumer-side trace is never linked to the HTTP request that produced the
-  event.
+- **Propagation:** W3C `traceparent` + `baggage` on inbound HTTP, and across
+  the outbox to Kafka (gap fix D27, [ADR 0009](/docs/adr/0009-trace-context-crosses-the-outbox)):
+  `postgres.OutboxRepo.Insert` injects the request span's trace context with
+  the global propagator into `outbox_events.headers` (after `content-type`),
+  and the relay copies those headers onto the Kafka message, so a consumer
+  that extracts them continues the producing request's trace. A row written
+  without an active span (or by the in-memory outbox) carries only
+  `content-type`. This service's own consumers open no spans, so they do not
+  extract.
 - **`GET /metrics` (api only):** a private Prometheus registry with the Go
   collector (`go_*`) and the process collector (`process_*`). The HTTP and
   runtime OTel metrics below are **not** on this endpoint; they go through

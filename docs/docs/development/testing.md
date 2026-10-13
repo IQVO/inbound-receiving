@@ -59,6 +59,7 @@ gate (enforced by the fitness tests below).
 | `internal/adapters/outbound/postgres/pgtx/pgtx_integration_test.go` | transaction propagation through `context` |
 | `internal/adapters/outbound/outbox/relay_integration_test.go` | relay draining Postgres to Kafka |
 | `internal/adapters/outbound/outbox/relay_cap_integration_test.go` | relay attempt cap over real Postgres: a poison row is excluded after N failures and the good row behind it (same key) publishes; the re-arm SQL; `0` = unlimited ([ADR 0007](/docs/adr/0007-outbox-relay-attempt-cap)) |
+| `internal/adapters/outbound/outbox/outbox_trace_integration_test.go` | trace continuity across the outbox, real Postgres + Kafka: `TestOutboxTrace_TraceparentCrossesTheOutboxToKafka`, `TestOutboxTrace_RowWithoutTraceHeadersRelaysUnchanged` ([ADR 0009](/docs/adr/0009-trace-context-crosses-the-outbox)) |
 | `internal/adapters/outbound/kafka/publisher_integration_test.go` | `RelaySink` against a real broker |
 | `internal/adapters/inbound/kafka/consumers_integration_test.go` | product and dock-door consumers end to end |
 | `internal/adapters/inbound/kafka/analytics_consumer_integration_test.go` | projector consumer, DLQ |
