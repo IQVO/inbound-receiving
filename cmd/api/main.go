@@ -11,6 +11,10 @@
 //	KAFKA_BROKERS                 comma-separated brokers (EVENT_PUBLISHER=kafka, consumers)
 //	OUTBOX_RELAY_INTERVAL         relay poll interval (Go duration or seconds, default 1s)
 //	OUTBOX_MAX_ATTEMPTS           failures before the relay excludes a row (default 20, 0 = unlimited)
+//	HOUSEKEEPING_INTERVAL         sweeper interval (default 1h, 0 = sweeper off; Postgres only)
+//	IDEMPOTENCY_KEY_TTL           idempotency_keys row lifetime (default 24h, 0 = keep forever)
+//	OUTBOX_RETENTION              published outbox_events retention (default 168h, 0 = keep forever)
+//	PROCESSED_EVENTS_RETENTION    processed_events dedupe-mark retention (default 720h, 0 = keep forever)
 //	PRODUCT_MODE                  permissive | kafka (default permissive): enforce known SKUs
 //	PRODUCT_CONSUMER_GROUP        stable group of the product consumer; required when PRODUCT_MODE=kafka
 //	DOCK_DOOR_MODE                permissive | kafka (default permissive): enforce known inbound doors
@@ -33,6 +37,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	inboundhttp "github.com/claudioed/inbound-receiving/internal/adapters/inbound/http"
 	inboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/inbound/kafka"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/clock"
@@ -45,6 +51,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 	"github.com/claudioed/inbound-receiving/internal/bootretry"
+	"github.com/claudioed/inbound-receiving/internal/housekeeping"
 )
 
 // shutdownTimeout bounds the HTTP server's graceful drain.
@@ -106,6 +113,9 @@ func run() error {
 	}
 
 	consumers := startConsumers(ad, cfg, logger)
+	if sw := startSweeper(ad.sweeper, logger); sw != nil {
+		consumers = append(consumers, sw)
+	}
 	relay, closeRelay, err := startOutboxRelay(ad.outboxStore, logger)
 	if err != nil {
 		for _, c := range consumers {
@@ -180,6 +190,8 @@ type adapters struct {
 	doors        doorCopy
 	idempotency  ports.IdempotencyStore
 	uow          ports.UnitOfWork
+	// sweeper is the housekeeping job (ADR 0010); nil with in-memory adapters.
+	sweeper *postgres.Sweeper
 }
 
 func (a adapters) writer() usecases.Writer {
@@ -254,7 +266,35 @@ func buildAdapters(ctx context.Context, databaseURL string, logger *slog.Logger)
 		outbox: ob, outboxStore: ob, processed: postgres.NewProcessedEventRepo(pool),
 		skus: postgres.NewKnownSkus(pool), doors: postgres.NewDockDoors(pool),
 		idempotency: postgres.NewIdempotencyStore(pool), uow: postgres.NewUnitOfWork(pool),
+		sweeper: newSweeper(pool, os.Getenv, logger),
 	}, pool.Close, nil
+}
+
+// newSweeper builds the housekeeping sweeper (gap fix D24, ADR 0010) from
+// HOUSEKEEPING_INTERVAL, IDEMPOTENCY_KEY_TTL, OUTBOX_RETENTION and
+// PROCESSED_EVENTS_RETENTION. Postgres only: the in-memory adapters are
+// per-process and vanish with it.
+func newSweeper(pool *pgxpool.Pool, env func(string) string, logger *slog.Logger) *postgres.Sweeper {
+	return postgres.NewSweeper(pool,
+		postgres.WithSweepInterval(housekeeping.Duration(env, housekeeping.EnvInterval, postgres.DefaultSweepInterval, logger)),
+		postgres.WithIdempotencyKeyTTL(housekeeping.Duration(env, housekeeping.EnvIdempotencyKeyTTL, postgres.DefaultIdempotencyKeyTTL, logger)),
+		postgres.WithOutboxRetention(housekeeping.Duration(env, housekeeping.EnvOutboxRetention, postgres.DefaultOutboxRetention, logger)),
+		postgres.WithProcessedEventsRetention(housekeeping.Duration(env, housekeeping.EnvProcessedEventsRetention, postgres.DefaultProcessedEventsRetention, logger)),
+		postgres.WithSweeperLogger(logger),
+	)
+}
+
+// startSweeper runs the sweeper as a background worker (nil when Postgres
+// is not configured). It is stopped with the consumers, before the relay.
+func startSweeper(s *postgres.Sweeper, logger *slog.Logger) *worker {
+	if s == nil {
+		return nil
+	}
+	logger.Info("housekeeping sweeper running")
+	return startWorker(logger, "housekeeping-sweeper", func(ctx context.Context) error {
+		_ = s.Run(ctx) // logs its own failed passes; returns nil on cancel
+		return ctx.Err()
+	}, func() {})
 }
 
 // migrationsDatabaseURL returns MIGRATIONS_DATABASE_URL when set (a direct

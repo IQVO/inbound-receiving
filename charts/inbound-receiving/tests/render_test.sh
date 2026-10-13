@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Chart render assertions (gap fixes D12, D14 and D21, 2026-10-12).
+# Chart render assertions (gap fixes D12, D14, D21 and D24, 2026-10-12).
 # Run: bash charts/inbound-receiving/tests/render_test.sh   (needs helm)
 set -euo pipefail
 
@@ -40,6 +40,17 @@ grep -A1 'name: OUTBOX_MAX_ATTEMPTS' <<<"$api_deployment" | grep -q 'value: "20"
   || fail "api Deployment does not set OUTBOX_MAX_ATTEMPTS"
 unlimited="$(helm template "$release" "$chart_dir" "${base[@]}" --set config.outboxMaxAttempts=0 --show-only templates/configmap.yaml)"
 grep -q 'OUTBOX_MAX_ATTEMPTS: "0"' <<<"$unlimited" || fail "config.outboxMaxAttempts=0 is not rendered"
+
+# D24 / ADR 0010: the housekeeping knobs reach the api (ConfigMap, envFrom)
+# and the projector (explicit env), with the fleet defaults.
+for kv in 'HOUSEKEEPING_INTERVAL: "1h"' 'IDEMPOTENCY_KEY_TTL: "24h"' 'OUTBOX_RETENTION: "168h"' 'PROCESSED_EVENTS_RETENTION: "720h"'; do
+  grep -q "$kv" <<<"$configmap" || fail "ConfigMap is missing $kv (ADR 0010)"
+done
+projector_deployment="$(helm template "$release" "$chart_dir" "${base[@]}" "${analytics[@]}" --set config.processedEventsRetention=0 --show-only templates/projector-deployment.yaml)"
+grep -A1 'name: HOUSEKEEPING_INTERVAL' <<<"$projector_deployment" | grep -q 'value: "1h"' \
+  || fail "projector Deployment does not set HOUSEKEEPING_INTERVAL"
+grep -A1 'name: PROCESSED_EVENTS_RETENTION' <<<"$projector_deployment" | grep -q 'value: "0"' \
+  || fail "projector Deployment does not render PROCESSED_EVENTS_RETENTION (0 must stay 0)"
 
 # The other workloads read their own explicit env and must NOT inherit the
 # api's ConfigMap (reports and projector would bind the api's HTTP_ADDR).

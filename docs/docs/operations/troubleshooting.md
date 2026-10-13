@@ -76,10 +76,19 @@ see [Observability](./observability.md) for their fields.
 | `500 report-store-error` | analytical query failed or hit the 15 s `statement_timeout` | reports log `report query failed` | check the analytical database; narrow the range |
 | Reports reachable through Kong return 404 | Kong routes only to the api Service; reports are served by `cmd/inbound-reports` | Service `<release>-reports` | call the reports Service in-cluster |
 
+## Housekeeping
+
+| Symptom | Likely cause | Check | Fix |
+|---|---|---|---|
+| `housekeeping sweep failed` / `analytics housekeeping sweep failed` every interval | the database rejects the DELETE (permissions, lock timeout, outage) | the `error` field; `SELECT count(*) FROM idempotency_keys WHERE created_at < now() - interval '24 hours'` | fix the database; the next tick retries. Serving is not affected |
+| A client retry after a day runs the handler again instead of replaying | the key passed `IDEMPOTENCY_KEY_TTL` (default `24h`) and was swept | `idempotency_keys` for that key (gone) | intended; raise `config.idempotencyKeyTTL` if clients retry later |
+| `outbox_events` still grows | unpublished rows are never swept (relay backlog or rows excluded at the attempt cap) | `SELECT count(*) FROM outbox_events WHERE published_at IS NULL` | fix the relay (see above); re-arm or delete excluded rows |
+
 ## Not present in this service
 
 - **Circuit breakers:** none. There are no synchronous calls to other
   contexts; outbound dependencies are Postgres and Kafka only.
-- **Sweepers:** no housekeeping job; `outbox_events`, `processed_events`,
-  `idempotency_keys` and `analytics_processed_events` grow until cleaned up
-  manually (see [Runbook](./runbook.md#housekeeping)).
+- **Unbounded tables:** none since gap fix D24. `idempotency_keys`,
+  published `outbox_events`, `processed_events` and
+  `analytics_processed_events` are swept (see
+  [Runbook](./runbook.md#housekeeping), [ADR 0010](/docs/adr/0010-housekeeping-sweeper)).

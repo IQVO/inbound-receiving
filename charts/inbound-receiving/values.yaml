@@ -115,6 +115,21 @@ config:
   # outbox_events (attempts, last_error) until an operator re-arms it with
   # `UPDATE outbox_events SET attempts = 0 WHERE id = ...`. 0 = unlimited.
   outboxMaxAttempts: 20
+  # Housekeeping sweeper (gap fix D24, docs/adr/0010). Go durations (or plain
+  # seconds); 0 disables that part. The api sweeps idempotency_keys,
+  # PUBLISHED outbox_events (unpublished rows are never swept) and
+  # processed_events; the projector sweeps analytics_processed_events with
+  # housekeepingInterval and processedEventsRetention.
+  # HOUSEKEEPING_INTERVAL: how often the sweeper runs (0 = sweeper off).
+  housekeepingInterval: "1h"
+  # IDEMPOTENCY_KEY_TTL: how long a cached Idempotency-Key response is kept.
+  idempotencyKeyTTL: "24h"
+  # OUTBOX_RETENTION: how long a published outbox row is kept for forensics.
+  outboxRetention: "168h"
+  # PROCESSED_EVENTS_RETENTION: how long a consumer dedupe mark is kept.
+  # Keep it above the consumed topics' retention (Kafka default 7 days): an
+  # older redelivery would be applied again.
+  processedEventsRetention: "720h"
   # PRODUCT_MODE (ADR 0003): "permissive" (default; any SKU is accepted and
   # the product consumer is not started) or "kafka" (the local SKU copy,
   # fed from warehouse.product-master.events, is enforced when an ASN is

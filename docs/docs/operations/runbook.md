@@ -88,7 +88,7 @@ MCP and reports binaries simply drain HTTP (10 s cap).
 
 | Database | Owner binaries | Migrations | Tables |
 |---|---|---|---|
-| OLTP (`inbound_receiving` in kind) | `cmd/api` (read/write), `cmd/mcp` (reads) | `internal/adapters/outbound/postgres/migrations/0001_inbound_receiving.up.sql`, embedded | `asns`, `asn_lines`, `appointments`, `appointment_asns`, `receipts`, `receipt_lines`, `known_skus`, `dock_doors`, `outbox_events`, `processed_events`, `idempotency_keys` |
+| OLTP (`inbound_receiving` in kind) | `cmd/api` (read/write), `cmd/mcp` (reads) | `internal/adapters/outbound/postgres/migrations/0001_inbound_receiving.up.sql` (+ `0002_housekeeping_indexes.up.sql`, sweeper indexes), embedded | `asns`, `asn_lines`, `appointments`, `appointment_asns`, `receipts`, `receipt_lines`, `known_skus`, `dock_doors`, `outbox_events`, `processed_events`, `idempotency_keys` |
 | Analytical (`inbound_receiving_analytics` in kind) | `cmd/inbound-projector` (only writer), `cmd/inbound-reports` (read-only) | `analytics/migrations/0001_receiving_performance.up.sql`, embedded | `analytics_processed_events`, `asn_facts`, `appointment_facts`, `receipt_facts`, `receipt_line_events`, `receipt_discrepancies` |
 
 - **When migrations run:** at process start, before the pool opens, inside
@@ -190,10 +190,29 @@ consumers dedupe on it.
 
 ### Housekeeping
 
-There is **no sweeper** in this repo. Published `outbox_events` rows,
-`processed_events`, `idempotency_keys` and `analytics_processed_events` are
-never deleted by the code. Plan periodic manual cleanup if volume matters
-(for example `DELETE FROM outbox_events WHERE published_at < now() - interval '7 days'`).
+Two in-process sweepers bound the append-only tables
+([ADR 0010](/docs/adr/0010-housekeeping-sweeper), gap fix D24). Each sweeps
+once at start, then every `HOUSEKEEPING_INTERVAL` (default `1h`), in
+1000-row batches:
+
+| Binary | Table | Deleted when | Knob (default) |
+|---|---|---|---|
+| `cmd/api` | `idempotency_keys` | `created_at` older than the TTL | `IDEMPOTENCY_KEY_TTL` (`24h`) |
+| `cmd/api` | `outbox_events` | **published** and `published_at` older than the retention; unpublished rows (including rows excluded at the attempt cap) are never swept | `OUTBOX_RETENTION` (`168h`) |
+| `cmd/api` | `processed_events` | `processed_at` older than the retention | `PROCESSED_EVENTS_RETENTION` (`720h`) |
+| `cmd/inbound-projector` | `analytics_processed_events` | `occurred_at` older than the retention, except the newest mark (the projection's freshness) | `PROCESSED_EVENTS_RETENTION` (`720h`) |
+
+The chart sets them under `config.*` (`housekeepingInterval`,
+`idempotencyKeyTTL`, `outboxRetention`, `processedEventsRetention`). `0`
+disables one part; `config.housekeepingInterval: "0"` disables both
+sweepers. Keep `processedEventsRetention` above the consumed topics'
+retention, or an older redelivery is applied again (harmless: every apply is
+idempotent). A failed pass logs `housekeeping sweep failed` (or
+`analytics housekeeping sweep failed`) and retries on the next tick; it
+never affects serving. A pass that deleted rows logs `housekeeping sweep`
+with the per-table counts. Several replicas may sweep at once; the bounded
+DELETEs only ever remove eligible rows. Migration 0002 adds the indexes the
+sweeps use.
 
 ## Scaling
 

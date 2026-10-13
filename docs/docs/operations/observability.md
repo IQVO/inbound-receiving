@@ -105,6 +105,11 @@ All four binaries log JSON to stdout via `log/slog` (`LOG_LEVEL`, default
 | `<name> handling failed; retrying the same message` / `<name> offset commit failed; ...` | ERROR | `error`, `partition`, `offset`, `attempt`, `retry_in` | api consumers, projector |
 | `analytics: skipping message that is not a CloudEvents 1.0 event ...` | WARN (at most once a minute) | `topic`, `partition`, `offset`, `suppressed_since_last_warning` | projector |
 | `analytics: dead-lettering a message that can never be projected` | ERROR | `error`, `dlq_topic`, `partition`, `offset` | projector |
+| `housekeeping sweeper running` / `analytics housekeeping sweeper running` | INFO | — | api (Postgres only) / projector |
+| `housekeeping sweep` | INFO (only when rows were deleted) | `idempotency_keys_deleted`, `outbox_events_deleted`, `processed_events_deleted` | api ([ADR 0010](/docs/adr/0010-housekeeping-sweeper)) |
+| `analytics housekeeping sweep` | INFO (only when rows were deleted) | `analytics_processed_events_deleted` | projector |
+| `housekeeping sweep failed` / `analytics housekeeping sweep failed` | ERROR | `error` and the counts deleted before the failure | api / projector |
+| `invalid housekeeping duration; using the default` | WARN | `key`, `value`, `default` | api, projector |
 | `idempotency store failed` | ERROR | `error`, `method`, `path` | api |
 | `report query failed` | ERROR | `error`, `path` | reports |
 | `shutdown: readiness flipped to not-ready; waiting for traffic to drain` | INFO | `drain_delay` | api |

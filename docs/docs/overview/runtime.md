@@ -202,10 +202,13 @@ The rules that shape the runtime:
 the first Postgres ping retry with backoff (`internal/bootretry`: 5 attempts,
 1 + 2 + 4 + 8 = 15 s of sleeps); on exhaustion the process refuses to boot. Shutdown order: `/readyz` flips to 503,
 the drain delay elapses, HTTP drains, the consumers (outbox writers) stop, the
-relay stops last so nothing committed is stranded, then the pool closes.
+relay stops last so nothing committed is stranded, then the pool closes. With
+Postgres, the housekeeping sweeper ([ADR 0010](/docs/adr/0010-housekeeping-sweeper))
+runs alongside and stops with the consumers.
 
 `cmd/inbound-projector`: flips `/readyz` to 503, drains the admin server, lets
-the in-flight message finish (commit or dead-letter), then closes the pool.
+the in-flight message finish (commit or dead-letter), stops the
+`analytics_processed_events` sweeper, then closes the pool.
 
 ## Observability
 

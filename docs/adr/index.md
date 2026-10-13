@@ -21,3 +21,4 @@ the authority; ADR bodies are never edited after acceptance.
 | [0007](./0007-outbox-relay-attempt-cap.md) | Outbox relay attempt cap (`OUTBOX_MAX_ATTEMPTS`) | Accepted (2026-10-12) |
 | [0008](./0008-projector-telemetry-and-environment.md) | The analytics projector sets up telemetry; every backend Deployment sets ENVIRONMENT | Accepted (2026-10-12) |
 | [0009](./0009-trace-context-crosses-the-outbox.md) | The W3C trace context crosses the outbox to Kafka | Accepted (2026-10-12) |
+| [0010](./0010-housekeeping-sweeper.md) | Housekeeping sweeper for the append-only tables | Accepted (2026-10-12) |

@@ -33,6 +33,10 @@ variable (for example `PRODUCT_MODE=kafka requires PRODUCT_CONSUMER_GROUP`).
 | `KAFKA_BROKERS` | unset | when `EVENT_PUBLISHER=kafka` or either mode below is `kafka` | Comma-separated broker list used by the relay sink and by the two local-copy consumers. Locally the fleet broker is `localhost:9092`. | `cmd/api/main.go` |
 | `OUTBOX_RELAY_INTERVAL` | `1s` | no | Relay poll interval. Accepts a Go duration (`500ms`, `2s`) or plain seconds (`2`, `0.5`). Malformed or non-positive values log a warning and fall back to `1s`. | `cmd/api/main.go`, `internal/adapters/outbound/outbox/relay.go` |
 | `OUTBOX_MAX_ATTEMPTS` | `20` | no | Relay attempt cap ([ADR 0007](/docs/adr/0007-outbox-relay-attempt-cap)): a row that failed this many times is no longer claimed and is logged once at ERROR; it stays in `outbox_events` until re-armed (`UPDATE outbox_events SET attempts = 0 WHERE id = ...`, see the runbook). `0` = unlimited. Negative or unparsable values log a warning and use `20`. Chart: `config.outboxMaxAttempts`. | `cmd/api/main.go`, `internal/adapters/outbound/outbox/relay.go` |
+| `HOUSEKEEPING_INTERVAL` | `1h` | no | Housekeeping sweeper interval ([ADR 0010](/docs/adr/0010-housekeeping-sweeper)); it sweeps once at start, then every interval. `0` disables the sweeper. Go duration or plain seconds; negative or malformed values log a warning and use the default. Postgres only. Chart: `config.housekeepingInterval` (via the ConfigMap). | `cmd/api/main.go`, `internal/adapters/outbound/postgres/sweeper.go` |
+| `IDEMPOTENCY_KEY_TTL` | `24h` | no | `idempotency_keys` rows older than this are deleted: a retry after the TTL runs the handler again. `0` keeps keys forever. Chart: `config.idempotencyKeyTTL`. | `internal/adapters/outbound/postgres/sweeper.go` |
+| `OUTBOX_RETENTION` | `168h` | no | PUBLISHED `outbox_events` rows older than this are deleted. Unpublished rows (including rows excluded at the attempt cap) are never swept. `0` keeps them forever. Chart: `config.outboxRetention`. | `internal/adapters/outbound/postgres/sweeper.go` |
+| `PROCESSED_EVENTS_RETENTION` | `720h` | no | `processed_events` dedupe marks older than this are deleted. Keep it above the consumed topics' retention (Kafka default 7 days), or an older redelivery is applied again. `0` keeps marks forever. Chart: `config.processedEventsRetention`. | `internal/adapters/outbound/postgres/sweeper.go` |
 | `PRODUCT_MODE` | `permissive` | no | `permissive` accepts any SKU on `POST /asns`; `kafka` starts the product consumer and rejects SKUs that are not in the local copy (ADR 0003). Any other value is a boot error. | `cmd/api/main.go`, `internal/application/usecases/errors.go` |
 | `PRODUCT_CONSUMER_GROUP` | unset | when `PRODUCT_MODE=kafka` | Stable consumer group of the product consumer. There is no default on purpose: a random group would re-read the topic on every restart. | `cmd/api/main.go` |
 | `DOCK_DOOR_MODE` | `permissive` | no | `permissive` accepts any door on `POST /appointments`; `kafka` starts the dock-door consumer and rejects doors that are not known inbound doors in the local copy. Also selects what `GET /docks` reports. | `cmd/api/main.go` |
@@ -90,6 +94,8 @@ propagator; it opens no spans of its own and serves no `/metrics`.
 | `ANALYTICS_DATABASE_URL` | unset | **yes** | Analytical Postgres DSN, **direct** (not PgBouncer): the embedded analytics migrations (`analytics/migrations`) run over it at boot, then the writer pool (`MaxConns = 5`, `statement_timeout = 10s`) is opened. Missing = boot error. | `cmd/inbound-projector/main.go` |
 | `KAFKA_BROKERS` | unset | **yes** | Comma-separated brokers; blanks are trimmed and empty entries dropped. Missing = boot error. | `cmd/inbound-projector/main.go` |
 | `ANALYTICS_CONSUMER_GROUP` | `inbound-receiving-analytics` | no | Consumer group on `warehouse.inbound-receiving.analytics`. The chart always sets it. | `cmd/inbound-projector/main.go` |
+| `HOUSEKEEPING_INTERVAL` | `1h` | no | Interval of the analytics sweeper ([ADR 0010](/docs/adr/0010-housekeeping-sweeper)). `0` disables it. | `cmd/inbound-projector/main.go`, `internal/adapters/outbound/analyticsstore/sweeper.go` |
+| `PROCESSED_EVENTS_RETENTION` | `720h` | no | `analytics_processed_events` marks with an event time older than this are deleted, except the newest one (it is the projection's freshness). `0` keeps every mark. | `internal/adapters/outbound/analyticsstore/sweeper.go` |
 | `ADMIN_ADDR` | `:8091` | no | Admin listener serving only `GET /healthz` and `GET /readyz`. | `cmd/inbound-projector/main.go` |
 | `LOG_LEVEL` | `info` | no | `debug`, `info`, `warn`/`warning`, `error`. | `cmd/inbound-projector/main.go` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | OTLP/gRPC collector endpoint. A missing collector never blocks boot. | `cmd/inbound-projector/main.go` |
@@ -128,14 +134,16 @@ The chart `charts/inbound-receiving` renders these variables per Deployment:
 
 | Deployment template | Variables set |
 |---|---|
-| `deployment.yaml` (`cmd/api`) | `HTTP_ADDR`, `LOG_LEVEL`, `EVENT_PUBLISHER`, `OUTBOX_RELAY_INTERVAL`, `OUTBOX_MAX_ATTEMPTS`, `PRODUCT_MODE`, `PRODUCT_CONSUMER_GROUP`, `DOCK_DOOR_MODE`, `DOCK_DOOR_CONSUMER_GROUP`, `SHUTDOWN_DRAIN_DELAY`, `CORS_ALLOWED_ORIGINS`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `DATABASE_URL`, `MIGRATIONS_DATABASE_URL`, `KAFKA_BROKERS` |
+| `deployment.yaml` (`cmd/api`) | `HTTP_ADDR`, `LOG_LEVEL`, `EVENT_PUBLISHER`, `OUTBOX_RELAY_INTERVAL`, `OUTBOX_MAX_ATTEMPTS`, the housekeeping knobs (through the ConfigMap only), `PRODUCT_MODE`, `PRODUCT_CONSUMER_GROUP`, `DOCK_DOOR_MODE`, `DOCK_DOOR_CONSUMER_GROUP`, `SHUTDOWN_DRAIN_DELAY`, `CORS_ALLOWED_ORIGINS`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `DATABASE_URL`, `MIGRATIONS_DATABASE_URL`, `KAFKA_BROKERS` |
 | `mcp-deployment.yaml` | `MCP_ADDR`, `LOG_LEVEL`, `DOCK_DOOR_MODE`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `DATABASE_URL`, `MIGRATIONS_DATABASE_URL` |
-| `projector-deployment.yaml` | `ADMIN_ADDR`, `KAFKA_BROKERS`, `ANALYTICS_CONSUMER_GROUP`, `LOG_LEVEL`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `ANALYTICS_DATABASE_URL` |
+| `projector-deployment.yaml` | `ADMIN_ADDR`, `KAFKA_BROKERS`, `ANALYTICS_CONSUMER_GROUP`, `LOG_LEVEL`, `HOUSEKEEPING_INTERVAL`, `PROCESSED_EVENTS_RETENTION`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `ANALYTICS_DATABASE_URL` |
 | `reports-deployment.yaml` | `HTTP_ADDR`, `LOG_LEVEL`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `ANALYTICS_DATABASE_URL` |
 
 The chart ConfigMap (`templates/configmap.yaml`, named `<release>`) holds the
 non-secret `cmd/api` variables (`HTTP_ADDR`, `LOG_LEVEL`, `EVENT_PUBLISHER`,
-the modes and groups, `OUTBOX_RELAY_INTERVAL`, `OUTBOX_MAX_ATTEMPTS`,
+the modes and groups, `OUTBOX_RELAY_INTERVAL`, `OUTBOX_MAX_ATTEMPTS`, the
+housekeeping knobs `HOUSEKEEPING_INTERVAL`, `IDEMPOTENCY_KEY_TTL`,
+`OUTBOX_RETENTION`, `PROCESSED_EVENTS_RETENTION`,
 `SHUTDOWN_DRAIN_DELAY`, `CORS_ALLOWED_ORIGINS`, `ENVIRONMENT`,
 `OTEL_EXPORTER_OTLP_ENDPOINT`, `KAFKA_BROKERS`). The api Deployment mounts it
 with `envFrom` (gap fix D14), so every `config.*` value really reaches the
