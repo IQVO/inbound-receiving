@@ -153,10 +153,12 @@ func (c *AnalyticsConsumer) HandleMessage(ctx context.Context, msg kafkago.Messa
 	}
 	pe, err := toReportEvent(kind, evt)
 	if err != nil {
+		//dlq:deterministic toReportEvent is a pure decode+validation of the event bytes (DataAs, subject match, Event.Validate; no ctx, no I/O), so cancellation cannot produce this error and the same bytes always fail
 		return c.deadLetter(ctx, msg, err)
 	}
 	if _, err := c.Projection.Apply(ctx, pe); err != nil {
 		if errors.Is(err, report.ErrRejected) {
+			//dlq:deterministic only report.ErrRejected reaches here (analyticsstore.classify wraps SQLSTATE class 22/23 only); every other Apply error, cancellation included, is returned below as transient
 			return c.deadLetter(ctx, msg, err)
 		}
 		return fmt.Errorf("analytics: project %s %s: %w", kind, evt.ID(), err)
