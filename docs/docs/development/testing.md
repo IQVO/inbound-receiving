@@ -143,7 +143,7 @@ lefthook (`lefthook.yml`) runs `fmt-check`, `vet` and `lint` on pre-commit and
 | `lint` | golangci-lint v2.14.0 | push + PR |
 | `guide-lint` | `scripts/harness/guide_lint.py`, `test_hook.py` (advisory, `continue-on-error`) | push + PR |
 | `complexity` | golangci-lint with only `gocyclo,gocognit,cyclop,funlen,nestif` + an informational gocyclo report | push + PR |
-| `test` | build, vet, `go test ./... -race` with coverage over domain + application, **90 %** gate | push + PR |
+| `test` | build, vet, then `make coverage` (`go test ./... -race` with the Makefile's coverage scope, domain + application, and the **90 %** gate) | push + PR |
 | `bdd` | `go test ./... -run TestFeatures -v` | push + PR |
 | `integration` | `go test -tags=integration ./... -race -count=1` (testcontainers on the runner's Docker) | push + PR |
 | `mutation-fast` | gremlins on each domain package (blocking) | push + PR |
