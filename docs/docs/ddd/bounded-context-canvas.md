@@ -234,7 +234,7 @@ Over / Damaged), **Walk-in**, **Snapshot**, **Local copy**, **Version**.
 - The receiving KPIs (receipts closed, units good versus damaged,
   discrepancies by kind, receipt cycle time, dock dwell, appointment
   milestones) are served by `GET /reports/receiving-performance` (ADR 0006);
-  no business metric is emitted as telemetry.
+  the one business counter, `inbound_receiving.receipts.units_received` (units by `outcome`), is the only receiving figure emitted as telemetry.
 
 ## Open Questions
 
