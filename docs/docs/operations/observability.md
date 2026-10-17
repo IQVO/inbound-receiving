@@ -46,11 +46,12 @@ OTel contrib runtime `v0.72.0`, prometheus `client_golang`).
 
 ## Metric instruments
 
-The repo defines **no custom (business) instruments**. Every metric comes from
-a library:
+The repo defines **one custom (business) instrument**, `inbound_receiving.receipts.units_received`
+(ADR 0013); every other metric comes from a library:
 
 | Instrument | Type | Unit | Attributes | Emitted by |
 |---|---|---|---|---|
+| `inbound_receiving.receipts.units_received` | Int64 counter | `{unit}` | `outcome` (`good`, `damaged`; the receipt line's condition) | `telemetry.ReceiptMetrics`, created in `cmd/api/main.go` and incremented by `ReceiveLine` with the line quantity; OTLP only. The damaged share never becomes stock (ADR 0003) |
 | `http.server.request.duration` | Float64Histogram (buckets 5 ms … 10 s) | `s` | `http.method`, `http.scheme`, `http.route` (chi pattern, e.g. `/asns/{asnNumber}`) | otelchi `NewServerRequestDuration` on the api, mcp and reports routers |
 | `go.memory.used` | UpDownCounter (observable) | `By` | `go.memory.type` (`stack`, `other`) | contrib runtime (api, mcp, reports, projector) |
 | `go.memory.limit` | UpDownCounter (observable) | `By` | — | contrib runtime |
