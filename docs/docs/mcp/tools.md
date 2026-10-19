@@ -35,7 +35,7 @@ Every tool carries the annotations `readOnlyHint: true`,
 | `list_appointments` | read-only | `limit`, `cursor`, `door` (door code), `state`, `from` (RFC 3339: window ends after it), `to` (RFC 3339: window starts before it) | `items`, `next_cursor`; ascending window-start order |
 | `get_receipt` | read-only | `receipt_id` (string, **required**, e.g. `rcpt-1b4e28ba-...`) | `receipt_id`, `asn_number`, `appointment_id` and `door_code` (omitted for a walk-in), `state` (`Open`, `Closed`), `lines` (`expected_qty`, `received_good`, `received_damaged`), `opened_at`, `closed_at` (omitted while open), `discrepancies` (kind `Short`, `Over`, `Damaged`; provisional while Open), `version` |
 | `list_receipts` | read-only | `limit`, `cursor`, `asn_number`, `state` (`Open` or `Closed`) | `items`, `next_cursor`; ascending id order |
-| `list_docks` | read-only | none | `mode` (`permissive` or `kafka`, from `DOCK_DOOR_MODE`), `items` (`door_code`, `dock_flow` `Inbound` or `Both`); ascending code order |
+| `list_docks` | read-only | none | `mode` (always `kafka`), `items` (`door_code`, `dock_flow` `Inbound` or `Both`); ascending code order |
 
 ## Errors
 
@@ -54,7 +54,7 @@ suffix (`internal/adapters/inbound/mcp/errors.go`):
 
 ## Example session
 
-Captured against a local in-memory `cmd/mcp` (`MCP_ADDR=:18090`):
+Captured against a local `cmd/mcp` on an empty Postgres (`MCP_ADDR=:18090`):
 
 ```text
 POST /mcp  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",...}}
@@ -63,7 +63,7 @@ POST /mcp  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVers
 POST /mcp  {"jsonrpc":"2.0","method":"notifications/initialized"}       (same Mcp-Session-Id)
 POST /mcp  {"jsonrpc":"2.0","id":2,"method":"tools/list"}                → the 7 tools above
 POST /mcp  {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_docks","arguments":{}}}
-→ result.structuredContent = {"items":[],"mode":"permissive"}
+→ result.structuredContent = {"items":[],"mode":"kafka"}
 ```
 
 Requests must send `Accept: application/json, text/event-stream`; responses
@@ -73,8 +73,8 @@ come back as `event: message` / `data: ...` frames.
 
 - The MCP session state lives in the process, and the Service has no session
   affinity, so the chart keeps `mcp.replicaCount: 1` and has no HPA for it.
-- Without `DATABASE_URL` the server uses its own empty in-memory store; point
-  it at the same database as `cmd/api` to see real data.
+- `DATABASE_URL` is required (there is no in-memory store); point it at the
+  same database as `cmd/api`.
 - Telemetry: spans and `http.server.request.duration` under service name
   `inbound-receiving-mcp`; individual tool calls do not get their own span
   (see [Observability](../operations/observability.md)).

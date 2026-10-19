@@ -94,7 +94,7 @@ the real wiring; the repository defaults were the lie.
    without validation cannot reintroduce the defect.
 7. **Migrations at boot stay** (with `internal/bootretry` backoff;
    `MIGRATIONS_DATABASE_URL` fallback unchanged). The service never creates
-   topics; on boot it logs the topics it consumes and produces. A topic that
+   topics (the relay and consumers log the topics they use). A topic that
    does not exist yet is created by the broker on the first write; the first
    relay publish may fail once with `Unknown Topic Or Partition` while that
    happens and succeeds on the next pass (the relay retries, the row is not

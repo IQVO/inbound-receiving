@@ -61,8 +61,8 @@ inventory-storage books `condition=Good` quantities only.
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | `DOCK_DOOR_CONSUMER_GROUP` | `DOCK_DOOR_MODE=kafka` |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | `DOCK_DOOR_CONSUMER_GROUP` | `DOCK_DOOR_MODE=kafka` |
 
-Both modes default to `permissive` (consumer not started); a `kafka` mode with an
-unset group is a boot error. Every other type on those topics is ignored and a
+Both modes are `kafka` (the default and the only legal value) and both consumer
+groups are required: an unset group, `permissive` or `off` is a boot error. Every other type on those topics is ignored and a
 message that is not a valid CloudEvent is logged and skipped. The full list with
 producer use cases and consumers is on [Domain events](/docs/ddd/domain-events).
 

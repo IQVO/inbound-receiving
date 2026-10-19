@@ -59,8 +59,8 @@ Example (the handover message):
 
 | Full CloudEvents type | Topic | Consumer | Group env | Effect |
 | --- | --- | --- | --- | --- |
-| `com.warehouse.wms.product-master.product.ProductRegistered` | `warehouse.product-master.events` | `ProductConsumer` → `ApplyProductRegistered` | `PRODUCT_CONSUMER_GROUP` (only when `PRODUCT_MODE=kafka`) | upsert the SKU into `known_skus` (uses `data.sku` only) |
-| `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | `DockDoorConsumer` → `ApplyLocationSlotRegistered` | `DOCK_DOOR_CONSUMER_GROUP` (only when `DOCK_DOOR_MODE=kafka`) | upsert into `dock_doors` when `role=Dock` and `dockFlow` is `Inbound` or `Both`; ignore otherwise |
+| `com.warehouse.wms.product-master.product.ProductRegistered` | `warehouse.product-master.events` | `ProductConsumer` → `ApplyProductRegistered` | `PRODUCT_CONSUMER_GROUP` (required) | upsert the SKU into `known_skus` (uses `data.sku` only) |
+| `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | `DockDoorConsumer` → `ApplyLocationSlotRegistered` | `DOCK_DOOR_CONSUMER_GROUP` (required) | upsert into `dock_doors` when `role=Dock` and `dockFlow` is `Inbound` or `Both`; ignore otherwise |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | `DockDoorConsumer` → `ApplyLocationSlotDecommissioned` | `DOCK_DOOR_CONSUMER_GROUP` | delete the row for `locationCode`; a code that is not a door is a no-op |
 
 Facility-layout payloads are camelCase (`locationCode`, `role`, `dockFlow`);

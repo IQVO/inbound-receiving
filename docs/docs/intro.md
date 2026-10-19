@@ -29,7 +29,7 @@ to `inventory-storage` as events and stow stays an RF action there
 | Language / style | Go backend, hexagonal architecture (ports and adapters) |
 | Deployables | Four Go binaries in one image: `cmd/api` (REST `:8080`, outbox relay, local-copy consumers), `cmd/mcp` (read-only MCP `:8090`, [ADR 0005](/docs/adr/0005-mcp-server-adoption)), `cmd/inbound-projector` and `cmd/inbound-reports` (analytics read side, admin `:8091` and reports `:8092`, [ADR 0006](/docs/adr/0006-analytics-read-side)); plus the `web/` micro-frontend remote `inbound_mfe` |
 | Inbound adapters | REST, MCP (Streamable HTTP), two Kafka consumers that feed local copies (`known_skus`, `dock_doors`) and the analytics-topic consumer of the projector |
-| Outbound adapters | Postgres (or in-memory without `DATABASE_URL`), the Kafka outbox relay, and a separate analytical Postgres (`ANALYTICS_DATABASE_URL`) for the read side |
+| Outbound adapters | Postgres, the Kafka outbox relay, and a separate analytical Postgres (`ANALYTICS_DATABASE_URL`) for the read side |
 | Integration | Kafka CloudEvents 1.0 (structured mode), transactional outbox for publishing to `warehouse.inbound-receiving.events` and, under the same CloudEvents id, to the internal analytics topic |
 | Auth | None on REST or MCP (fleet-wide revert of 2026-09-11) |
 
