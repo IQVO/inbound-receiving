@@ -49,7 +49,7 @@ Source: `cmd/api/main.go`, `cmd/mcp/main.go`, `cmd/inbound-projector/main.go`,
 
 | Store | Used by | Schema |
 |---|---|---|
-| OLTP Postgres (`DATABASE_URL`; in-memory adapters when unset) | `cmd/api` read/write, `cmd/mcp` read | `internal/adapters/outbound/postgres/migrations` (embedded, applied at boot by api and mcp) |
+| OLTP Postgres (`DATABASE_URL`, required) | `cmd/api` read/write, `cmd/mcp` read | `internal/adapters/outbound/postgres/migrations` (embedded, applied at boot by api and mcp) |
 | Analytical Postgres (`ANALYTICS_DATABASE_URL`, required) | `cmd/inbound-projector` (only writer), `cmd/inbound-reports` (read-only pool) | `analytics/migrations` (embedded, applied at boot by the projector) |
 | Kafka (one fleet broker) | `cmd/api` (relay + 2 consumers), `cmd/inbound-projector` | topics on the [Runbook](../operations/runbook.md#kafka) |
 
@@ -95,8 +95,8 @@ Every write use case (`internal/application/usecases/writer.go`) runs inside one
 `ports.UnitOfWork`: load the aggregate(s), apply the aggregate command, save each
 guarded by the version that was loaded, encode the raised events
 (`EventEncoder`) and insert them into `outbox_events`. With Postgres the unit of
-work is one transaction (`postgres/unit_of_work.go`); without `DATABASE_URL` the
-in-memory adapters provide the same contract. `CloseReceipt` saves the receipt,
+work is one transaction (`postgres/unit_of_work.go`); the in-memory adapters are
+test doubles only (ADR 0011). `CloseReceipt` saves the receipt,
 the ASN and the appointment in a single unit of work, so their events reach the
 outbox together.
 
@@ -186,13 +186,14 @@ Every environment variable of the four binaries (default, required flag,
 meaning and source file) is on [Configuration](../operations/configuration.md).
 The rules that shape the runtime:
 
-- `cmd/api` refuses to boot on a `kafka` mode without its consumer group or
-  without `KAFKA_BROKERS`, and on `EVENT_PUBLISHER=kafka` without brokers
-  (`loadConfig`, `startOutboxRelay`). With `permissive` the consumer is not
-  started.
-- The first start under a new consumer group replays the topic from the first
-  offset; readiness does not wait for the replay, which is why the cluster
-  flips a mode to `kafka` only after the copy is filled.
+- `cmd/api` refuses to boot (`loadConfig`) without `DATABASE_URL`,
+  `KAFKA_BROKERS` and both consumer groups, and on `permissive`/`off` modes or
+  `EVENT_PUBLISHER=log`; the relay and both consumers always run, and the
+  process exits non-zero if one of them dies (ADR 0011).
+- `GET /readyz` checks Postgres and Kafka (a topic-less metadata request); the
+  first start under a new consumer group replays the topic from the first
+  offset and readiness does not wait for the replay, so writes can answer
+  `422 unknown-sku` / `unknown-dock-door` until the copy has caught up.
 - `cmd/inbound-projector` and `cmd/inbound-reports` require
   `ANALYTICS_DATABASE_URL`; the projector also requires `KAFKA_BROKERS`.
 

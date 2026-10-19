@@ -1,0 +1,78 @@
+# Mirrors warehouse-infra's helm-values/inbound-receiving.yaml (origin/develop,
+# 2026-10-19), minus the comments. There is no kind-resources overlay for this
+# chart. `render_test.sh` renders the chart with warehouse-infra-platform-values.yaml
+# followed by THIS file, exactly as ArgoCD layers them, to prove that the
+# real-runtime requirements of ADR 0011 (mandatory DATABASE_URL, KAFKA_BROKERS,
+# both consumer groups, kafka modes only) are ALREADY provided by what infra
+# sets: no infra values change is needed. Keep it in step with warehouse-infra.
+replicaCount: 1
+
+config:
+  httpAddr: ":8080"
+  logLevel: "info"
+  eventPublisher: "kafka"
+  outboxRelayInterval: "1s"
+  productMode: "kafka"
+  productConsumerGroup: "inbound-receiving-product"
+  dockDoorMode: "kafka"
+  dockDoorConsumerGroup: "inbound-receiving-dock-doors"
+
+kafka:
+  enabled: true
+analytics:
+  enabled: true
+  projector:
+    consumerGroup: "inbound-receiving-analytics"
+  database:
+    existingSecret: inbound-receiving-analytics-db
+  reports:
+    route:
+      enabled: true
+      path: /api/inbound-receiving/reports
+
+database:
+  existingSecret: inbound-receiving-db
+extraEnv: []
+frontend:
+  enabled: true
+  image:
+    pullPolicy: IfNotPresent
+    repository: warehouse/inbound-receiving-frontend
+gatewayApi:
+  enabled: true
+  hosts:
+    - path: /api/inbound-receiving
+      pathType: PathPrefix
+  stripPath: true
+image:
+  pullPolicy: IfNotPresent
+  repository: warehouse/inbound-receiving
+ingress:
+  annotations:
+    konghq.com/strip-path: 'true'
+  className: kong
+  enabled: false
+  hosts:
+    - host: ''
+      paths:
+        - path: /api/inbound-receiving
+          pathType: Prefix
+kongPlugins:
+  cors:
+    enabled: true
+  opentelemetry:
+    enabled: true
+  prometheus:
+    enabled: true
+mcp:
+  enabled: true
+  route:
+    enabled: true
+    path: /api/mcp/inbound-receiving
+pathCatalogue:
+  content: ''
+  enabled: false
+service:
+  port: 80
+  targetPort: 8080
+  type: ClusterIP

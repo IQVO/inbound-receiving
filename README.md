@@ -128,7 +128,7 @@ Writes (register, cancel, book, check in, open, receive, close) stay on REST;
 write-verb tool name. Details: [`.claude/rules/mcp.md`](.claude/rules/mcp.md).
 
 ```bash
-DOCK_DOOR_MODE=permissive go run ./cmd/mcp   # in-memory without DATABASE_URL
+DATABASE_URL='postgres://...' go run ./cmd/mcp   # same Postgres as cmd/api; DATABASE_URL is required
 ```
 
 ## Packaging
@@ -142,7 +142,7 @@ python3 charts/inbound-receiving/tests/test_service_selectors.py
 
 The image carries every `cmd/*` binary and runs as uid 1000. The chart
 `charts/inbound-receiving` renders the api Deployment + Service (component
-`api`; `database.url` or `database.existingSecret` is required, a direct
+`api`; `database.url` or `database.existingSecret`, `kafka.brokers` and both consumer groups are required, a direct
 `MIGRATIONS_DATABASE_URL` is read from `database.migrationsExistingSecretKey`),
 an optional HPA and Gateway API `HTTPRoute`/Ingress, the MCP Deployment +
 Service (component `mcp`, `mcp.enabled`, default off), the analytics
@@ -153,8 +153,8 @@ projector and reports (components `analytics-projector` / `analytics-reports`,
 `config.productMode` / `config.productConsumerGroup`, `config.dockDoorMode` /
 `config.dockDoorConsumerGroup`, `config.outboxRelayInterval`, ...); the chart
 refuses to render states that would silently do nothing or crash-loop (no
-database, a Kafka mode without brokers or a consumer group, a group set while
-its mode is permissive). Images and charts publish to
+database, no brokers, no consumer group, `permissive`/`off` modes, the `log`
+publisher; Postgres and Kafka are the only runtime, ADR 0011). Images and charts publish to
 `ghcr.io/iqvo/inbound-receiving`.
 
 ## Quality gates

@@ -18,10 +18,10 @@ every push and pull request into `develop`/`main`.
 | Use-case unit tests | `internal/application/usecases/*_test.go` (fakes in `fakes_test.go`) | `make test` | nothing |
 | Adapter unit tests | `internal/adapters/**/*_test.go` (httptest handlers, MCP tools + `testdata/tool_registry.golden.json`, Kafka consumers with fake readers, encoders with golden CloudEvents, relay, telemetry, memory store) | `make test` | nothing |
 | Analytics rules | `internal/analytics/report/report_test.go` (range parsing, day windows, percentiles, freshness) | `make test` | nothing |
-| Composition roots | `cmd/*/main_test.go` (env validation, admin mux, drain delay) | `make test` | nothing |
+| Composition roots | `cmd/*/main_test.go` (env validation, admin mux, drain delay; the in-memory doubles come from `cmd/api/testdoubles_test.go`) | `make test` | nothing |
 | BDD acceptance (godog) | `features/*.feature`, steps in `features_test.go` + `features_wave2_test.go` | `make bdd` (also part of `make test`) | nothing: in-memory adapters behind an `httptest` server and a stepping clock |
-| Architecture fitness | `internal/architecture/*_test.go` | `make arch-test` (also part of `make test`) | nothing |
-| Integration (testcontainers) | 19 files with `//go:build integration` | `make integration` | Docker |
+| Architecture fitness | `internal/architecture/*_test.go` (including `TestRuntimeBinaryHasNoInMemoryAdapters`) | `make arch-test` (also part of `make test`) | nothing |
+| Integration (testcontainers) | files with `//go:build integration`, including `cmd/api/e2e_integration_test.go` (`TestRunOnRealPostgresAndKafka`) | `make integration` | Docker |
 | Mutation | gremlins over `internal/domain` | `make mutation` / `make mutation-full` | `gremlins` v0.6.0 |
 | Frontend remote | `web/` (vitest + Testing Library) | `npm test` in `web/` | Node 22, sibling `warehouse-ui-kit` checkout |
 | Chart render tests | `charts/inbound-receiving/tests/render_test.sh`, `charts/inbound-receiving/tests/test_service_selectors.py` | `bash .../render_test.sh`, `python3 .../test_service_selectors.py` (CI `chart-tests`) | `helm`, PyYAML |

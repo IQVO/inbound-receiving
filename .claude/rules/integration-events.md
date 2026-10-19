@@ -108,11 +108,10 @@ effect; commit the offset only after it (FetchMessage + CommitMessages).
 
 ## Consumer group id
 
-Both consumers are optional local copies selected by mode env vars, default
-`permissive` (consumer not started): `PRODUCT_MODE` with group id env
-`PRODUCT_CONSUMER_GROUP`, and `DOCK_DOOR_MODE` with group id env
-`DOCK_DOOR_CONSUMER_GROUP`. Mode `kafka` with an unset group id is a BOOT
-ERROR. The groups are STABLE (the copy is a durable table, offsets are
+Both consumers are local copies that ALWAYS run (ADR 0011): `PRODUCT_MODE`
+with group id env `PRODUCT_CONSUMER_GROUP`, and `DOCK_DOOR_MODE` with group id
+env `DOCK_DOOR_CONSUMER_GROUP`. The only mode is `kafka` (the default);
+`permissive`/`off` are BOOT ERRORS, and so is an unset group id. The groups are STABLE (the copy is a durable table, offsets are
 committed). Any consumer group id MUST be env-configurable, never a hardcoded string literal --
 `internal/architecture/fitness_test.go`'s
 TestKafkaConsumerGroupNeverHardcodedInline enforces this (a real incident:

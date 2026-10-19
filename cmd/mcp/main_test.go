@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,20 +13,18 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	inboundmcp "github.com/claudioed/inbound-receiving/internal/adapters/inbound/mcp"
+	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/memory"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 )
 
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// newTestServer wires the binary exactly as run() does, over the in-memory
-// repositories selected by an empty DATABASE_URL, behind the real router.
+// newTestServer wires the read use cases (depsOver, the same function run()
+// uses) over the in-memory TEST DOUBLES, behind the real router. The Postgres
+// wiring is proven in main_integration_test.go.
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	deps, closeFn, err := buildDeps(context.Background(), quietLogger(), "", "", usecases.ModePermissive)
-	if err != nil {
-		t.Fatalf("buildDeps: %v", err)
-	}
-	t.Cleanup(closeFn)
+	deps := depsOver(memory.NewAsnRepo(), memory.NewAppointmentRepo(), memory.NewReceiptRepo(), memory.NewDockDoors())
 	srv := httptest.NewServer(newRouter(inboundmcp.Handler(inboundmcp.NewServer(deps))))
 	t.Cleanup(srv.Close)
 	return srv
@@ -114,29 +113,58 @@ func TestNoAuthIsRequired(t *testing.T) {
 }
 
 // An unreachable database is a boot error after the bounded retries, never
-// a silent fallback to the in-memory repositories.
+// a silent fallback.
 func TestBuildDeps_BadDatabaseFailsBoot(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // a cancelled context makes bootretry give up at once
-	if _, _, err := buildDeps(ctx, quietLogger(), "postgres://u@127.0.0.1:1/db", "postgres://u@127.0.0.1:1/db", usecases.ModePermissive); err == nil {
+	if _, _, err := buildDeps(ctx, quietLogger(), "postgres://u@127.0.0.1:1/db", "postgres://u@127.0.0.1:1/db"); err == nil {
 		t.Fatal("an unreachable database must fail boot")
 	}
 }
 
-// DOCK_DOOR_MODE only labels list_docks: it must reach the use case, and an
-// unknown value must be refused (run() parses it before opening anything).
-func TestBuildDeps_ReportsTheConfiguredDockDoorMode(t *testing.T) {
-	deps, closeFn, err := buildDeps(context.Background(), quietLogger(), "", "", usecases.ModeKafka)
-	if err != nil {
-		t.Fatal(err)
+// There is no in-memory runtime: an empty DATABASE_URL is a boot error from
+// both loadConfig (before anything opens) and buildDeps.
+func TestNoDatabaseURLIsABootError(t *testing.T) {
+	if _, err := loadConfig(func(string) string { return "" }); !errors.Is(err, errMissingDatabaseURL) {
+		t.Fatalf("loadConfig(empty) = %v, want errMissingDatabaseURL", err)
 	}
-	defer closeFn()
+	if _, _, err := buildDeps(context.Background(), quietLogger(), "", ""); !errors.Is(err, errMissingDatabaseURL) {
+		t.Fatalf("buildDeps(\"\") = %v, want errMissingDatabaseURL", err)
+	}
+}
+
+// DOCK_DOOR_MODE only labels list_docks: unset/kafka pass, permissive/off/
+// unknown are boot errors naming the variable.
+func TestLoadConfig_DockDoorMode(t *testing.T) {
+	envWith := func(mode string) func(string) string {
+		return func(k string) string {
+			switch k {
+			case "DATABASE_URL":
+				return "postgres://u@db/x"
+			case "DOCK_DOOR_MODE":
+				return mode
+			}
+			return ""
+		}
+	}
+	for _, ok := range []string{"", "kafka"} {
+		if url, err := loadConfig(envWith(ok)); err != nil || url != "postgres://u@db/x" {
+			t.Errorf("DOCK_DOOR_MODE=%q: url=%q err=%v, want accepted", ok, url, err)
+		}
+	}
+	for _, bad := range []string{"permissive", "off", "strict"} {
+		if _, err := loadConfig(envWith(bad)); err == nil || !strings.Contains(err.Error(), "DOCK_DOOR_MODE") {
+			t.Errorf("DOCK_DOOR_MODE=%q: err=%v, want a boot error naming DOCK_DOOR_MODE", bad, err)
+		}
+	}
+}
+
+// list_docks always reports the kafka mode: the runtime has no other.
+func TestDepsOver_ReportsKafkaDockMode(t *testing.T) {
+	deps := depsOver(memory.NewAsnRepo(), memory.NewAppointmentRepo(), memory.NewReceiptRepo(), memory.NewDockDoors())
 	list, err := deps.ListDocks.Handle(context.Background())
 	if err != nil || list.Mode != usecases.ModeKafka {
 		t.Fatalf("docks = %+v, %v; want mode kafka", list, err)
-	}
-	if _, err := usecases.ParseMode("strict"); err == nil {
-		t.Fatal("an unknown DOCK_DOOR_MODE must be refused")
 	}
 }
 

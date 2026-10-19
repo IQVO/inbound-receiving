@@ -45,13 +45,14 @@ unknown types are ignored.
 
 | Copy | Mode env | Group env | Default |
 | --- | --- | --- | --- |
-| `known_skus` | `PRODUCT_MODE` = `kafka` or `permissive` | `PRODUCT_CONSUMER_GROUP` | `permissive` |
-| `dock_doors` | `DOCK_DOOR_MODE` = `kafka` or `permissive` | `DOCK_DOOR_CONSUMER_GROUP` | `permissive` |
+| `known_skus` | `PRODUCT_MODE` = `kafka` (only value) | `PRODUCT_CONSUMER_GROUP` (required) | `kafka` |
+| `dock_doors` | `DOCK_DOOR_MODE` = `kafka` (only value) | `DOCK_DOOR_CONSUMER_GROUP` (required) | `kafka` |
 
-`permissive` does not consult the copy, so every SKU and door code is accepted
-(fail-open) and the consumer is not started. The first start under a new group
-replays the topic from the first offset; readiness does not wait for it, which is
-why the cluster is meant to flip to `kafka` only after the copies have replayed.
+The consumers always run and the copies are always consulted: `permissive` and
+`off` are boot errors since [ADR 0011](/docs/adr/0011-postgres-and-kafka-are-the-only-runtime).
+The first start under a new group replays the topic from the first offset;
+readiness does not wait for it, so writes can answer `422` until the copies
+have replayed.
 Both copies are eventually consistent: a SKU registered seconds ago may be
 rejected in `kafka` mode until its event is consumed, and the operator retries.
 

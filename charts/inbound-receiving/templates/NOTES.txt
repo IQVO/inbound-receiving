@@ -24,24 +24,17 @@ MCP server (read-only tools, Streamable HTTP, no auth):
   http://{{ include "inbound-receiving.mcpFullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.mcp.service.port }}/mcp
 {{- end }}
 
-{{- if eq .Values.config.eventPublisher "kafka" }}
+Runtime (ADR 0011): real Postgres and real Kafka only.
 
-config.eventPublisher is "kafka" — Inbound events are relayed from the
-transactional outbox onto warehouse.inbound-receiving.events ({{ .Values.kafka.brokers }}).
-{{- else }}
-
-NOTE: config.eventPublisher is "log" (the default) — outbox rows are drained
-to the log sink, nothing reaches warehouse.inbound-receiving.events.
-{{- end }}
-{{- if eq .Values.config.productMode "kafka" }}
+Inbound events are relayed from the transactional outbox onto
+warehouse.inbound-receiving.events and warehouse.inbound-receiving.analytics
+({{ .Values.kafka.brokers }}). /readyz is 200 only while Postgres answers a ping
+and a Kafka broker answers a metadata request.
 
 The product local-copy consumer is ON (group
 {{ .Values.config.productConsumerGroup }}, topic warehouse.product-master.events):
 unknown SKUs are refused when an ASN is registered.
-{{- end }}
-{{- if eq .Values.config.dockDoorMode "kafka" }}
 
 The dock-door local-copy consumer is ON (group
 {{ .Values.config.dockDoorConsumerGroup }}, topic warehouse.facility.events):
 only known inbound doors can be booked.
-{{- end }}
