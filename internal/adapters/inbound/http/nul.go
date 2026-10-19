@@ -11,11 +11,18 @@ import (
 var notFoundResource = notFound("resource-not-found", "Resource not found")
 
 // rejectNUL turns a NUL character in a request into a client error before it
-// reaches a Postgres text parameter. PostgreSQL text cannot hold U+0000, and a
-// statement that carries one aborts the surrounding transaction (SQLSTATE
-// 22021, then 25P02 for the next statement), so without this guard a fuzzed or
-// hostile request becomes a 500 on the real runtime (ADR 0011). The in-memory
-// adapters never noticed, which is how it stayed hidden.
+// can reach a Postgres text parameter. PostgreSQL text cannot hold U+0000, and
+// a statement that carries one aborts the surrounding transaction (SQLSTATE
+// 22021, then 25P02 for the next statement): on the sibling services that
+// became a 500 on the real runtime, hidden for as long as the in-memory
+// adapters served the contract run (ADR 0011).
+//
+// This service's domain value objects already reject control characters in
+// every text field (invalid-asn-number, invalid-sku, invalid-supplier-ref,
+// ...), and a probe of every path, query and body field on the real runtime
+// found no 500. The guard is therefore defence in depth: it answers a NUL
+// with ONE uniform client error before routing, so a field added later
+// without that validation cannot reintroduce the defect.
 //
 //   - a NUL in the URL path can never name a resource: 404 resource-not-found,
 //     the same answer as any other identifier that does not exist;

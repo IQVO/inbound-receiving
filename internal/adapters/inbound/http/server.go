@@ -69,9 +69,10 @@ func NewRouter(s *Server) http.Handler {
 		ExposedHeaders:   []string{"ETag", "Location"},
 		AllowCredentials: false,
 	}))
-	// A NUL (U+0000) in the path or a body is a client error here, never a
-	// Postgres 22021 -> 500 (ADR 0011); it runs before the route-scoped
-	// idempotency middleware so a rejected request never records its key.
+	// A NUL (U+0000) in the path or a body is a uniform client error, never a
+	// Postgres 22021 -> 500 (ADR 0011, defence in depth); it runs before the
+	// route-scoped idempotency middleware so a rejected request never records
+	// its key.
 	r.Use(rejectNUL)
 
 	r.Get("/healthz", handleHealthz)

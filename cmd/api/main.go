@@ -71,13 +71,15 @@ const workerDrainTimeout = 10 * time.Second
 const DefaultShutdownDrainDelay = 5 * time.Second
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(context.Background()); err != nil {
 		slog.Error("service exited with error", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+// run boots the service and serves until SIGINT/SIGTERM or until ctx is
+// cancelled (the integration test stops the real entry point that way).
+func run(ctx context.Context) error {
 	logger := newLogger(getenv("LOG_LEVEL", "info"))
 	slog.SetDefault(logger)
 
@@ -95,7 +97,7 @@ func run() error {
 
 	// closeAdapters (pool.Close) is deferred FIRST so it runs LAST, after the
 	// HTTP drain, the consumers and the relay have all stopped.
-	ad, closeAdapters, err := buildAdapters(context.Background(), os.Getenv("DATABASE_URL"), logger)
+	ad, closeAdapters, err := buildAdapters(ctx, os.Getenv("DATABASE_URL"), logger)
 	if err != nil {
 		return err
 	}
@@ -127,7 +129,7 @@ func run() error {
 		}
 		return err
 	}
-	return serveUntilSignal(logger, httpServer, readiness, consumers, relay, closeRelay)
+	return serveUntilSignal(ctx, logger, httpServer, readiness, consumers, relay, closeRelay)
 }
 
 // config is the validated, env-derived part of the wiring.
@@ -467,7 +469,7 @@ func startOutboxRelay(store outboxrelay.Store, brokers []string, logger *slog.Lo
 // drain delay, (3) drain HTTP, (4) stop and await the consumers (outbox
 // writers), (5) stop and await the relay LAST so nothing committed above is
 // stranded; the caller's deferred pool.Close runs after all of it.
-func serveUntilSignal(logger *slog.Logger, httpServer *http.Server, readiness *inboundhttp.Readiness,
+func serveUntilSignal(ctx context.Context, logger *slog.Logger, httpServer *http.Server, readiness *inboundhttp.Readiness,
 	consumers []*worker, relay *worker, closeRelay func(),
 ) error {
 	errCh := make(chan error, 1)
@@ -478,7 +480,7 @@ func serveUntilSignal(logger *slog.Logger, httpServer *http.Server, readiness *i
 		}
 	}()
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	select {
 	case err := <-errCh:
@@ -487,7 +489,7 @@ func serveUntilSignal(logger *slog.Logger, httpServer *http.Server, readiness *i
 		}
 		closeRelay()
 		return err
-	case <-ctx.Done():
+	case <-sigCtx.Done():
 	}
 
 	readiness.SetNotReady()
