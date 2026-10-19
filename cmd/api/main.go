@@ -1,24 +1,25 @@
 // Command api is inbound-receiving's composition root: it wires env config
 // into adapters, adapters into use cases, and use cases into the HTTP router,
-// the two local-copy consumers (ADR 0003) and the outbox relay.
+// the two local-copy consumers (ADR 0003) and the outbox relay, all on real
+// Postgres and real Kafka (ADR 0011).
 //
 // Environment:
 //
 //	HTTP_ADDR                     listen address (default :8080)
-//	DATABASE_URL                  Postgres DSN; unset = in-memory adapters
+//	DATABASE_URL                  Postgres DSN (REQUIRED: there is no in-memory mode, ADR 0011)
 //	MIGRATIONS_DATABASE_URL       direct DSN for the boot migrations (default DATABASE_URL)
-//	EVENT_PUBLISHER               kafka | log (default log)
-//	KAFKA_BROKERS                 comma-separated brokers (EVENT_PUBLISHER=kafka, consumers)
+//	KAFKA_BROKERS                 comma-separated brokers (REQUIRED: relay, consumers, /readyz)
+//	EVENT_PUBLISHER               kafka (default kafka); log is a boot error
 //	OUTBOX_RELAY_INTERVAL         relay poll interval (Go duration or seconds, default 1s)
 //	OUTBOX_MAX_ATTEMPTS           failures before the relay excludes a row (default 20, 0 = unlimited)
-//	HOUSEKEEPING_INTERVAL         sweeper interval (default 1h, 0 = sweeper off; Postgres only)
+//	HOUSEKEEPING_INTERVAL         sweeper interval (default 1h, 0 = sweeper off)
 //	IDEMPOTENCY_KEY_TTL           idempotency_keys row lifetime (default 24h, 0 = keep forever)
 //	OUTBOX_RETENTION              published outbox_events retention (default 168h, 0 = keep forever)
 //	PROCESSED_EVENTS_RETENTION    processed_events dedupe-mark retention (default 720h, 0 = keep forever)
-//	PRODUCT_MODE                  permissive | kafka (default permissive): enforce known SKUs
-//	PRODUCT_CONSUMER_GROUP        stable group of the product consumer; required when PRODUCT_MODE=kafka
-//	DOCK_DOOR_MODE                permissive | kafka (default permissive): enforce known inbound doors
-//	DOCK_DOOR_CONSUMER_GROUP      stable group of the dock-door consumer; required when DOCK_DOOR_MODE=kafka
+//	PRODUCT_MODE                  kafka (default kafka): known SKUs; permissive/off are boot errors
+//	PRODUCT_CONSUMER_GROUP        stable group of the product consumer (REQUIRED)
+//	DOCK_DOOR_MODE                kafka (default kafka): known inbound doors; permissive/off are boot errors
+//	DOCK_DOOR_CONSUMER_GROUP      stable group of the dock-door consumer (REQUIRED)
 //	OTEL_EXPORTER_OTLP_ENDPOINT   OTLP/gRPC collector (default localhost:4317)
 //	SHUTDOWN_DRAIN_DELAY          wait after flipping /readyz before closing (default 5s)
 //	LOG_LEVEL, SERVICE_VERSION, ENVIRONMENT, CORS_ALLOWED_ORIGINS
@@ -44,7 +45,6 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/clock"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/idgen"
 	outboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/outbound/kafka"
-	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/memory"
 	outboxrelay "github.com/claudioed/inbound-receiving/internal/adapters/outbound/outbox"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/postgres"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/telemetry"
@@ -108,7 +108,7 @@ func run() error {
 	readiness := &inboundhttp.Readiness{}
 	httpServer := &http.Server{
 		Addr:              getenv("HTTP_ADDR", ":8080"),
-		Handler:           inboundhttp.NewRouter(buildServer(ad, cfg, readiness, metrics, receiptMetrics)),
+		Handler:           inboundhttp.NewRouter(buildServer(ad, readiness, metrics, receiptMetrics)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -116,7 +116,7 @@ func run() error {
 	if sw := startSweeper(ad.sweeper, logger); sw != nil {
 		consumers = append(consumers, sw)
 	}
-	relay, closeRelay, err := startOutboxRelay(ad.outboxStore, logger)
+	relay, closeRelay, err := startOutboxRelay(ad.outboxStore, cfg.kafkaBrokers, logger)
 	if err != nil {
 		for _, c := range consumers {
 			c.stop()
@@ -128,42 +128,72 @@ func run() error {
 
 // config is the validated, env-derived part of the wiring.
 type config struct {
-	productMode   usecases.Mode
-	productGroup  string
-	doorMode      usecases.Mode
-	doorGroup     string
-	kafkaBrokers  []string
-	consumersWant bool
+	productGroup string
+	doorGroup    string
+	kafkaBrokers []string
 }
 
-// loadConfig validates the mode/group/broker combinations (ADR 0003): a
-// `kafka` mode with an unset group, or without brokers, is a boot error.
+// Boot errors for the variables the context cannot run without. Each message
+// names the variable (ADR 0011).
+var (
+	errMissingDatabaseURL = errors.New("DATABASE_URL is required: this context runs on real Postgres, there is no in-memory mode")
+	errMissingBrokers     = errors.New("KAFKA_BROKERS is required: this context runs on real Kafka (outbox relay, consumers, /readyz)")
+)
+
+// loadConfig validates the environment before anything is opened or bound:
+// DATABASE_URL, KAFKA_BROKERS and both consumer groups are mandatory, the
+// consumer modes may only be `kafka` (the default), and EVENT_PUBLISHER may
+// only be `kafka`. Every error names the variable (ADR 0011).
 func loadConfig(env func(string) string) (config, error) {
-	var (
-		cfg config
-		err error
-	)
-	if cfg.productMode, err = usecases.ParseMode(env("PRODUCT_MODE")); err != nil {
-		return config{}, fmt.Errorf("PRODUCT_MODE: %w", err)
+	var cfg config
+	if env("DATABASE_URL") == "" {
+		return config{}, errMissingDatabaseURL
 	}
-	if cfg.doorMode, err = usecases.ParseMode(env("DOCK_DOOR_MODE")); err != nil {
-		return config{}, fmt.Errorf("DOCK_DOOR_MODE: %w", err)
+	cfg.kafkaBrokers = splitBrokers(env("KAFKA_BROKERS"))
+	if len(cfg.kafkaBrokers) == 0 {
+		return config{}, errMissingBrokers
 	}
-	cfg.productGroup, cfg.doorGroup = env("PRODUCT_CONSUMER_GROUP"), env("DOCK_DOOR_CONSUMER_GROUP")
-	if cfg.productMode == usecases.ModeKafka && cfg.productGroup == "" {
-		return config{}, errors.New("PRODUCT_MODE=kafka requires PRODUCT_CONSUMER_GROUP")
+	if err := parseConsumerMode("PRODUCT_MODE", env("PRODUCT_MODE")); err != nil {
+		return config{}, err
 	}
-	if cfg.doorMode == usecases.ModeKafka && cfg.doorGroup == "" {
-		return config{}, errors.New("DOCK_DOOR_MODE=kafka requires DOCK_DOOR_CONSUMER_GROUP")
+	if err := parseConsumerMode("DOCK_DOOR_MODE", env("DOCK_DOOR_MODE")); err != nil {
+		return config{}, err
 	}
-	cfg.consumersWant = cfg.productMode == usecases.ModeKafka || cfg.doorMode == usecases.ModeKafka
-	if raw := env("KAFKA_BROKERS"); raw != "" {
-		cfg.kafkaBrokers = strings.Split(raw, ",")
+	if err := parsePublisherMode(env("EVENT_PUBLISHER")); err != nil {
+		return config{}, err
 	}
-	if cfg.consumersWant && len(cfg.kafkaBrokers) == 0 {
-		return config{}, errors.New("PRODUCT_MODE/DOCK_DOOR_MODE=kafka requires KAFKA_BROKERS")
+	if cfg.productGroup = env("PRODUCT_CONSUMER_GROUP"); cfg.productGroup == "" {
+		return config{}, errors.New("PRODUCT_CONSUMER_GROUP is required: the product consumer always runs on real Kafka")
+	}
+	if cfg.doorGroup = env("DOCK_DOOR_CONSUMER_GROUP"); cfg.doorGroup == "" {
+		return config{}, errors.New("DOCK_DOOR_CONSUMER_GROUP is required: the dock-door consumer always runs on real Kafka")
 	}
 	return cfg, nil
+}
+
+// splitBrokers splits KAFKA_BROKERS on commas, trimming blanks.
+func splitBrokers(raw string) []string {
+	var out []string
+	for _, b := range strings.Split(raw, ",") {
+		if b = strings.TrimSpace(b); b != "" {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// parseConsumerMode accepts the only runtime mode of a local-copy consumer:
+// "" (the default) or "kafka". The names stay (docs and infra set them) but
+// `permissive` and `off` are refused: the consumers always run.
+func parseConsumerMode(name, raw string) error {
+	switch raw {
+	case "", string(usecases.ModeKafka):
+		return nil
+	case string(usecases.ModePermissive), "off":
+		return fmt.Errorf("%s=%s is not supported: this context runs on real Kafka", name, raw)
+	default:
+		return fmt.Errorf("%s: unknown mode %q (want kafka)", name, raw)
+	}
 }
 
 // skuCopy and doorCopy are the local copies read by the HTTP use cases and
@@ -190,8 +220,10 @@ type adapters struct {
 	doors        doorCopy
 	idempotency  ports.IdempotencyStore
 	uow          ports.UnitOfWork
-	// sweeper is the housekeeping job (ADR 0010); nil with in-memory adapters.
+	// sweeper is the housekeeping job (ADR 0010).
 	sweeper *postgres.Sweeper
+	// pool is the Postgres pool (the readiness check pings it).
+	pool *pgxpool.Pool
 }
 
 func (a adapters) writer() usecases.Writer {
@@ -202,14 +234,14 @@ func (a adapters) writer() usecases.Writer {
 	}
 }
 
-func buildServer(ad adapters, cfg config, readiness *inboundhttp.Readiness, metrics http.Handler, receiptMetrics ports.ReceiptMetrics) *inboundhttp.Server {
+func buildServer(ad adapters, readiness *inboundhttp.Readiness, metrics http.Handler, receiptMetrics ports.ReceiptMetrics) *inboundhttp.Server {
 	w := ad.writer()
 	return &inboundhttp.Server{
-		RegisterAsn:        &usecases.RegisterAsn{Writer: w, SkuMode: cfg.productMode, Skus: ad.skus},
+		RegisterAsn:        &usecases.RegisterAsn{Writer: w, SkuMode: usecases.ModeKafka, Skus: ad.skus},
 		CancelAsn:          &usecases.CancelAsn{Writer: w},
 		GetAsn:             &usecases.GetAsn{Asns: ad.asns},
 		ListAsns:           &usecases.ListAsns{Asns: ad.asns},
-		BookAppointment:    &usecases.BookAppointment{Writer: w, DoorMode: cfg.doorMode, Doors: ad.doors},
+		BookAppointment:    &usecases.BookAppointment{Writer: w, DoorMode: usecases.ModeKafka, Doors: ad.doors},
 		CheckInAppointment: &usecases.CheckInAppointment{Writer: w},
 		CancelAppointment:  &usecases.CancelAppointment{Writer: w},
 		GetAppointment:     &usecases.GetAppointment{Appointments: ad.appointments},
@@ -219,27 +251,19 @@ func buildServer(ad adapters, cfg config, readiness *inboundhttp.Readiness, metr
 		CloseReceipt:       &usecases.CloseReceipt{Writer: w},
 		GetReceipt:         &usecases.GetReceipt{Receipts: ad.receipts},
 		ListReceipts:       &usecases.ListReceipts{Receipts: ad.receipts},
-		ListDocks:          &usecases.ListDocks{Doors: ad.doors, Mode: cfg.doorMode},
+		ListDocks:          &usecases.ListDocks{Doors: ad.doors, Mode: usecases.ModeKafka},
 		Idempotency:        ad.idempotency,
 		Readiness:          readiness,
 		Metrics:            metrics,
 	}
 }
 
-// buildAdapters wires Postgres when databaseURL is set (running the embedded
-// migrations first) or in-memory adapters otherwise.
+// buildAdapters wires the Postgres adapters, running the embedded migrations
+// first. An empty databaseURL is a boot error: there is no in-memory runtime.
 func buildAdapters(ctx context.Context, databaseURL string, logger *slog.Logger) (adapters, func(), error) {
 	noop := func() {}
 	if databaseURL == "" {
-		logger.Info("DATABASE_URL not configured; using in-memory adapters")
-		asns, appts, receipts := memory.NewAsnRepo(), memory.NewAppointmentRepo(), memory.NewReceiptRepo()
-		skus, doors := memory.NewKnownSkus(), memory.NewDockDoors()
-		ob, processed := memory.NewOutboxRepo(), memory.NewProcessedEventRepo()
-		return adapters{
-			asns: asns, appointments: appts, receipts: receipts, outbox: ob, outboxStore: ob, processed: processed,
-			skus: skus, doors: doors, idempotency: memory.NewIdempotencyStore(),
-			uow: memory.NewUnitOfWork(asns, appts, receipts, skus, doors, ob, processed),
-		}, noop, nil
+		return adapters{}, noop, errMissingDatabaseURL
 	}
 
 	// The first outbound dial of an injected pod can be reset (Istio native
@@ -266,14 +290,13 @@ func buildAdapters(ctx context.Context, databaseURL string, logger *slog.Logger)
 		outbox: ob, outboxStore: ob, processed: postgres.NewProcessedEventRepo(pool),
 		skus: postgres.NewKnownSkus(pool), doors: postgres.NewDockDoors(pool),
 		idempotency: postgres.NewIdempotencyStore(pool), uow: postgres.NewUnitOfWork(pool),
-		sweeper: newSweeper(pool, os.Getenv, logger),
+		sweeper: newSweeper(pool, os.Getenv, logger), pool: pool,
 	}, pool.Close, nil
 }
 
 // newSweeper builds the housekeeping sweeper (gap fix D24, ADR 0010) from
 // HOUSEKEEPING_INTERVAL, IDEMPOTENCY_KEY_TTL, OUTBOX_RETENTION and
-// PROCESSED_EVENTS_RETENTION. Postgres only: the in-memory adapters are
-// per-process and vanish with it.
+// PROCESSED_EVENTS_RETENTION.
 func newSweeper(pool *pgxpool.Pool, env func(string) string, logger *slog.Logger) *postgres.Sweeper {
 	return postgres.NewSweeper(pool,
 		postgres.WithSweepInterval(housekeeping.Duration(env, housekeeping.EnvInterval, postgres.DefaultSweepInterval, logger)),
@@ -284,8 +307,9 @@ func newSweeper(pool *pgxpool.Pool, env func(string) string, logger *slog.Logger
 	)
 }
 
-// startSweeper runs the sweeper as a background worker (nil when Postgres
-// is not configured). It is stopped with the consumers, before the relay.
+// startSweeper runs the sweeper as a background worker (nil only when no
+// sweeper was built, as in unit tests). It is stopped with the consumers,
+// before the relay.
 func startSweeper(s *postgres.Sweeper, logger *slog.Logger) *worker {
 	if s == nil {
 		return nil
@@ -330,46 +354,35 @@ func startWorker(logger *slog.Logger, name string, run func(ctx context.Context)
 	return w
 }
 
-// startConsumers starts the consumer of every local copy whose mode is
-// kafka. A reader dials lazily inside Run, so a broker outage never blocks
-// boot. Permissive modes start nothing.
+// startConsumers starts both local-copy consumers; they are always on. A
+// reader dials lazily inside Run, so a broker outage never blocks boot.
 func startConsumers(ad adapters, cfg config, logger *slog.Logger) []*worker {
-	var workers []*worker
-	if cfg.productMode == usecases.ModeKafka {
-		apply := &usecases.ApplyProductRegistered{UoW: ad.uow, ProcessedEvents: ad.processed, Skus: ad.skus}
-		c := inboundkafka.NewProductConsumer(cfg.kafkaBrokers, cfg.productGroup, apply, logger)
-		logger.Info("product consumer running", "topic", inboundkafka.ProductTopic, "group_id", cfg.productGroup, "brokers", cfg.kafkaBrokers)
-		workers = append(workers, startWorker(logger, "product-consumer", c.Run, func() { _ = c.Close() }))
-	} else {
-		logger.Info("PRODUCT_MODE is permissive; product consumer not started")
+	apply := &usecases.ApplyProductRegistered{UoW: ad.uow, ProcessedEvents: ad.processed, Skus: ad.skus}
+	pc := inboundkafka.NewProductConsumer(cfg.kafkaBrokers, cfg.productGroup, apply, logger)
+	logger.Info("product consumer running", "topic", inboundkafka.ProductTopic, "group_id", cfg.productGroup, "brokers", cfg.kafkaBrokers)
+
+	reg := &usecases.ApplyLocationSlotRegistered{UoW: ad.uow, ProcessedEvents: ad.processed, Doors: ad.doors}
+	dec := &usecases.ApplyLocationSlotDecommissioned{UoW: ad.uow, ProcessedEvents: ad.processed, Doors: ad.doors}
+	dc := inboundkafka.NewDockDoorConsumer(cfg.kafkaBrokers, cfg.doorGroup, reg, dec, logger)
+	logger.Info("dock door consumer running", "topic", inboundkafka.FacilityTopic, "group_id", cfg.doorGroup, "brokers", cfg.kafkaBrokers)
+
+	return []*worker{
+		startWorker(logger, "product-consumer", pc.Run, func() { _ = pc.Close() }),
+		startWorker(logger, "dock-door-consumer", dc.Run, func() { _ = dc.Close() }),
 	}
-	if cfg.doorMode == usecases.ModeKafka {
-		reg := &usecases.ApplyLocationSlotRegistered{UoW: ad.uow, ProcessedEvents: ad.processed, Doors: ad.doors}
-		dec := &usecases.ApplyLocationSlotDecommissioned{UoW: ad.uow, ProcessedEvents: ad.processed, Doors: ad.doors}
-		c := inboundkafka.NewDockDoorConsumer(cfg.kafkaBrokers, cfg.doorGroup, reg, dec, logger)
-		logger.Info("dock door consumer running", "topic", inboundkafka.FacilityTopic, "group_id", cfg.doorGroup, "brokers", cfg.kafkaBrokers)
-		workers = append(workers, startWorker(logger, "dock-door-consumer", c.Run, func() { _ = c.Close() }))
-	} else {
-		logger.Info("DOCK_DOOR_MODE is permissive; dock door consumer not started")
-	}
-	return workers
 }
 
-// Event publisher modes (EVENT_PUBLISHER).
-const (
-	publisherLog   = "log"
-	publisherKafka = "kafka"
-)
-
-// parsePublisherMode validates EVENT_PUBLISHER ("" and "log" = log sink).
-func parsePublisherMode(raw string) (string, error) {
+// parsePublisherMode validates EVENT_PUBLISHER: unset or "kafka". The log
+// sink is gone (ADR 0011); the variable stays because the chart and
+// warehouse-infra set it.
+func parsePublisherMode(raw string) error {
 	switch raw {
-	case "", publisherLog:
-		return publisherLog, nil
-	case publisherKafka:
-		return publisherKafka, nil
+	case "", "kafka":
+		return nil
+	case "log":
+		return errors.New("EVENT_PUBLISHER=log is not supported: this context publishes to real Kafka")
 	default:
-		return "", fmt.Errorf("unknown EVENT_PUBLISHER %q (want kafka or log)", raw)
+		return fmt.Errorf("EVENT_PUBLISHER: unknown value %q (want kafka)", raw)
 	}
 }
 
@@ -408,35 +421,23 @@ func outboxMaxAttempts(raw string, logger *slog.Logger) int {
 	return n
 }
 
-// startOutboxRelay starts the relay goroutine with the EVENT_PUBLISHER sink.
+// startOutboxRelay starts the always-on relay goroutine over the Kafka sink.
 // Kafka is dialled lazily on the first send, never here.
-func startOutboxRelay(store outboxrelay.Store, logger *slog.Logger) (*worker, func(), error) {
-	mode, err := parsePublisherMode(os.Getenv("EVENT_PUBLISHER"))
-	if err != nil {
-		return nil, nil, err
+func startOutboxRelay(store outboxrelay.Store, brokers []string, logger *slog.Logger) (*worker, func(), error) {
+	if len(brokers) == 0 {
+		return nil, nil, errMissingBrokers
 	}
-	var (
-		sink      outboxrelay.Sink = outboxrelay.LogSink{Logger: logger}
-		closeSink                  = func() {}
-	)
-	if mode == publisherKafka {
-		raw := os.Getenv("KAFKA_BROKERS")
-		if raw == "" {
-			return nil, nil, errors.New("EVENT_PUBLISHER=kafka requires KAFKA_BROKERS")
-		}
-		kafkaSink := outboundkafka.NewRelaySink(strings.Split(raw, ","))
-		sink = kafkaSink
-		closeSink = func() {
-			if err := kafkaSink.Close(); err != nil {
-				logger.Error("kafka relay sink close failed", "error", err)
-			}
+	sink := outboundkafka.NewRelaySink(brokers)
+	closeSink := func() {
+		if err := sink.Close(); err != nil {
+			logger.Error("kafka relay sink close failed", "error", err)
 		}
 	}
 	interval := parseRelayInterval(os.Getenv("OUTBOX_RELAY_INTERVAL"), logger)
 	maxAttempts := outboxMaxAttempts(os.Getenv("OUTBOX_MAX_ATTEMPTS"), logger)
 	relay := outboxrelay.NewRelay(store, sink, logger, outboxrelay.WithInterval(interval), outboxrelay.WithMaxAttempts(maxAttempts))
 
-	logger.Info("outbox relay running", "publisher", mode, "interval", interval, "max_attempts", maxAttempts,
+	logger.Info("outbox relay running", "brokers", brokers, "interval", interval, "max_attempts", maxAttempts,
 		"topics", []string{outboundkafka.Topic, outboundkafka.AnalyticsTopic})
 	w := startWorker(logger, "outbox-relay", relay.Run, func() {})
 	go func() {
