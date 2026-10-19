@@ -70,7 +70,10 @@ The slug catalogue: `malformed-request`, `invalid-query`,
 `door-window-overlap`, `receipt-already-open`, `receipt-closed`,
 `unknown-sku`, `unknown-dock-door`, `unknown-asn`, `unknown-appointment`,
 `asn-not-on-appointment`, `line-not-on-asn`, `version-mismatch`,
-`concurrent-modification`, `internal-error`.
+`concurrent-modification`, `resource-not-found` (a NUL character in the
+request path), `dependency-unavailable` (`/readyz` while Postgres or Kafka
+is unreachable), `internal-error`. A NUL (U+0000) in a JSON body is a 400
+`malformed-request`.
 
 Lists use cursor paging: `limit` (1 to 500, default 100) and the opaque
 `cursor` that is the previous page's `nextCursor`; a response without

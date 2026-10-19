@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-10-08).
+Accepted (2026-10-08). The `permissive` mode and its default are superseded by [ADR 0011](./0011-postgres-and-kafka-are-the-only-runtime.md) (the only mode is `kafka`; both consumers always run).
 
 ## Context
 

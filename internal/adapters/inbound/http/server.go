@@ -46,7 +46,9 @@ type Server struct {
 
 	// Idempotency backs the Idempotency-Key middleware.
 	Idempotency ports.IdempotencyStore
-	// Readiness backs GET /readyz; nil means always ready.
+	// Readiness backs GET /readyz: the drain gate plus the Postgres and Kafka
+	// checks (NewReadiness, ADR 0011). The shipped binary always builds it
+	// with NewReadiness; nil (handler unit tests) means always ready.
 	Readiness *Readiness
 	// Metrics backs GET /metrics (a Prometheus handler built by cmd/);
 	// nil leaves the route unregistered.
@@ -67,6 +69,11 @@ func NewRouter(s *Server) http.Handler {
 		ExposedHeaders:   []string{"ETag", "Location"},
 		AllowCredentials: false,
 	}))
+	// A NUL (U+0000) in the path or a body is a uniform client error, never a
+	// Postgres 22021 -> 500 (ADR 0011, defence in depth); it runs before the
+	// route-scoped idempotency middleware so a rejected request never records
+	// its key.
+	r.Use(rejectNUL)
 
 	r.Get("/healthz", handleHealthz)
 	r.Get("/readyz", s.handleReadyz)

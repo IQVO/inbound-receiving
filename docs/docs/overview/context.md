@@ -72,14 +72,14 @@ today.
   MCP tools back `warehouse-ops-agent`, and the reports endpoints answer from
   the analytical database, never from the OLTP one.
 
-## Local copies fail open by default
+## Local copies are always enforced
 
-`PRODUCT_MODE` and `DOCK_DOOR_MODE` default to `permissive`: the copy is not
-consulted and every SKU and every door code is accepted. A typo SKU is
-therefore accepted on an ASN until the cluster flips the mode to `kafka` once
-the copies have replayed. That is a deliberate fail-open (ADR 0001,
-Consequences). In `kafka` mode an unknown SKU is `422 unknown-sku` and an
-unknown door `422 unknown-dock-door`.
+`PRODUCT_MODE` and `DOCK_DOOR_MODE` are `kafka` (the default and the only legal
+value since [ADR 0011](/docs/adr/0011-postgres-and-kafka-are-the-only-runtime)):
+the copies are always consulted. An unknown SKU is `422 unknown-sku` and an
+unknown door `422 unknown-dock-door`, including right after a fresh deploy
+until the consumers have replayed the source topics (the earlier `permissive`
+fail-open of ADR 0001 is gone).
 
 ## Out of scope
 

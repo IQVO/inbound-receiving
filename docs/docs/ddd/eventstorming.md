@@ -75,7 +75,8 @@ Taken from real gaps in the ADRs, not invented:
    not booked as stock; "a quarantine flow is a later ADR" (ADR 0001, ADR 0003).
 3. **No compensation on the far side.** If `inventory-storage` rejects a line it
    skips and logs; the receipt's counts stay the source of truth (ADR 0003).
-4. **Fail-open local copies.** In `permissive` mode a typo SKU or door is
-   accepted (ADR 0001, Consequences).
+4. **Eventually consistent local copies.** The copies are always enforced
+   (ADR 0011 retired the `permissive` fail-open of ADR 0001): a fresh deploy
+   answers `422` until the consumers have replayed.
 5. **`DockAppointmentCompleted` ordering.** Keyed by `appointment_id`, so its
    order relative to `ReceiptClosed` is not guaranteed (ADR 0004).

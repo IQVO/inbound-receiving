@@ -1,8 +1,4 @@
-{{- include "inbound-receiving.requireDatabase" . -}}
-{{- include "inbound-receiving.requireKafkaForPublisher" . -}}
-{{- include "inbound-receiving.requireKnownPublisher" . -}}
-{{- include "inbound-receiving.requireConsumerConfig" . -}}
-{{- include "inbound-receiving.requireNoOrphanGroups" . -}}
+{{- include "inbound-receiving.requireRealRuntime" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -81,23 +77,20 @@ spec:
             # failures (0 = unlimited).
             - name: OUTBOX_MAX_ATTEMPTS
               value: {{ .Values.config.outboxMaxAttempts | quote }}
-            # ADR 0003 local copies. PRODUCT_MODE / DOCK_DOOR_MODE are always
-            # rendered (permissive = the consumer is not started). The
-            # consumer group ids come from values, never a literal: a stable
-            # id is what makes a rescheduled pod resume from its committed
-            # offsets. Absent while empty.
+            # ADR 0003 local copies, always on (ADR 0011): both consumers run
+            # on real Kafka. PRODUCT_MODE / DOCK_DOOR_MODE are rendered
+            # because docs and infra set them; the only legal value is
+            # "kafka". The consumer group ids come from values, never a
+            # literal, and are required: a stable id is what makes a
+            # rescheduled pod resume from its committed offsets.
             - name: PRODUCT_MODE
               value: {{ .Values.config.productMode | quote }}
-            {{- with .Values.config.productConsumerGroup }}
             - name: PRODUCT_CONSUMER_GROUP
-              value: {{ . | quote }}
-            {{- end }}
+              value: {{ .Values.config.productConsumerGroup | quote }}
             - name: DOCK_DOOR_MODE
               value: {{ .Values.config.dockDoorMode | quote }}
-            {{- with .Values.config.dockDoorConsumerGroup }}
             - name: DOCK_DOOR_CONSUMER_GROUP
-              value: {{ . | quote }}
-            {{- end }}
+              value: {{ .Values.config.dockDoorConsumerGroup | quote }}
             {{- with .Values.config.shutdownDrainDelay }}
             - name: SHUTDOWN_DRAIN_DELAY
               value: {{ . | quote }}
@@ -132,10 +125,9 @@ spec:
                   key: {{ .Values.database.migrationsExistingSecretKey }}
                   optional: true
             {{- end }}
-            {{- if .Values.kafka.enabled }}
+            # Mandatory (requireKafka): the relay, the consumers and /readyz.
             - name: KAFKA_BROKERS
               value: {{ .Values.kafka.brokers | quote }}
-            {{- end }}
             {{- range .Values.extraEnv }}
             - {{ toYaml . | nindent 14 | trim }}
             {{- end }}

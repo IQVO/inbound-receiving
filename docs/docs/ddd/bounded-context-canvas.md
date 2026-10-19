@@ -202,8 +202,8 @@ Over / Damaged), **Walk-in**, **Snapshot**, **Local copy**, **Version**.
    recorded and counted in the discrepancies but not booked, and stow stays an
    RF action there (ADR 0003).
 8. Every difference is reported; there is no tolerance policy in v1 (ADR 0002).
-9. SKU and door checks read local copies and fail open until the cluster flips
-   `PRODUCT_MODE` / `DOCK_DOOR_MODE` to `kafka` (ADR 0003).
+9. SKU and door checks always read the local copies (`PRODUCT_MODE` /
+   `DOCK_DOOR_MODE` are `kafka`, the only mode; ADR 0003, ADR 0011).
 
 ## Assumptions
 

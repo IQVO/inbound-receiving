@@ -1,5 +1,6 @@
 {{- if .Values.mcp.enabled }}
 {{- include "inbound-receiving.requireDatabase" . -}}
+{{- include "inbound-receiving.requireConsumerModes" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -44,7 +45,9 @@ spec:
           # env, starts no outbox relay, runs no local-copy consumer and never
           # dials Kafka (no KAFKA_BROKERS, no consumer groups here).
           # DOCK_DOOR_MODE is ONLY the label list_docks reports, so it matches
-          # what the api enforces; it starts nothing.
+          # what the api enforces ("kafka", the only mode, ADR 0011); it
+          # starts nothing. DATABASE_URL is mandatory: cmd/mcp reads the same
+          # Postgres as the api and has no database-less mode.
           env:
             - name: MCP_ADDR
               value: {{ .Values.mcp.httpAddr | quote }}
