@@ -3,7 +3,9 @@
 // (warehouse.inbound-receiving.analytics) under a fixed, env-supplied
 // consumer group, projects each event into the ANALYTICAL database (a
 // separate database with its own embedded migrations) and serves only
-// /healthz and /readyz on an admin port. It is the only writer of that
+// /healthz and /readyz on an admin port (/readyz is 200 only while the
+// analytical database answers a ping AND a Kafka broker answers a metadata
+// request; /healthz is liveness only). It is the only writer of that
 // database; the read-only reports binary is cmd/inbound-reports.
 //
 // It never touches the OLTP database. Kafka is dialled lazily (the reader
@@ -27,6 +29,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -34,12 +37,12 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	inboundhttp "github.com/claudioed/inbound-receiving/internal/adapters/inbound/http"
 	inboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/inbound/kafka"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/analyticsstore"
 	outboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/outbound/kafka"
@@ -143,8 +146,8 @@ func run() error {
 		}
 	}()
 
-	var notReady atomic.Bool
-	admin := &http.Server{Addr: cfg.adminAddr, Handler: newAdminMux(&notReady), ReadHeaderTimeout: 5 * time.Second}
+	gate := newReadiness(pool.Ping, cfg.brokers)
+	admin := &http.Server{Addr: cfg.adminAddr, Handler: newAdminMux(gate), ReadHeaderTimeout: 5 * time.Second}
 	adminErr := make(chan error, 1)
 	go func() {
 		logger.Info("projector admin server listening", "addr", cfg.adminAddr)
@@ -177,7 +180,7 @@ func run() error {
 	// Graceful shutdown: flip readiness first, drain the admin server, then
 	// let the consumer finish the message in flight (commit or dead-letter)
 	// before the pool closes.
-	notReady.Store(true)
+	gate.SetNotReady()
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	shutdownErr := admin.Shutdown(ctx)
@@ -193,19 +196,37 @@ func run() error {
 	return shutdownErr
 }
 
-// newAdminMux serves /healthz (liveness, never flipped) and /readyz (flips to
-// 503 as the first step of shutdown).
-func newAdminMux(notReady *atomic.Bool) *http.ServeMux {
+// newReadiness builds the projector's /readyz gate: the drain gate plus a ping
+// of the analytical database and a Kafka broker answering a topic-less
+// metadata request (never topics: the broker auto-creates them), cached 3s,
+// bounded 2s. The ping is a parameter so the gate is testable without a pool.
+func newReadiness(ping func(context.Context) error, brokers []string) *inboundhttp.Readiness {
+	return inboundhttp.NewReadiness(inboundhttp.DefaultReadinessTTL, inboundhttp.DefaultReadinessTimeout,
+		inboundhttp.Dependency{Name: "analytics-postgres", Check: ping},
+		inboundhttp.Dependency{Name: "kafka", Check: outboundkafka.NewBrokerCheck(brokers).Check},
+	)
+}
+
+// newAdminMux serves /healthz (liveness, never flipped) and /readyz: 200 only
+// while the drain gate is open AND the analytical database and Kafka answer;
+// 503 as the first step of shutdown, or while a dependency is down (the body
+// names it).
+func newAdminMux(gate *inboundhttp.Readiness) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if notReady.Load() {
+		if !gate.Ready() {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte(`{"status":"not_ready"}`))
+			return
+		}
+		if failing := gate.Failing(r.Context()); len(failing) > 0 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "not_ready", "failing": failing})
 			return
 		}
 		_, _ = w.Write([]byte(`{"status":"ready"}`))
