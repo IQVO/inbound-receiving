@@ -34,8 +34,9 @@ FORBIDDEN_PLUGINS = {
 }
 
 ENABLE_KONG = [
-    # This chart refuses to render without a database DSN (a deliberate
-    # guard in deployment.yaml) — supply a dummy for template assertions.
+    # This chart refuses to render without a database DSN, Kafka brokers and
+    # both consumer groups (the real runtime, ADR 0011) — supply dummies for
+    # template assertions.
     "--set", "database.url=postgres://user:pass@localhost:5432/db",
     "--set", "gatewayApi.enabled=true",
     "--set", "gatewayApi.parentRefs[0].name=warehouse-gateway",
@@ -52,6 +53,8 @@ ENABLE_KONG = [
     "--set", "analytics.database.projectorUrl=postgres://user:pass@localhost:5432/analytics",
     "--set", "kafka.enabled=true",
     "--set", "kafka.brokers=dummy:9092",
+    "--set", "config.productConsumerGroup=inbound-receiving-product",
+    "--set", "config.dockDoorConsumerGroup=inbound-receiving-dock-doors",
     "--set", "analytics.reports.route.enabled=true",
     "--set", "analytics.reports.route.parentRefs[0].name=warehouse-gateway",
     "--set", "analytics.reports.route.parentRefs[0].namespace=kong",
@@ -75,7 +78,12 @@ def main() -> int:
     failures: list[str] = []
 
     # 1. Defaults render zero Kong objects.
-    default_docs = render(["--set", "database.url=postgres://user:pass@localhost:5432/db"])
+    default_docs = render([
+        "--set", "database.url=postgres://user:pass@localhost:5432/db",
+        "--set", "kafka.brokers=dummy:9092",
+        "--set", "config.productConsumerGroup=inbound-receiving-product",
+        "--set", "config.dockDoorConsumerGroup=inbound-receiving-dock-doors",
+    ])
     kong_docs = [d for d in default_docs if "Kong" in (d.get("kind") or "")]
     if kong_docs:
         failures.append(
