@@ -123,6 +123,15 @@ the real wiring; the repository defaults were the lie.
     (`confluent-local`, KRaft); the README and the quickstart run the real
     binaries against them.
 
+11. **A dead worker is a dead service.** Observed on a real run: when the
+    broker goes away, kafka-go's reader returns a dial error, both consumer
+    goroutines log `... stopped` and return, and the process stayed up and
+    `/readyz` went green again once Kafka was back, with no consumer running.
+    `cmd/api` now watches the relay and both consumers and exits non-zero
+    (`<worker> stopped unexpectedly: exiting so the orchestrator restarts the
+    service`) when one returns on its own, exactly as `cmd/inbound-projector`
+    already did. The integration test stops Kafka and asserts the exit.
+
 ## Consequences
 
 - A misconfigured deployment fails at boot with the variable named, instead of
@@ -136,6 +145,17 @@ the real wiring; the repository defaults were the lie.
   `unknown-dock-door` (`/readyz` does not wait for the consumers, see the
   runbook). That is the behaviour the cluster already had.
 - `GET /docks` and `list_docks` can no longer report `permissive`.
+- A Kafka outage that outlasts a consumer's dial error restarts the pods
+  (decision 11) instead of leaving them alive with dead consumers; with the
+  broker down they are not ready anyway.
+- A consumer that starts while its topic does not exist yet (a fresh cluster
+  before the first product-master or facility-layout event) does not pick the
+  topic up once it appears: verified on a real broker, it stayed silent for
+  more than two minutes and consumed at once after a restart. `/readyz` does
+  not wait for it (topics are never required). Production topics exist; on a
+  fresh environment publish the first events (or create the topics) before
+  starting the service, or restart it afterwards (quickstart, runbook).
+  Failing readiness or the worker on a missing consumed topic is a follow-up.
 - A Kafka outage makes every pod not ready (the verdict is cached 3 s), so
   the Service stops routing to it. Rows already committed wait unpublished in
   `outbox_events` and the relay drains them on recovery.

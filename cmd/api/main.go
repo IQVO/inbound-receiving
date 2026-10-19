@@ -482,6 +482,7 @@ func serveUntilSignal(ctx context.Context, logger *slog.Logger, httpServer *http
 
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	died := watchWorkers(append([]*worker{relay}, consumers...)...)
 	select {
 	case err := <-errCh:
 		for _, c := range consumers {
@@ -489,6 +490,16 @@ func serveUntilSignal(ctx context.Context, logger *slog.Logger, httpServer *http
 		}
 		closeRelay()
 		return err
+	case name := <-died:
+		// A consumer or the relay returned on its own (a lost broker, a
+		// failed reader): the service cannot run without it and must not sit
+		// "alive" with a dead worker, so exit non-zero and let the
+		// orchestrator restart it, like the analytics projector does.
+		for _, c := range consumers {
+			c.stop()
+		}
+		closeRelay()
+		return fmt.Errorf("%s stopped unexpectedly: exiting so the orchestrator restarts the service", name)
 	case <-sigCtx.Done():
 	}
 
@@ -508,6 +519,23 @@ func serveUntilSignal(ctx context.Context, logger *slog.Logger, httpServer *http
 	closeRelay()
 	await(logger, relay)
 	return err
+}
+
+// watchWorkers returns a channel that receives the name of every worker that
+// returns. Workers only return when stopped or on an unrecoverable failure, so
+// a value read while the service is serving means a worker died.
+func watchWorkers(workers ...*worker) <-chan string {
+	died := make(chan string, len(workers))
+	for _, w := range workers {
+		if w == nil {
+			continue
+		}
+		go func() {
+			<-w.done
+			died <- w.name
+		}()
+	}
+	return died
 }
 
 // await waits (bounded) for w to return; nil w is a no-op.

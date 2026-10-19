@@ -638,9 +638,25 @@ func phaseRestart(t *testing.T, w *world, s *service) *service {
 	return s2
 }
 
-// Phase 8: /readyz follows the dependencies. Postgres goes first (Kafka still
-// up): only postgres is named. Then Kafka goes: kafka is named too.
-// /healthz stays liveness and answers 200 throughout.
+// expectExit waits for run to return on its own (nobody cancelled it) and
+// returns its error.
+func (s *service) expectExit() error {
+	s.t.Helper()
+	select {
+	case err := <-s.done:
+		s.done <- nil // let the cleanup find it stopped
+		return err
+	case <-time.After(90 * time.Second):
+		s.t.Fatal("run did not return although Kafka is gone")
+		return nil
+	}
+}
+
+// Phase 8: /readyz follows Postgres going away (Kafka still up): the 503
+// problem names only postgres, and /healthz stays liveness (200). Then Kafka
+// goes away: both consumers lose their reader and the service EXITS non-zero
+// naming the dead worker, so the orchestrator restarts it instead of leaving a
+// pod alive with consumers that will never come back.
 func phaseDependenciesGoAway(t *testing.T, s *service, w *world) {
 	t.Helper()
 	stopTimeout := 10 * time.Second
@@ -651,15 +667,15 @@ func phaseDependenciesGoAway(t *testing.T, s *service, w *world) {
 	if !strings.Contains(body, "dependency-unavailable") || !strings.Contains(body, "postgres") || strings.Contains(body, "kafka") {
 		t.Fatalf("readyz with Postgres down = %s, want dependency-unavailable naming only postgres", body)
 	}
+	if status, body := s.try(http.MethodGet, "/healthz", "", ""); status != http.StatusOK {
+		t.Fatalf("healthz with Postgres down = %d %s, want 200 (liveness only)", status, body)
+	}
 	if err := w.kc.Stop(context.Background(), &stopTimeout); err != nil {
 		t.Fatalf("stop kafka: %v", err)
 	}
-	waitFor(t, 60*time.Second, "/readyz to name kafka as well", func() bool {
-		_, body := readyz(s)
-		return strings.Contains(body, "postgres") && strings.Contains(body, "kafka")
-	})
-	if status, body := s.try(http.MethodGet, "/healthz", "", ""); status != http.StatusOK {
-		t.Fatalf("healthz with every dependency down = %d %s, want 200 (liveness only)", status, body)
+	err := s.expectExit()
+	if err == nil || !strings.Contains(err.Error(), "stopped unexpectedly") {
+		t.Fatalf("run returned %v after Kafka went away, want a 'stopped unexpectedly' error naming the dead worker", err)
 	}
 }
 

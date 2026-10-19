@@ -279,3 +279,19 @@ func TestNewReadinessReportsTheDownDependency(t *testing.T) {
 		t.Fatalf("failing = %v, want [postgres kafka]", got)
 	}
 }
+
+// A worker that returns on its own is reported by name; a worker that was
+// never started (nil) is ignored. cmd/api exits on it (serveUntilSignal).
+func TestWatchWorkersReportsAWorkerThatDied(t *testing.T) {
+	boom := startWorker(quietLogger(), "dying-consumer", func(context.Context) error { return errors.New("broker lost") }, func() {})
+	idle := startWorker(quietLogger(), "idle-consumer", func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }, func() {})
+	defer idle.stop()
+	select {
+	case name := <-watchWorkers(nil, idle, boom):
+		if name != "dying-consumer" {
+			t.Fatalf("reported %q, want dying-consumer", name)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a worker that returned on its own was not reported")
+	}
+}
