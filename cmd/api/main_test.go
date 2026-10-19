@@ -263,3 +263,19 @@ func TestNewLoggerAndGetenv(t *testing.T) {
 		t.Fatal("getenv value")
 	}
 }
+
+// /readyz of the composition root: a Postgres that answers and a Kafka that
+// does not is NOT ready (503 naming kafka); both down names both.
+func TestNewReadinessReportsTheDownDependency(t *testing.T) {
+	up := func(context.Context) error { return nil }
+	down := func(context.Context) error { return errors.New("connection refused") }
+	deadBroker := []string{"127.0.0.1:1"}
+
+	gate := newReadiness(up, deadBroker)
+	if got := gate.Failing(context.Background()); len(got) != 1 || got[0] != "kafka" {
+		t.Fatalf("failing = %v, want [kafka]", got)
+	}
+	if got := newReadiness(down, deadBroker).Failing(context.Background()); len(got) != 2 {
+		t.Fatalf("failing = %v, want [postgres kafka]", got)
+	}
+}

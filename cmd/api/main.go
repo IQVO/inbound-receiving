@@ -23,6 +23,10 @@
 //	OTEL_EXPORTER_OTLP_ENDPOINT   OTLP/gRPC collector (default localhost:4317)
 //	SHUTDOWN_DRAIN_DELAY          wait after flipping /readyz before closing (default 5s)
 //	LOG_LEVEL, SERVICE_VERSION, ENVIRONMENT, CORS_ALLOWED_ORIGINS
+//
+// GET /readyz is 200 only while Postgres answers a ping AND a Kafka broker
+// answers a metadata request (verdict cached 3s, bounded 2s); /healthz is
+// liveness only.
 package main
 
 import (
@@ -105,7 +109,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("receipt metrics: %w", err)
 	}
-	readiness := &inboundhttp.Readiness{}
+	readiness := newReadiness(ad.pool.Ping, cfg.kafkaBrokers)
 	httpServer := &http.Server{
 		Addr:              getenv("HTTP_ADDR", ":8080"),
 		Handler:           inboundhttp.NewRouter(buildServer(ad, readiness, metrics, receiptMetrics)),
@@ -194,6 +198,17 @@ func parseConsumerMode(name, raw string) error {
 	default:
 		return fmt.Errorf("%s: unknown mode %q (want kafka)", name, raw)
 	}
+}
+
+// newReadiness builds the /readyz gate: the drain gate plus a Postgres ping
+// and a Kafka broker answering a topic-less metadata request (never topics:
+// the broker auto-creates them on first write), cached 3s, bounded 2s. The
+// ping is a parameter so the gate is testable without a pool.
+func newReadiness(ping func(context.Context) error, brokers []string) *inboundhttp.Readiness {
+	return inboundhttp.NewReadiness(inboundhttp.DefaultReadinessTTL, inboundhttp.DefaultReadinessTimeout,
+		inboundhttp.Dependency{Name: "postgres", Check: ping},
+		inboundhttp.Dependency{Name: "kafka", Check: outboundkafka.NewBrokerCheck(brokers).Check},
+	)
 }
 
 // skuCopy and doorCopy are the local copies read by the HTTP use cases and
