@@ -18,10 +18,10 @@
 // Environment:
 //
 //	MCP_ADDR                     listen address (default :8090)
-//	DATABASE_URL                 Postgres DSN; unset = in-memory repositories
+//	DATABASE_URL                 Postgres DSN (REQUIRED: there is no in-memory mode, ADR 0011)
 //	MIGRATIONS_DATABASE_URL      direct DSN for the boot migrations (default DATABASE_URL)
-//	DOCK_DOOR_MODE               permissive | kafka (default permissive): ONLY the mode
-//	                             list_docks reports, so it matches cmd/api; no consumer runs here
+//	DOCK_DOOR_MODE               kafka (default kafka): ONLY the mode list_docks reports, so it
+//	                             matches cmd/api; permissive/off are boot errors; no consumer runs here
 //	OTEL_EXPORTER_OTLP_ENDPOINT  OTLP/gRPC collector (default localhost:4317)
 //	LOG_LEVEL, SERVICE_VERSION, ENVIRONMENT
 package main
@@ -39,7 +39,6 @@ import (
 	"time"
 
 	inboundmcp "github.com/claudioed/inbound-receiving/internal/adapters/inbound/mcp"
-	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/memory"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/postgres"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/telemetry"
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
@@ -62,9 +61,9 @@ func run() error {
 	slog.SetDefault(logger)
 
 	// Misconfiguration is refused before anything is opened.
-	doorMode, err := usecases.ParseMode(os.Getenv("DOCK_DOOR_MODE"))
+	databaseURL, err := loadConfig(os.Getenv)
 	if err != nil {
-		return fmt.Errorf("DOCK_DOOR_MODE: %w", err)
+		return err
 	}
 
 	otelCtx, otelCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -82,8 +81,7 @@ func run() error {
 		}
 	}()
 
-	databaseURL := os.Getenv("DATABASE_URL")
-	deps, closeAdapters, err := buildDeps(context.Background(), logger, databaseURL, getenv("MIGRATIONS_DATABASE_URL", databaseURL), doorMode)
+	deps, closeAdapters, err := buildDeps(context.Background(), logger, databaseURL, getenv("MIGRATIONS_DATABASE_URL", databaseURL))
 	if err != nil {
 		return err
 	}
@@ -97,18 +95,31 @@ func run() error {
 	return serveMCP(logger, srv)
 }
 
-// readRepositories is the set of read ports cmd/mcp wires, whichever adapter
-// family backs them.
-type readRepositories struct {
-	asns         ports.AsnRepository
-	appointments ports.AppointmentRepository
-	receipts     ports.ReceiptRepository
-	doors        ports.DockDoorDirectory
+// errMissingDatabaseURL is the boot error of an unset DATABASE_URL: the MCP
+// binary reads the same Postgres as cmd/api and has no in-memory mode.
+var errMissingDatabaseURL = errors.New("DATABASE_URL is required: this context runs on real Postgres, there is no in-memory mode")
+
+// loadConfig validates the environment before anything is opened and returns
+// DATABASE_URL. DOCK_DOOR_MODE only labels list_docks: unset or `kafka` is
+// accepted, `permissive` and `off` are refused (the same rule as cmd/api).
+func loadConfig(env func(string) string) (string, error) {
+	databaseURL := env("DATABASE_URL")
+	if databaseURL == "" {
+		return "", errMissingDatabaseURL
+	}
+	switch mode := env("DOCK_DOOR_MODE"); mode {
+	case "", string(usecases.ModeKafka):
+	case string(usecases.ModePermissive), "off":
+		return "", fmt.Errorf("DOCK_DOOR_MODE=%s is not supported: this context runs on real Kafka", mode)
+	default:
+		return "", fmt.Errorf("DOCK_DOOR_MODE: unknown mode %q (want kafka)", mode)
+	}
+	return databaseURL, nil
 }
 
-// buildDeps selects the repositories the way cmd/api does: no DATABASE_URL
-// means the in-memory repositories (runnable locally, empty); a URL means
-// migrate then connect a pgx pool. The returned close func releases the pool.
+// buildDeps migrates then connects a pgx pool and wires the read use cases
+// over the Postgres repositories. An empty databaseURL is a boot error. The
+// returned close func releases the pool.
 //
 // Like every sibling's cmd/mcp this binary runs the idempotent embedded
 // migrations on start, so it can boot against a fresh database before cmd/api
@@ -116,51 +127,45 @@ type readRepositories struct {
 // migrationsDatabaseURL is used ONLY for that step (a DIRECT Postgres DSN where
 // DATABASE_URL points at PgBouncer, which cannot honour the session-scoped
 // advisory lock); the runtime pool always uses databaseURL.
-func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrationsDatabaseURL string, doorMode usecases.Mode) (inboundmcp.Deps, func(), error) {
+func buildDeps(ctx context.Context, logger *slog.Logger, databaseURL, migrationsDatabaseURL string) (inboundmcp.Deps, func(), error) {
 	noop := func() {}
-	var (
-		repos   readRepositories
-		closeFn = noop
-	)
 	if databaseURL == "" {
-		logger.Info("DATABASE_URL not configured; using the in-memory repositories")
-		repos = readRepositories{
-			asns: memory.NewAsnRepo(), appointments: memory.NewAppointmentRepo(),
-			receipts: memory.NewReceiptRepo(), doors: memory.NewDockDoors(),
-		}
-	} else {
-		// The first outbound dial of an injected pod can be reset (Istio
-		// native sidecars), so migrations and the first ping retry with
-		// backoff; on exhaustion the process refuses to boot.
-		if err := bootretry.Retry(ctx, logger, "run migrations", func() error {
-			return postgres.RunMigrations(migrationsDatabaseURL)
-		}); err != nil {
-			return inboundmcp.Deps{}, noop, err
-		}
-		pool, err := postgres.NewPool(ctx, databaseURL)
-		if err != nil {
-			return inboundmcp.Deps{}, noop, err
-		}
-		if err := bootretry.Retry(ctx, logger, "ping postgres", func() error { return pool.Ping(ctx) }); err != nil {
-			pool.Close()
-			return inboundmcp.Deps{}, noop, err
-		}
-		logger.Info("postgres repositories configured")
-		repos = readRepositories{
-			asns: postgres.NewAsnRepo(pool), appointments: postgres.NewAppointmentRepo(pool),
-			receipts: postgres.NewReceiptRepo(pool), doors: postgres.NewDockDoors(pool),
-		}
-		closeFn = pool.Close
+		return inboundmcp.Deps{}, noop, errMissingDatabaseURL
 	}
+	// The first outbound dial of an injected pod can be reset (Istio native
+	// sidecars), so migrations and the first ping retry with backoff; on
+	// exhaustion the process refuses to boot.
+	if err := bootretry.Retry(ctx, logger, "run migrations", func() error {
+		return postgres.RunMigrations(migrationsDatabaseURL)
+	}); err != nil {
+		return inboundmcp.Deps{}, noop, err
+	}
+	pool, err := postgres.NewPool(ctx, databaseURL)
+	if err != nil {
+		return inboundmcp.Deps{}, noop, err
+	}
+	if err := bootretry.Retry(ctx, logger, "ping postgres", func() error { return pool.Ping(ctx) }); err != nil {
+		pool.Close()
+		return inboundmcp.Deps{}, noop, err
+	}
+	logger.Info("postgres repositories configured")
+	return depsOver(
+		postgres.NewAsnRepo(pool), postgres.NewAppointmentRepo(pool), postgres.NewReceiptRepo(pool), postgres.NewDockDoors(pool),
+	), pool.Close, nil
+}
+
+// depsOver wires the seven read-only use cases over the given read ports.
+// Reported dock-door mode is always kafka: the runtime has no other.
+func depsOver(asns ports.AsnRepository, appts ports.AppointmentRepository, receipts ports.ReceiptRepository, doors ports.DockDoorDirectory) inboundmcp.Deps {
 	return inboundmcp.Deps{
-		GetAsn:           &usecases.GetAsn{Asns: repos.asns},
-		ListAsns:         &usecases.ListAsns{Asns: repos.asns},
-		GetAppointment:   &usecases.GetAppointment{Appointments: repos.appointments},
-		ListAppointments: &usecases.ListAppointments{Appointments: repos.appointments},
-		GetReceipt:       &usecases.GetReceipt{Receipts: repos.receipts},
-		ListReceipts:     &usecases.ListReceipts{Receipts: repos.receipts},
-		ListDocks:        &usecases.ListDocks{Doors: repos.doors, Mode: doorMode},
-	}, closeFn, nil
+		GetAsn:           &usecases.GetAsn{Asns: asns},
+		ListAsns:         &usecases.ListAsns{Asns: asns},
+		GetAppointment:   &usecases.GetAppointment{Appointments: appts},
+		ListAppointments: &usecases.ListAppointments{Appointments: appts},
+		GetReceipt:       &usecases.GetReceipt{Receipts: receipts},
+		ListReceipts:     &usecases.ListReceipts{Receipts: receipts},
+		ListDocks:        &usecases.ListDocks{Doors: doors, Mode: usecases.ModeKafka},
+	}
 }
 
 // serveMCP runs srv until it fails or SIGINT/SIGTERM arrives, then drains it

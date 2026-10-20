@@ -58,7 +58,7 @@ Code identifiers are from `internal/domain/*`, wire names from
 | **Version** | Starts at 1, +1 per accepted change; the strong `ETag` and the `If-Match` value. | `Version()`, `ETag` |
 | **Idempotency key** | Caller-supplied key that makes a `POST` replay-safe. | `Idempotency-Key`, `idempotency_keys` |
 | **Local copy** | A table built from a producer's events so no live lookup is needed. | `known_skus`, `dock_doors` |
-| **Mode** | Whether a local copy is enforced (`kafka`) or ignored (`permissive`). | `usecases.Mode`, `PRODUCT_MODE`, `DOCK_DOOR_MODE` |
+| **Mode** | Whether a local copy is enforced. The runtime always uses `kafka`; `permissive` exists only as a unit-test value of `usecases.Mode` (ADR 0011). | `usecases.Mode`, `PRODUCT_MODE`, `DOCK_DOOR_MODE` |
 | **Outbox** | Table of already-encoded events written in the same transaction as the change. | `outbox_events` |
 | **Processed event** | A consumer's claim of a CloudEvents `id`, for dedupe. | `processed_events` |
 

@@ -6,8 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"sync/atomic"
+	"strings"
 	"testing"
+	"time"
+
+	inboundhttp "github.com/claudioed/inbound-receiving/internal/adapters/inbound/http"
 )
 
 func env(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
@@ -58,26 +61,49 @@ func TestRun_FailsFastWithoutTheAnalyticalDatabase(t *testing.T) {
 	}
 }
 
+func adminGet(mux http.Handler, path string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	return rec
+}
+
 func TestAdminMux_HealthzIsLivenessAndReadyzFlipsOnShutdown(t *testing.T) {
-	var notReady atomic.Bool
-	mux := newAdminMux(&notReady)
-	get := func(path string) *httptest.ResponseRecorder {
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
-		return rec
-	}
-	if rec := get("/healthz"); rec.Code != 200 || rec.Body.String() != `{"status":"ok"}` {
+	up := func(context.Context) error { return nil }
+	gate := inboundhttp.NewReadiness(time.Nanosecond, time.Second, inboundhttp.Dependency{Name: "analytics-postgres", Check: up})
+	mux := newAdminMux(gate)
+	if rec := adminGet(mux, "/healthz"); rec.Code != 200 || rec.Body.String() != `{"status":"ok"}` {
 		t.Fatalf("healthz = %d %s", rec.Code, rec.Body)
 	}
-	if rec := get("/readyz"); rec.Code != 200 || rec.Body.String() != `{"status":"ready"}` {
+	if rec := adminGet(mux, "/readyz"); rec.Code != 200 || rec.Body.String() != `{"status":"ready"}` {
 		t.Fatalf("readyz = %d %s", rec.Code, rec.Body)
 	}
-	notReady.Store(true)
-	if rec := get("/readyz"); rec.Code != 503 || rec.Body.String() != `{"status":"not_ready"}` {
+	gate.SetNotReady()
+	if rec := adminGet(mux, "/readyz"); rec.Code != 503 || rec.Body.String() != `{"status":"not_ready"}` {
 		t.Fatalf("readyz during shutdown = %d %s", rec.Code, rec.Body)
 	}
-	if rec := get("/healthz"); rec.Code != 200 {
+	if rec := adminGet(mux, "/healthz"); rec.Code != 200 {
 		t.Fatalf("healthz must stay up during shutdown, got %d", rec.Code)
+	}
+}
+
+// /readyz is real: a dead Kafka broker or a dead analytical database is NOT
+// ready, and the body names the failing dependency; /healthz is unaffected.
+func TestAdminMux_ReadyzReflectsTheDependencies(t *testing.T) {
+	up := func(context.Context) error { return nil }
+	down := func(context.Context) error { return errors.New("connection refused") }
+	dead := []string{"127.0.0.1:1"}
+
+	mux := newAdminMux(newReadiness(up, dead))
+	rec := adminGet(mux, "/readyz")
+	if rec.Code != 503 || !strings.Contains(rec.Body.String(), `"failing":["kafka"]`) {
+		t.Fatalf("readyz with Kafka down = %d %s, want 503 naming kafka", rec.Code, rec.Body)
+	}
+	rec = adminGet(newAdminMux(newReadiness(down, dead)), "/readyz")
+	if rec.Code != 503 || !strings.Contains(rec.Body.String(), "analytics-postgres") || !strings.Contains(rec.Body.String(), "kafka") {
+		t.Fatalf("readyz with everything down = %d %s", rec.Code, rec.Body)
+	}
+	if rec := adminGet(mux, "/healthz"); rec.Code != 200 {
+		t.Fatalf("healthz = %d, liveness must not depend on dependencies", rec.Code)
 	}
 }
 

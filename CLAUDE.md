@@ -89,7 +89,7 @@ need `ANALYTICS_DATABASE_URL`. Every env var: `docs/docs/operations/configuratio
   `docs/docs/`: the site (operations runbook, observability, troubleshooting,
   testing). `HARNESS.md`: what each sensor runs and why.
 
-Scaffolded from `warehouse-harness-template`; harness-template v3 is in effect
+harness-template: v4
 (hooks, guide-lint).
 
 ## Scoped rules and harness
