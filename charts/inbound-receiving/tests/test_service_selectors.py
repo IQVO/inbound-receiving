@@ -29,18 +29,19 @@ from pathlib import Path
 CHART_DIR = Path(__file__).resolve().parents[1]
 RELEASE = "inbound-receiving"
 
-# Dummy DSN, no password: the chart refuses to render without a database source.
-BASE = ["--set", "database.url=postgres://u@example.invalid:5432/db"]
+# Dummy values, no password: the chart refuses to render without a database
+# source, Kafka brokers and both consumer groups (the real runtime, ADR 0011).
+DB = ["--set", "database.url=postgres://u@example.invalid:5432/db"]
+KAFKA = ["--set", "kafka.brokers=kafka.example.invalid:9092"]
+GROUPS = [
+    "--set", "config.productConsumerGroup=inbound-receiving-product",
+    "--set", "config.dockDoorConsumerGroup=inbound-receiving-dock-door",
+]
+BASE = DB + KAFKA + GROUPS
 ENABLE_EVERYTHING = BASE + [
     "--set", "mcp.enabled=true",
     "--set", "frontend.enabled=true",
     "--set", "autoscaling.api.enabled=true",
-    "--set", "config.eventPublisher=kafka",
-    "--set", "config.productMode=kafka",
-    "--set", "config.productConsumerGroup=inbound-receiving-product",
-    "--set", "config.dockDoorMode=kafka",
-    "--set", "config.dockDoorConsumerGroup=inbound-receiving-dock-door",
-    "--set", "kafka.enabled=true",
     "--set", "gatewayApi.enabled=true",
     "--set", "ingress.enabled=true",
     "--set", "analytics.enabled=true",
@@ -206,25 +207,26 @@ def check_analytics(services: dict, deployments: dict, failures: list[str]) -> N
 
 
 def check_refusals(failures: list[str]) -> None:
-    kafka_modes = BASE + ["--set", "config.productMode=kafka", "--set", "config.productConsumerGroup=g"]
     for label, args, needle in (
-        ("without a database source", [], "requires database.url or database.existingSecret"),
-        ("EVENT_PUBLISHER=kafka without kafka", BASE + ["--set", "config.eventPublisher=kafka"], "kafka.enabled is false"),
-        ("an unknown EVENT_PUBLISHER", BASE + ["--set", "config.eventPublisher=nats"], "want \"log\" or \"kafka\""),
-        ("an unknown PRODUCT_MODE", BASE + ["--set", "config.productMode=strict"], "want \"permissive\" or \"kafka\""),
-        ("PRODUCT_MODE=kafka without a group", BASE + ["--set", "config.productMode=kafka", "--set", "kafka.enabled=true"],
-         "PRODUCT_MODE=kafka requires PRODUCT_CONSUMER_GROUP"),
-        ("DOCK_DOOR_MODE=kafka without a group", BASE + ["--set", "config.dockDoorMode=kafka", "--set", "kafka.enabled=true"],
-         "DOCK_DOOR_MODE=kafka requires DOCK_DOOR_CONSUMER_GROUP"),
-        ("a kafka consumer mode without kafka", kafka_modes, "PRODUCT_MODE/DOCK_DOOR_MODE=kafka requires KAFKA_BROKERS"),
-        ("a product group in permissive mode", BASE + ["--set", "config.productConsumerGroup=g"], "would silently not start"),
-        ("a dock-door group in permissive mode", BASE + ["--set", "config.dockDoorConsumerGroup=g"], "would silently not start"),
-        ("analytics without a DSN source", BASE + ["--set", "analytics.enabled=true", "--set", "kafka.enabled=true"], "neither analytics.database.projectorUrl"),
-        ("analytics without kafka", BASE + ["--set", "analytics.enabled=true", "--set", "analytics.database.existingSecret=s"], "analytics.enabled is true but kafka.enabled is false"),
+        ("without a database source", KAFKA + GROUPS, "requires database.url or database.existingSecret"),
+        ("without Kafka brokers", DB + GROUPS, "kafka.brokers"),
+        ("with Kafka switched off", BASE + ["--set", "kafka.enabled=false"], "Kafka cannot be switched off"),
+        ("with EVENT_PUBLISHER=log", BASE + ["--set", "config.eventPublisher=log"], "the only publisher"),
+        ("an unknown EVENT_PUBLISHER", BASE + ["--set", "config.eventPublisher=nats"], "the only publisher"),
+        ("PRODUCT_MODE=permissive", BASE + ["--set", "config.productMode=permissive"], "the only mode is"),
+        ("DOCK_DOOR_MODE=off", BASE + ["--set", "config.dockDoorMode=off"], "the only mode is"),
+        ("an unknown PRODUCT_MODE", BASE + ["--set", "config.productMode=strict"], "the only mode is"),
+        ("without a product consumer group", DB + KAFKA + GROUPS[2:], "config.productConsumerGroup is required"),
+        ("without a dock-door consumer group", DB + KAFKA + GROUPS[:2], "config.dockDoorConsumerGroup is required"),
+        ("EVENT_PUBLISHER=log through extraEnv",
+         BASE + ["--set", "extraEnv[0].name=EVENT_PUBLISHER", "--set", "extraEnv[0].value=log"], "extraEnv sets EVENT_PUBLISHER"),
+        ("a *_MODE through extraEnv",
+         BASE + ["--set", "extraEnv[0].name=DOCK_DOOR_MODE", "--set", "extraEnv[0].value=permissive"], "extraEnv sets DOCK_DOOR_MODE"),
+        ("analytics without a DSN source", BASE + ["--set", "analytics.enabled=true"], "neither analytics.database.projectorUrl"),
     ):
         result = helm_template(args)
         if result.returncode == 0 or needle not in result.stderr:
-            failures.append(f"chart rendered (or failed for another reason) {label}")
+            failures.append(f"chart rendered (or failed for another reason) {label}: want {needle!r}, got {result.stderr.strip()[:200]!r}")
 
 
 def main() -> int:
@@ -241,10 +243,9 @@ def main() -> int:
         failures.append(f"optional components rendered with default values: {stray}")
     dep = next(d for d in defaults if d.get("kind") == "Deployment")
     names = env_names(dep)
-    if {"PRODUCT_CONSUMER_GROUP", "DOCK_DOOR_CONSUMER_GROUP", "KAFKA_BROKERS"} & set(names):
-        failures.append("the consumers / KAFKA_BROKERS must be off with default values")
-    if "PRODUCT_MODE" not in names or "DOCK_DOOR_MODE" not in names:
-        failures.append("PRODUCT_MODE / DOCK_DOOR_MODE must always be rendered (permissive by default)")
+    for want in ("PRODUCT_CONSUMER_GROUP", "DOCK_DOOR_CONSUMER_GROUP", "KAFKA_BROKERS", "PRODUCT_MODE", "DOCK_DOOR_MODE", "EVENT_PUBLISHER"):
+        if want not in names:
+            failures.append(f"{want} must always be rendered: the consumers, the relay and Kafka are always on (ADR 0011)")
 
     check_refusals(failures)
 
@@ -254,9 +255,9 @@ def main() -> int:
         return 1
 
     print("PASS: every Service selects exactly one Deployment (api, mcp, frontend, analytics-reports); mcp, frontend, analytics, HPA and routes are off by "
-          "default; the chart refuses to render without a database source, with an unknown publisher/mode, "
-          "with a Kafka mode but no broker or no consumer group, with a group set but its consumer off, "
-          "or with analytics but no analytical DSN or no Kafka")
+          "default; the chart refuses to render without a database source, without Kafka brokers, without a "
+          "consumer group, with kafka switched off, with the log publisher or a permissive/off mode (values or "
+          "extraEnv), or with analytics but no analytical DSN")
     return 0
 
 

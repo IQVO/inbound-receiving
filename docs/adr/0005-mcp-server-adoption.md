@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-10-08).
+Accepted (2026-10-08). The in-memory repositories without `DATABASE_URL` and the `permissive` dock-door mode are superseded by [ADR 0011](./0011-postgres-and-kafka-are-the-only-runtime.md).
 
 ## Context
 

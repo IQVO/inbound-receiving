@@ -10,7 +10,7 @@ import (
 
 // TestNewSweeperReadsTheHousekeepingEnv: HOUSEKEEPING_INTERVAL reaches the
 // sweeper (0 disables it, so Run returns at once without touching the nil
-// pool), and startSweeper is a no-op with in-memory adapters (gap fix D24).
+// pool), and startSweeper is a no-op when no sweeper was built (gap fix D24).
 func TestNewSweeperReadsTheHousekeepingEnv(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	env := func(k string) string {

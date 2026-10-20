@@ -112,7 +112,7 @@ func TestMCPAgainstPostgres_ReadsWhatTheAPIWroteAndNeverWrites(t *testing.T) {
 	url := startPostgres(t)
 	ctx := context.Background()
 
-	deps, closeFn, err := buildDeps(ctx, quietLogger(), url, url, usecases.ModeKafka)
+	deps, closeFn, err := buildDeps(ctx, quietLogger(), url, url)
 	if err != nil {
 		t.Fatalf("buildDeps on a fresh database: %v", err)
 	}

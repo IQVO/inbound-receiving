@@ -1,4 +1,10 @@
 # Used by `helm lint` / `ct lint` (chart-testing): the chart refuses to render
-# without a database source. Dummy DSN, no password.
+# without a database source, Kafka brokers and both consumer groups (the real
+# runtime, ADR 0011). Dummy values, no password, never dialled.
 database:
   url: "postgres://u@example.invalid:5432/db"
+kafka:
+  brokers: "kafka.example.invalid:9092"
+config:
+  productConsumerGroup: "inbound-receiving-product"
+  dockDoorConsumerGroup: "inbound-receiving-dock-doors"

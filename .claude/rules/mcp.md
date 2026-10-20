@@ -29,10 +29,10 @@ SAME read use cases the REST adapter calls. Decision record:
   `TestNoAuthMiddlewareReintroduced` fails CI if it is reintroduced.
 - Architecture: the adapter depends ONLY on `internal/application` and
   `internal/domain`; nothing depends on it (`TestMCPAdapterDependencyRule`).
-- Env (`cmd/mcp`): `MCP_ADDR`, `DATABASE_URL` (unset -> in-memory
-  repositories), `MIGRATIONS_DATABASE_URL` (direct DSN for the migration step
-  only), `DOCK_DOOR_MODE` (permissive | kafka; ONLY the `mode` `list_docks`
-  reports, it starts no consumer), `OTEL_EXPORTER_OTLP_ENDPOINT`, `LOG_LEVEL`,
+- Env (`cmd/mcp`): `MCP_ADDR`, `DATABASE_URL` (REQUIRED, boot error when unset;
+  no in-memory mode, ADR 0011), `MIGRATIONS_DATABASE_URL` (direct DSN for the migration step
+  only), `DOCK_DOOR_MODE` (kafka, the default and only value; ONLY the `mode`
+  `list_docks` reports, it starts no consumer), `OTEL_EXPORTER_OTLP_ENDPOINT`, `LOG_LEVEL`,
   `SERVICE_VERSION`, `ENVIRONMENT`. It runs the idempotent embedded migrations
   on start and uses `internal/bootretry` for the Postgres dial. It does NOT
   start the outbox relay, does NOT run the local-copy consumers and does NOT

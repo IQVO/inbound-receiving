@@ -16,12 +16,8 @@ data:
   PRODUCT_MODE: {{ .Values.config.productMode | quote }}
   DOCK_DOOR_MODE: {{ .Values.config.dockDoorMode | quote }}
   ENVIRONMENT: {{ .Values.environment | quote }}
-  {{- with .Values.config.productConsumerGroup }}
-  PRODUCT_CONSUMER_GROUP: {{ . | quote }}
-  {{- end }}
-  {{- with .Values.config.dockDoorConsumerGroup }}
-  DOCK_DOOR_CONSUMER_GROUP: {{ . | quote }}
-  {{- end }}
+  PRODUCT_CONSUMER_GROUP: {{ .Values.config.productConsumerGroup | quote }}
+  DOCK_DOOR_CONSUMER_GROUP: {{ .Values.config.dockDoorConsumerGroup | quote }}
   {{- with .Values.config.outboxRelayInterval }}
   OUTBOX_RELAY_INTERVAL: {{ . | quote }}
   {{- end }}
@@ -39,6 +35,4 @@ data:
   {{- if .Values.otel.enabled }}
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.otel.endpoint | quote }}
   {{- end }}
-  {{- if .Values.kafka.enabled }}
   KAFKA_BROKERS: {{ .Values.kafka.brokers | quote }}
-  {{- end }}

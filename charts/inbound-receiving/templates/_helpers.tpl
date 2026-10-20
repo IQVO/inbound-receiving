@@ -88,73 +88,92 @@ Image reference shared by every Deployment (api, mcp, analytics-projector, analy
 {{- end }}
 
 {{/*
-Fails chart rendering with a clear message if no DATABASE_URL source is
-configured. The binary would silently fall back to in-memory adapters (state
-lost on restart) -- fine for `go run`, never a deployable state, so surface it
-as a helm render-time error instead.
+MANDATORY (ADR 0011: Postgres is the only runtime). cmd/api and cmd/mcp exit at
+boot without DATABASE_URL; there is no in-memory mode. Fails the render
+naming the values instead of crash-looping.
 */}}
 {{- define "inbound-receiving.requireDatabase" -}}
 {{- if not (or .Values.database.url .Values.database.existingSecret) -}}
-{{- fail "inbound-receiving requires database.url or database.existingSecret to be set — without DATABASE_URL the binary silently runs on in-memory adapters, which is not a deployable state." -}}
+{{- fail "inbound-receiving requires database.url or database.existingSecret to be set (DATABASE_URL): the service runs on real Postgres only and exits at boot without it (ADR 0011)." -}}
 {{- end -}}
 {{- end -}}
 
 {{/*
-EVENT_PUBLISHER=kafka makes the binary refuse to boot without KAFKA_BROKERS
-(cmd/api startOutboxRelay), and KAFKA_BROKERS is only rendered when
-kafka.enabled is true -- so that combination would crash-loop. Fail at render.
+MANDATORY (ADR 0011: Kafka is the only runtime). cmd/api exits at boot without
+KAFKA_BROKERS and rejects EVENT_PUBLISHER=log; the projector needs the brokers
+too. There is no default broker, no log sink and no way to switch Kafka off.
+kafka.enabled is kept only so values written before ADR 0011 still render
+(warehouse-infra sets it to "true"): it may be true, never false.
 */}}
-{{- define "inbound-receiving.requireKafkaForPublisher" -}}
-{{- if and (eq .Values.config.eventPublisher "kafka") (not .Values.kafka.enabled) -}}
-{{- fail "config.eventPublisher is \"kafka\" but kafka.enabled is false — the binary exits at boot (EVENT_PUBLISHER=kafka requires KAFKA_BROKERS). Set kafka.enabled=true and kafka.brokers." -}}
+{{- define "inbound-receiving.requireKafka" -}}
+{{- $_ := required "inbound-receiving requires kafka.brokers to be set (KAFKA_BROKERS, comma-separated): the service runs on real Kafka only and exits at boot without it (ADR 0011)." .Values.kafka.brokers -}}
+{{- if and (hasKey .Values.kafka "enabled") (or (not .Values.kafka.enabled) (eq (toString .Values.kafka.enabled) "false")) -}}
+{{- fail "kafka.enabled is false — Kafka cannot be switched off: the service runs on real Kafka only (ADR 0011). Drop the key or set it to true and set kafka.brokers." -}}
+{{- end -}}
+{{- if ne (toString .Values.config.eventPublisher) "kafka" -}}
+{{- fail (printf "config.eventPublisher is %q — the only publisher is \"kafka\": the log sink was removed (ADR 0011); the binary rejects EVENT_PUBLISHER=log at boot." (toString .Values.config.eventPublisher)) -}}
 {{- end -}}
 {{- end -}}
 
 {{/*
-config.eventPublisher must be one of the values the binary parses
-(parsePublisherMode): anything else exits at boot.
+PRODUCT_MODE / DOCK_DOOR_MODE (ADR 0003, ADR 0011): the only mode is "kafka"
+(the names are kept because docs and infra set them). "permissive" and "off"
+no longer exist: the binary exits at boot on them. Also used by the MCP
+Deployment, which reports DOCK_DOOR_MODE in list_docks.
 */}}
-{{- define "inbound-receiving.requireKnownPublisher" -}}
-{{- if not (has .Values.config.eventPublisher (list "log" "kafka")) -}}
-{{- fail (printf "config.eventPublisher is %q — want \"log\" or \"kafka\" (the binary exits at boot otherwise)." .Values.config.eventPublisher) -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
-PRODUCT_MODE / DOCK_DOOR_MODE (ADR 0003) must be permissive or kafka, and a
-kafka mode starts a consumer: it needs a stable consumer group id
-(cmd/api loadConfig refuses to boot without one) and KAFKA_BROKERS. Without a
-group the pod would crash-loop; without brokers it would too. Fail at render.
-*/}}
-{{- define "inbound-receiving.requireConsumerConfig" -}}
+{{- define "inbound-receiving.requireConsumerModes" -}}
 {{- range $key := list "productMode" "dockDoorMode" -}}
 {{- $mode := index $.Values.config $key -}}
-{{- if not (has $mode (list "permissive" "kafka")) -}}
-{{- fail (printf "config.%s is %q — want \"permissive\" or \"kafka\" (the binary exits at boot otherwise)." $key $mode) -}}
+{{- if ne (toString $mode) "kafka" -}}
+{{- fail (printf "config.%s is %q — the only mode is \"kafka\": the local copies are always fed from real Kafka and permissive/off were removed (ADR 0011); the binary exits at boot otherwise." $key (toString $mode)) -}}
 {{- end -}}
-{{- end -}}
-{{- if and (eq .Values.config.productMode "kafka") (not .Values.config.productConsumerGroup) -}}
-{{- fail "config.productMode is \"kafka\" but config.productConsumerGroup is empty — the binary exits at boot (PRODUCT_MODE=kafka requires PRODUCT_CONSUMER_GROUP). Use a STABLE id." -}}
-{{- end -}}
-{{- if and (eq .Values.config.dockDoorMode "kafka") (not .Values.config.dockDoorConsumerGroup) -}}
-{{- fail "config.dockDoorMode is \"kafka\" but config.dockDoorConsumerGroup is empty — the binary exits at boot (DOCK_DOOR_MODE=kafka requires DOCK_DOOR_CONSUMER_GROUP). Use a STABLE id." -}}
-{{- end -}}
-{{- if and (or (eq .Values.config.productMode "kafka") (eq .Values.config.dockDoorMode "kafka")) (not .Values.kafka.enabled) -}}
-{{- fail "config.productMode/dockDoorMode is \"kafka\" but kafka.enabled is false — the binary exits at boot (PRODUCT_MODE/DOCK_DOOR_MODE=kafka requires KAFKA_BROKERS). Set kafka.enabled=true and kafka.brokers." -}}
 {{- end -}}
 {{- end -}}
 
 {{/*
-A consumer group id set while its mode is permissive is a silent no-op (the
-consumer never starts). Refuse it so the intent is never lost.
+Both consumers always run, each under a STABLE consumer group id that must
+come from values (cmd/api exits at boot without PRODUCT_CONSUMER_GROUP /
+DOCK_DOOR_CONSUMER_GROUP). A stable id is what lets a rescheduled pod resume
+from its committed offsets.
 */}}
-{{- define "inbound-receiving.requireNoOrphanGroups" -}}
-{{- if and .Values.config.productConsumerGroup (ne .Values.config.productMode "kafka") -}}
-{{- fail "config.productConsumerGroup is set but config.productMode is not \"kafka\" — the product consumer would silently not start. Set productMode=kafka or clear the group." -}}
+{{- define "inbound-receiving.requireConsumerGroups" -}}
+{{- if not .Values.config.productConsumerGroup -}}
+{{- fail "config.productConsumerGroup is required (PRODUCT_CONSUMER_GROUP): the product consumer always runs on real Kafka and cmd/api exits at boot without a group. Use a STABLE id (ADR 0011)." -}}
 {{- end -}}
-{{- if and .Values.config.dockDoorConsumerGroup (ne .Values.config.dockDoorMode "kafka") -}}
-{{- fail "config.dockDoorConsumerGroup is set but config.dockDoorMode is not \"kafka\" — the dock-door consumer would silently not start. Set dockDoorMode=kafka or clear the group." -}}
+{{- if not .Values.config.dockDoorConsumerGroup -}}
+{{- fail "config.dockDoorConsumerGroup is required (DOCK_DOOR_CONSUMER_GROUP): the dock-door consumer always runs on real Kafka and cmd/api exits at boot without a group. Use a STABLE id (ADR 0011)." -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+extraEnv may not bring back a log or permissive/off mode (ADR 0011): no
+EVENT_PUBLISHER other than kafka and no *_MODE variable at all (the modes have
+dedicated values and the only legal value is "kafka").
+*/}}
+{{- define "inbound-receiving.requireNoInMemoryEnv" -}}
+{{- range .Values.extraEnv -}}
+{{- $name := toString .name -}}
+{{- $value := toString (default "" .value) -}}
+{{- if and (eq $name "EVENT_PUBLISHER") (ne $value "kafka") -}}
+{{- fail (printf "extraEnv sets EVENT_PUBLISHER=%s — the only publisher is \"kafka\" (ADR 0011)." $value) -}}
+{{- end -}}
+{{- if hasSuffix "_MODE" $name -}}
+{{- fail (printf "extraEnv sets %s — *_MODE variables are set through config.productMode / config.dockDoorMode and the only legal value is \"kafka\": inbound-receiving runs on real Postgres and real Kafka only, with no permissive or off mode (ADR 0011)." $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Every render-time requirement of the real runtime, in one include. The api
+Deployment (always rendered) includes it, so a mis-set release fails
+`helm template` / `helm install` whichever component is enabled.
+*/}}
+{{- define "inbound-receiving.requireRealRuntime" -}}
+{{- include "inbound-receiving.requireDatabase" . -}}
+{{- include "inbound-receiving.requireKafka" . -}}
+{{- include "inbound-receiving.requireConsumerModes" . -}}
+{{- include "inbound-receiving.requireConsumerGroups" . -}}
+{{- include "inbound-receiving.requireNoInMemoryEnv" . -}}
 {{- end -}}
 
 {{/*
@@ -188,21 +207,16 @@ ANALYTICS_READER_DATABASE_URL) or the one this chart creates.
 
 {{/*
 analytics.enabled needs an analytical DSN source (both binaries refuse to boot
-without ANALYTICS_DATABASE_URL) and a broker (the projector consumes
-warehouse.inbound-receiving.analytics from kafka.brokers). Fail at render
-instead of crash-looping. Events only reach the analytics topic when
-config.eventPublisher is "kafka"; that is documented, not enforced, since the
-projector is harmless without events.
+without ANALYTICS_DATABASE_URL). The projector consumes
+warehouse.inbound-receiving.analytics from kafka.brokers, which the api
+Deployment already requires (requireKafka); the projector's consumer group
+comes from analytics.projector.consumerGroup.
 */}}
 {{- define "inbound-receiving.requireAnalyticsConfig" -}}
 {{- if not (or .Values.analytics.database.projectorUrl .Values.analytics.database.existingSecret) -}}
 {{- fail "analytics.enabled is true but neither analytics.database.projectorUrl nor analytics.database.existingSecret is set — the projector and reports binaries refuse to boot without ANALYTICS_DATABASE_URL." -}}
 {{- end -}}
-{{- if not .Values.kafka.enabled -}}
-{{- fail "analytics.enabled is true but kafka.enabled is false — the projector consumes warehouse.inbound-receiving.analytics and needs kafka.brokers. Set kafka.enabled=true." -}}
 {{- end -}}
-{{- end -}}
-
 
 {{/*
 Comma-joined names of this chart's enabled KongPlugins, for the
