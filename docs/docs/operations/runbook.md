@@ -32,11 +32,10 @@ side-loaded by `kind load docker-image` (`pullPolicy: IfNotPresent`).
 | `frontend` | `frontend-deployment.yaml` | nginx-unprivileged | `8080` | ClusterIP `:80` | `frontend.enabled` (default `false`) |
 
 The chart refuses to render (template `fail`) when `database.url` and
-`database.existingSecret` are both empty, when `config.eventPublisher` is not
-`log`/`kafka` or is `kafka` without `kafka.enabled`, when a mode is not
-`permissive`/`kafka`, when a `kafka` mode has no consumer group or no Kafka, when a
-consumer group is set while its mode is `permissive`, and when
-`analytics.enabled` has no Kafka or no DSN source.
+`database.existingSecret` are both empty, when `kafka.brokers` or either
+consumer group is missing, when `kafka.enabled` is `false`, when
+`config.eventPublisher` or a mode is anything but `kafka` (also through
+`extraEnv`), and when `analytics.enabled` has no DSN source (ADR 0011).
 
 In the kind cluster warehouse-infra enables everything: `eventPublisher:
 kafka`, `productMode: kafka` with group `inbound-receiving-product`,
@@ -167,8 +166,8 @@ with the consumer names `product-registry` and `dock-door-registry`.
   `max_attempts` and `error`. From then on later rows, **including rows with
   the same key**, overtake it; the row stays in `outbox_events` (unpublished,
   with `attempts` and `last_error`) until re-armed (below);
-- `EVENT_PUBLISHER=log` (the chart default) logs each row as
-  `event published (log sink)` and marks it published: nothing reaches Kafka;
+- `EVENT_PUBLISHER=log` is a boot error since ADR 0011: no binary marks rows
+  published without writing them to Kafka;
 - every domain event is **two** rows (integration first, analytics second)
   sharing one CloudEvents `id`; `(event_id, topic)` is unique.
 
@@ -286,10 +285,9 @@ is logged, never echoed).
 ### Switch a local copy to `kafka`
 
 The first start under a new consumer group reads the source topic from the
-beginning. Readiness does not wait for that replay, so start with the mode
-`permissive` until the copy is filled, or accept that `POST /asns` /
+beginning. Readiness does not wait for that replay, so `POST /asns` /
 `POST /appointments` may answer `422 unknown-sku` / `unknown-dock-door` until
-the consumer has caught up.
+the consumer has caught up (there is no `permissive` mode any more, ADR 0011).
 
 ### Re-publish outbox rows
 

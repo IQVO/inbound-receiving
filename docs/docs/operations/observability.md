@@ -36,7 +36,7 @@ OTel contrib runtime `v0.72.0`, prometheus `client_golang`).
   the global propagator into `outbox_events.headers` (after `content-type`),
   and the relay copies those headers onto the Kafka message, so a consumer
   that extracts them continues the producing request's trace. A row written
-  without an active span (or by the in-memory outbox) carries only
+  without an active span carries only
   `content-type`. This service's own consumers open no spans, so they do not
   extract.
 - **`GET /metrics` (api only):** a private Prometheus registry with the Go
@@ -92,15 +92,14 @@ All four binaries log JSON to stdout via `log/slog` (`LOG_LEVEL`, default
 |---|---|---|---|
 | `http server listening` / `mcp server listening (Streamable HTTP)` / `reports server listening` / `projector admin server listening` | INFO | `addr` | each |
 | `telemetry configured` | INFO | `service_name`, `service_version`, `environment`, `otlp_endpoint` | projector |
-| `DATABASE_URL not configured; using in-memory adapters` | INFO | — | api, mcp |
 | `retrying` / `succeeded after retry` | WARN / INFO | `op` (`run migrations`, `ping postgres`, `run analytics migrations`, `ping analytics database`), `attempt`, `in`, `err` | all (boot retry) |
 | `outbox relay running` | INFO | `publisher`, `interval`, `max_attempts`, `topics` | api |
 | `outbox relay pass failed` | ERROR | `error` (contains `outbox row <id> (<type>)`) | api |
 | `outbox relay: row reached the attempt cap and is excluded from future claims; re-arm it with attempts = 0 after fixing the cause` | ERROR (once per row) | `outbox_id`, `topic`, `event_type`, `key`, `attempts`, `max_attempts`, `error` | api ([ADR 0007](/docs/adr/0007-outbox-relay-attempt-cap)) |
 | `invalid OUTBOX_MAX_ATTEMPTS; using the default` | WARN | `value`, `default` | api |
-| `event published (log sink)` | INFO | `topic`, `type`, `subject`, `id` | api with `EVENT_PUBLISHER=log` |
+| `readiness: dependency is not ready` | WARN | `dependency` (`postgres`, `kafka`, `analytics-postgres`), `error` | api, projector |
 | `product consumer running` / `dock door consumer running` / `analytics consumer running` | INFO | `topic`, `group_id`, `brokers` | api / projector |
-| `PRODUCT_MODE is permissive; product consumer not started` (and the dock-door twin) | INFO | — | api |
+| `<worker> stopped unexpectedly: exiting so the orchestrator restarts the service` | ERROR (process exit 1) | — | api (a consumer or the relay returned on its own, ADR 0011) |
 | `product registered processed` / `location slot event processed` | INFO | `event_id`, `sku` or `location_code`, `type`, `outcome` | api |
 | `skipping a message that is not a valid CloudEvent`, `skipping a malformed ... payload`, `skipping an invalid ...` | WARN | `topic` or `event_id`, `type`, `error` | api consumers |
 | `<name> handling failed; retrying the same message` / `<name> offset commit failed; ...` | ERROR | `error`, `partition`, `offset`, `attempt`, `retry_in` | api consumers, projector |
