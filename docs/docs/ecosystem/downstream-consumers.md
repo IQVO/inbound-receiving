@@ -13,12 +13,16 @@ The table reflects each consumer's code on its `develop` branch.
 
 | Consumer | Type consumed | Consumer group env | Mode switch | What it does with it | Its ADR |
 | --- | --- | --- | --- | --- | --- |
-| `inventory-storage` (Core) | `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived` | `INBOUND_RECEIPT_CONSUMER_GROUP` (unset = not started) | none | for `condition=Good` runs its existing ReceiveStock use case with `(sku, quantity)`, so the units are staged and Unlocated until stowed; `Damaged` lines are logged and counted (`inventory.inbound_receipt_units{outcome=damaged_not_booked}`), not booked; redelivery is deduped on the CloudEvents id | 0037 |
+| `inventory-storage` (Core) | `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived` | `INBOUND_RECEIPT_CONSUMER_GROUP` (required, boot error if unset: its ADR 0042) | none | for `condition=Good` runs its existing ReceiveStock use case with `(sku, quantity)`, so the units are staged and Unlocated until stowed; `Damaged` lines are logged and counted (`inventory.inbound_receipt_units{outcome=damaged_not_booked}`), not booked; redelivery is deduped on the CloudEvents id | 0037 |
+| `warehouse-planning` (Core, `wes`) | `...dockappointment.DockAppointmentBooked` and `...DockAppointmentCancelled` | `INBOUND_DEMAND_CONSUMER_GROUP` (required there; warehouse-infra pins `warehouse-planning-inbound-demand`) | none | upserts one `inbound_appointments` row per `appointment_id` at its configured site (`DEMAND_SITE_ID`) as inbound-labour demand; last writer wins on the CloudEvents `time`, a Cancelled wins a tie and a Cancelled that arrives before its Booked is kept as a tombstone; failures are retried 5 times, deterministic ones are dead-lettered to `warehouse.inbound-receiving.events.dlq` | 0017 (warehouse-planning) |
 
 Evidence (on the consumer's `develop`): inventory-storage
 `internal/adapters/inbound/kafka/inbound_receipt_consumer.go`,
-`internal/application/usecases/book_inbound_receipt_line.go` and
-`cmd/inventory/consumers.go`. The consumer reads `receipt_id`, `asn_number`,
+`internal/application/usecases/book_inbound_receipt_line.go`,
+`cmd/inventory/config.go` and `cmd/inventory/consumers.go`; warehouse-planning
+`internal/adapters/inbound/kafka/inbound_demand_consumer.go`,
+`cmd/api/runtime.go` and `docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback.md`.
+The inventory-storage consumer reads `receipt_id`, `asn_number`,
 `line_no`, `sku`, `quantity` and `condition` and ignores `received_at`
 (inventory-storage stamps with its own clock). A brand-new group starts at the
 earliest offset. Every other type on the topic is committed past untouched.
@@ -53,18 +57,24 @@ Classifications of neighbours come from the warehouse-docs contexts table.
 
 These read this context; they do not consume its events.
 
-## Planned, not built
+## Nothing is planned and unbuilt
 
-| Candidate consumer | Event | State |
-| --- | --- | --- |
-| `warehouse-planning` | `DockAppointmentBooked` as inbound-labor demand | **Planned, not built.** Its CapacityPlan has no inbound process path, so this needs its own ADR there first (ADR 0001, ADR 0003). |
+There is no candidate consumer left. The `warehouse-planning` edge that earlier
+versions of this page listed as planned (ADR 0001, ADR 0003) is built, merged
+and running: warehouse-planning ADR 0017 added the consumer
+(`internal/adapters/inbound/kafka/inbound_demand_consumer.go`) and
+`helm-values/warehouse-planning.yaml` in warehouse-infra sets
+`inbound.consumerGroup`. The earlier statement that its CapacityPlan had no
+inbound process path is superseded by that ADR.
 
 ## Events with no consumer yet
 
-`ASNRegistered`, `ASNCancelled`, `DockAppointmentBooked`,
-`DockAppointmentCheckedIn`, `DockAppointmentCancelled`,
+`ASNRegistered`, `ASNCancelled`, `DockAppointmentCheckedIn`,
 `DockAppointmentCompleted`, `ReceiptOpened` and `ReceiptClosed` are published but
-no sibling consumes them on `develop` today. All nine events are also copied to
+no sibling consumes them on `develop` today (`warehouse-planning` reads only
+`DockAppointmentBooked` and `DockAppointmentCancelled`; its ADR 0017 lists
+`ASNRegistered`, `DockAppointmentCheckedIn` and `DockAppointmentCompleted` as not
+consumed). All nine events are also copied to
 the internal analytics topic, whose only consumer is this context's own
 `inbound-projector` ([ADR 0006](/docs/adr/0006-analytics-read-side)); it is not
 an integration contract.

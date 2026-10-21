@@ -43,6 +43,9 @@ flowchart LR
 
   E7 --> X3[inventory-storage]:::ext
   X3 --> P4{{"book Good lines as staged stock"}}:::pol
+  E3 --> X4[warehouse-planning]:::ext
+  E5 --> X4
+  X4 --> P5{{"record the window as inbound labour demand, or drop it on cancel"}}:::pol
 
   H1[/"Hotspot: no tolerance policy for over-receipt"/]:::hot -.-> E8
   H2[/"Hotspot: Damaged units have no quarantine flow"/]:::hot -.-> E7
@@ -50,9 +53,10 @@ flowchart LR
 
 Source: `internal/application/usecases/*.go`, `internal/domain/*/events.go`,
 `internal/adapters/inbound/kafka/*.go`; inventory-storage
-`internal/adapters/inbound/kafka/inbound_receipt_consumer.go`.
+`internal/adapters/inbound/kafka/inbound_receipt_consumer.go`; warehouse-planning
+`internal/adapters/inbound/kafka/inbound_demand_consumer.go`.
 Omits: the internal `BeginReceiving` and `Complete` transitions of the ASN
-(they raise no event), error branches and the planned consumers.
+(they raise no event) and error branches.
 
 ## Legend
 
@@ -61,7 +65,7 @@ Omits: the internal `BeginReceiving` and `Complete` transitions of the ASN
 | Command | A use case in `internal/application/usecases`, reached by a REST `POST`. |
 | Aggregate | `Asn`, `DockAppointment`, `Receipt` in `internal/domain`. |
 | Domain event | A type in `apis/asyncapi.yaml`, raised by the aggregate and published through the outbox. |
-| Policy | Reactive logic: `CloseReceipt` completing the ASN and appointment (in the same unit of work), the two local-copy consumers, and inventory-storage's consumer. |
+| Policy | Reactive logic: `CloseReceipt` completing the ASN and appointment (in the same unit of work), the two local-copy consumers, inventory-storage's consumer and warehouse-planning's inbound-demand consumer. |
 | Read model | The two local-copy tables `known_skus` and `dock_doors`; they are read by `RegisterAsn` / `BookAppointment` only when the mode is `kafka`. |
 | External system | `product-master`, `facility-layout`, `inventory-storage`. |
 

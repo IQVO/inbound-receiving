@@ -62,7 +62,7 @@ see [Observability](./observability.md) for their fields.
 | Every event appears on two topics | intended: `FanoutEncoder` writes an integration row and an analytics row with the same `id` | `outbox_events.topic` | none |
 | Local-copy consumer lag grows, same `partition`/`offset` in `handling failed; retrying the same message` | a transient error (usually Postgres) — the loop never skips | ERROR lines | fix the dependency; the message is retried with 200 ms → 5 s backoff |
 | A product/door event seems ignored | not a CloudEvent, malformed payload or invalid value: logged at WARN and committed past (no DLQ for these consumers) | `skipping ...` WARN lines | fix the producer; replay by resetting the group offset |
-| A consumer is silent although its topic now has events | it started before its topic existed and kafka-go does not pick the topic up later | no `product registered processed` lines; the topic exists | restart the pod (create or seed the topics before the first start) |
+| A consumer is silent although its topic now has events | it started before its topic existed and kafka-go does not pick the topic up later | no `product registered processed` lines; the topic exists | restart the pod (create or seed the topics before the first start). Known limit, still open (ADR 0011): `/readyz` pings the broker topic-less and the worker does not fail on a missing consumed topic, so nothing alerts on it |
 
 ## Analytics
 

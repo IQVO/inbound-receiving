@@ -53,10 +53,10 @@ relationship column is from this repo's [integration pages](../ecosystem/upstrea
 | `facility-layout` | Generic | `wms` | upstream: `LocationSlotRegistered` / `LocationSlotDecommissioned` on `warehouse.facility.events` feed the `dock_doors` local copy (`DOCK_DOOR_MODE=kafka`) |
 | `inventory-storage` | Core | `wms` | downstream: consumes `ReceiptLineReceived` and books `Good` units as received stock |
 | `warehouse-ops-agent` | Supporting | `wes` | downstream reader: calls the seven read-only MCP tools |
-| `warehouse-planning` | Core | `wes` | candidate downstream (`DockAppointmentBooked` as inbound labor demand): planned, not built |
+| `warehouse-planning` | Core | `wes` | downstream: consumes `DockAppointmentBooked` and `DockAppointmentCancelled` as inbound labour demand (its ADR 0017, built and live) |
 
-The fleet count in warehouse-docs is five Core, seven Supporting, two Generic
-and one Generic/Supporting; inbound-receiving is one of the seven Supporting
+The fleet count in warehouse-docs is five Core, nine Supporting, two Generic
+and one Generic/Supporting; inbound-receiving is one of the nine Supporting
 contexts.
 
 See also the [Core domain chart](./core-domain-chart.md) and the

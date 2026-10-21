@@ -81,7 +81,7 @@ Hexagonal architecture, enforced by the fitness tests in `internal/architecture`
 | Application (use cases, ports) | `internal/application/{usecases,ports,repository,outbox,idempotency}` |
 | Analytics report rules (pure) | `internal/analytics/report` (range rules, day windows, freshness lag) |
 | Inbound adapters | `internal/adapters/inbound/http` (REST and the reports router), `internal/adapters/inbound/mcp` (MCP tools), `internal/adapters/inbound/kafka` (the product and dock-door consumers, and the projector's analytics consumer) |
-| Outbound adapters | `internal/adapters/outbound/{postgres,memory,kafka,outbox,analyticsstore,clock,idgen,telemetry}` |
+| Outbound adapters | `internal/adapters/outbound/{postgres,memory,kafka,outbox,analyticsstore,clock,idgen,telemetry}` (`memory` holds test doubles only, no `cmd/**` imports it) |
 | CloudEvents helper | `internal/adapters/kafka/cloudevents` |
 | Composition roots | `cmd/api`, `cmd/mcp`, `cmd/inbound-projector`, `cmd/inbound-reports` |
 | Boot helper | `internal/bootretry` |

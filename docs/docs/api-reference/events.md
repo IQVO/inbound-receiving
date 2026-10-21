@@ -81,5 +81,9 @@ only by this service's `inbound-projector` (group from env
 - Dedupe on the CloudEvents `id` (the same `id` is republished on a relay retry).
 - Do not depend on the order of `DockAppointmentCompleted` relative to
   `ReceiptClosed`: they are keyed differently.
-- **Planned, not built:** `warehouse-planning` consuming `DockAppointmentBooked`
-  as inbound-labor demand. Nothing consumes that event today.
+- `warehouse-planning` consumes `DockAppointmentBooked` and
+  `DockAppointmentCancelled` as inbound-labour demand (its group
+  `warehouse-planning-inbound-demand`, [ADR 0017](https://github.com/IQVO/warehouse-planning/blob/develop/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback.md),
+  `internal/adapters/inbound/kafka/inbound_demand_consumer.go` there). It keys
+  its read model on `appointment_id` and is order-independent, so a Cancelled
+  that overtakes its Booked is safe. It ignores `CheckedIn` and `Completed`.
