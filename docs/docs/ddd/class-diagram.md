@@ -219,7 +219,7 @@ classDiagram
   class IdempotencyStore { <<port>> +Do }
 
   class Postgres { <<adapter>> postgres/* }
-  class Memory { <<adapter>> memory/* }
+  class Memory { <<adapter, test double only>> memory/* }
   class KafkaEncoder { <<adapter>> outbound/kafka FanoutEncoder }
   class OutboxRelay { <<adapter>> outbound/outbox Relay }
   class HttpServer { <<inbound adapter>> inbound/http Server }
@@ -258,7 +258,8 @@ classDiagram
 Source: `internal/application/ports/*.go`, `cmd/api/main.go` (`adapters`,
 `buildAdapters`, `buildServer`), the adapter packages under `internal/adapters`.
 Omits: `Clock` and `IDGenerator` (trivial `clock.System`, `idgen.UUID`), the
-in-memory implementations of every other port (the `Memory` adapter implements
+in-memory implementations of every other port (the `Memory` adapter is a test
+double only: no `cmd/**` file imports it, ADR 0011, and it implements
 the same ports as `Postgres`; only two edges are drawn), the Kafka relay sink,
 telemetry and the Postgres pool. `FanoutEncoder` wraps the integration
 `Encoder` and the `AnalyticsEncoder`, so every event yields two outbox rows

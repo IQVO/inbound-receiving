@@ -134,13 +134,18 @@ curl -s localhost:8080/asns/ASN-1001
 # {"asnNumber":"ASN-1001",...,"state":"Closed","version":3}
 ```
 
-The api log shows every event drained by the relay **twice**, once per topic
-and with the same id:
+The outbox relay writes every event **twice**, once per topic and with the same
+CloudEvents `id` (structured mode: the Kafka value is the whole CloudEvent,
+`content-type: application/cloudevents+json`). There is no log sink any more
+(ADR 0011), so read the topics themselves:
 
-```json
-{"level":"INFO","msg":"event published (log sink)","topic":"warehouse.inbound-receiving.events","type":"com.warehouse.wms.inbound-receiving.asn.ASNRegistered","subject":"ASN-1001","id":"c3272ac3-..."}
-{"level":"INFO","msg":"event published (log sink)","topic":"warehouse.inbound-receiving.analytics","type":"com.warehouse.wms.inbound-receiving.asn.ASNRegistered","subject":"ASN-1001","id":"c3272ac3-..."}
+```bash
+docker compose exec kafka kafka-console-consumer --bootstrap-server localhost:29092 \
+  --topic warehouse.inbound-receiving.events --from-beginning --property print.key=true
+# ASN-1001  {"specversion":"1.0","id":"c3272ac3-...","type":"com.warehouse.wms.inbound-receiving.asn.ASNRegistered","subject":"ASN-1001",...}
 ```
+
+The same `id` appears on `warehouse.inbound-receiving.analytics`.
 
 `GET /metrics` returns the Prometheus Go and process collectors.
 
