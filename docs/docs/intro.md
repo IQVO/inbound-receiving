@@ -47,8 +47,9 @@ Besides the REST service, `develop` ships the read-only MCP server
 `web/` remote `inbound_mfe` that `warehouse-console` mounts, one container
 image (`Dockerfile`) and the Helm chart `charts/inbound-receiving`.
 `warehouse-infra` deploys all of it on its `develop`. The pages of this site
-describe what the code on `develop` does today and label every edge that is
-not built *planned*.
+describe what the code on `develop` does today. Every edge in the context map
+is built; the dock-appointment feed into `warehouse-planning` is consumed there
+since its ADR 0017.
 :::
 
 ## What this context owns

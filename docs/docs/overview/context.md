@@ -32,14 +32,14 @@ flowchart LR
   PM["product-master<br/>Supporting"]
   FL["facility-layout<br/>Supporting"]
   INV["inventory-storage<br/>Core"]
-  WP["warehouse-planning<br/>planned, not built"]
+  WP["warehouse-planning<br/>Core"]
   OPS["warehouse-ops-agent"]
   CON["warehouse-console<br/>shell"]
 
   PM -- "ProductRegistered" --> IR
   FL -- "LocationSlotRegistered / Decommissioned" --> IR
   IR -- "ReceiptLineReceived" --> INV
-  IR -. "DockAppointmentBooked (planned)" .-> WP
+  IR -- "DockAppointmentBooked / Cancelled" --> WP
   IR -- "MCP read tools" --> OPS
   IR -- "web remote inbound_mfe, REST through Kong" --> CON
 ```
@@ -51,13 +51,17 @@ Source: `docs/adr/0001-inbound-receiving-bounded-context.md` (Context map),
 `internal/adapters/outbound/kafka/encoder.go`, `web/vite.config.ts`; on the
 consumer side (on `develop`) inventory-storage
 `internal/adapters/inbound/kafka/inbound_receipt_consumer.go` and its ADR 0037,
-warehouse-ops-agent ADR 0021 (`INBOUND_RECEIVING_MCP_ENDPOINT`) and
-warehouse-console `vite.config.ts` (remote `inbound_mfe`).
+warehouse-planning `internal/adapters/inbound/kafka/inbound_demand_consumer.go`
+and its ADR 0017, warehouse-ops-agent ADR 0021 (`INBOUND_RECEIVING_MCP_ENDPOINT`)
+and warehouse-console `vite.config.ts` (remote `inbound_mfe`).
 Omits: the Kafka broker, the internal analytics stream (consumed only by this
 context's own projector) and the patterns on each edge (see the
-[context map](/docs/ddd/context-map) for those). The dotted edge is **planned,
-not built**: nothing in this repository or in warehouse-planning depends on it
-today.
+[context map](/docs/ddd/context-map) for those). The edge to
+`warehouse-planning` is built and live: its `inbound-demand` consumer
+(`warehouse-planning-inbound-demand`, ADR 0017) reads `DockAppointmentBooked`
+and `DockAppointmentCancelled` from `warehouse.inbound-receiving.events` into
+its local `inbound_appointments` read model as inbound-labour demand. This
+repository never calls it and does not depend on it being up.
 
 ## No live cross-context lookup, in either direction
 
