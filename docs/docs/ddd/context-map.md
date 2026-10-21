@@ -61,7 +61,12 @@ projector, ADR 0006).
 
 The other published types (`ASNRegistered`, `ASNCancelled`,
 `DockAppointmentCheckedIn`, `DockAppointmentCompleted`, `ReceiptOpened`,
-`ReceiptClosed`) have no consumer on `develop` of any sibling today.
+`ReceiptClosed`) have no consumer on `develop` of any sibling today:
+inventory-storage reads only `ReceiptLineReceived` and commits past the rest
+(`inbound_receipt_consumer.go`), and warehouse-planning reads only
+`DockAppointmentBooked` and `DockAppointmentCancelled`, committing past
+`DockAppointmentCheckedIn` and `DockAppointmentCompleted`
+(`inbound_demand_consumer.go`).
 
 There is no Shared Kernel and no Partnership: no sibling Go package is imported
 (the consumed payloads are restated locally), and the published payloads are the
