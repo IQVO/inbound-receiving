@@ -1,6 +1,10 @@
 package asn
 
-import "time"
+import (
+	"time"
+
+	"github.com/claudioed/inbound-receiving/internal/domain/shared"
+)
 
 // Event is a domain event raised by the Asn aggregate. Every event carries
 // the ASN number (the CloudEvents subject and Kafka key) and when it
@@ -27,9 +31,13 @@ func (h Header) OccurredAt() time.Time { return h.At }
 type ASNRegistered struct {
 	Header
 	SupplierRef string
+	// OwnerRef is empty for fleet-owned stock.
+	OwnerRef shared.OwnerRef
 	// ExpectedArrival is the zero time when the supplier gave none.
 	ExpectedArrival time.Time
 	Lines           []Line
+	// Cartons is empty for a flat ASN.
+	Cartons []Carton
 }
 
 // EventName returns "ASNRegistered".

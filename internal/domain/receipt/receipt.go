@@ -162,10 +162,12 @@ type Discrepancy struct {
 type Persisted struct {
 	ID            string
 	AsnNumber     string
+	OwnerRef      string
 	AppointmentID string
 	DoorCode      string
 	State         State
 	Lines         []LineState
+	Cartons       []CartonState
 	OpenedAt      time.Time
 	ClosedAt      time.Time
 	Version       int64
@@ -183,10 +185,12 @@ type Persisted struct {
 type Receipt struct {
 	id            ID
 	asnNumber     asn.Number
+	ownerRef      shared.OwnerRef
 	appointmentID appointment.ID
 	doorCode      appointment.DoorCode
 	state         State
 	lines         []Line
+	cartons       []Carton
 	openedAt      time.Time
 	closedAt      time.Time
 	version       int64
@@ -247,17 +251,27 @@ func build(p Persisted) (*Receipt, error) {
 	if err := validateTimestamps(p); err != nil {
 		return nil, err
 	}
+	owner, err := shared.NewOwnerRef(p.OwnerRef)
+	if err != nil {
+		return nil, err
+	}
 	lines, err := buildLines(p.Lines)
+	if err != nil {
+		return nil, err
+	}
+	cartons, err := buildCartons(p.Cartons, lines)
 	if err != nil {
 		return nil, err
 	}
 	return &Receipt{
 		id:            id,
 		asnNumber:     number,
+		ownerRef:      owner,
 		appointmentID: appointmentID,
 		doorCode:      doorCode,
 		state:         p.State,
 		lines:         lines,
+		cartons:       cartons,
 		openedAt:      p.OpenedAt.UTC(),
 		closedAt:      p.ClosedAt.UTC(),
 		version:       p.Version,

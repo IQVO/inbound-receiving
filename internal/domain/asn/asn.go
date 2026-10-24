@@ -132,62 +132,111 @@ func (l Line) ExpectedQty() int64 { return l.expectedQty }
 // is non-blank; there is at least one line; line numbers are exactly 1..n in
 // order; SKUs are unique across lines and every expected quantity is
 // positive; Version starts at 1 and increases by one per accepted change.
-// Only a Registered ASN can be cancelled.
+// Only a Registered ASN can be cancelled. The owner reference, when present,
+// is opaque and immutable. Cartons are optional (a flat ASN has none); when
+// present they have unique valid SSCCs and their contents add up to every
+// line's expected quantity (ADR 0012).
 type Asn struct {
 	number          Number
 	supplierRef     string
+	ownerRef        shared.OwnerRef
 	expectedArrival time.Time
 	lines           []Line
+	cartons         []Carton
 	state           State
 	version         int64
 }
 
-// Register creates an ASN at version 1 in state Registered and raises
+// Draft is the unvalidated description of an ASN to register: the flat
+// fields plus the optional owner reference and carton tree.
+type Draft struct {
+	Number          string
+	SupplierRef     string
+	OwnerRef        string
+	ExpectedArrival time.Time
+	Lines           []LineInput
+	Cartons         []CartonInput
+}
+
+// Persisted is the stored shape of an ASN, used to rebuild one.
+type Persisted struct {
+	Draft
+	State   State
+	Version int64
+}
+
+// Register creates a flat ASN at version 1 in state Registered and raises
 // ASNRegistered. A zero expectedArrival means the supplier gave none.
 func Register(number, supplierRef string, expectedArrival time.Time, lines []LineInput, now time.Time) (*Asn, []Event, error) {
-	a, err := build(number, supplierRef, expectedArrival, lines, Registered, 1)
+	return RegisterDraft(Draft{Number: number, SupplierRef: supplierRef, ExpectedArrival: expectedArrival, Lines: lines}, now)
+}
+
+// RegisterDraft creates an ASN, with its optional owner and cartons, at
+// version 1 in state Registered and raises ASNRegistered.
+func RegisterDraft(d Draft, now time.Time) (*Asn, []Event, error) {
+	a, err := build(Persisted{Draft: d, State: Registered, Version: 1})
 	if err != nil {
 		return nil, nil, err
 	}
 	registered := ASNRegistered{
 		Header:          a.header(now),
 		SupplierRef:     a.supplierRef,
+		OwnerRef:        a.ownerRef,
 		ExpectedArrival: a.expectedArrival,
 		Lines:           a.Lines(),
+		Cartons:         a.Cartons(),
 	}
 	return a, []Event{registered}, nil
 }
 
-// Rehydrate rebuilds a persisted ASN, re-validating every invariant.
+// Rehydrate rebuilds a persisted flat ASN, re-validating every invariant.
 func Rehydrate(number, supplierRef string, expectedArrival time.Time, lines []LineInput, state State, version int64) (*Asn, error) {
-	if !state.valid() {
-		return nil, ErrInvalidState
-	}
-	if version < 1 {
-		return nil, ErrInvalidVersion
-	}
-	return build(number, supplierRef, expectedArrival, lines, state, version)
+	return RehydrateDraft(Persisted{
+		Draft: Draft{Number: number, SupplierRef: supplierRef, ExpectedArrival: expectedArrival, Lines: lines},
+		State: state, Version: version,
+	})
 }
 
-func build(number, supplierRef string, expectedArrival time.Time, inputs []LineInput, state State, version int64) (*Asn, error) {
-	n, err := NewNumber(number)
+// RehydrateDraft rebuilds a persisted ASN, re-validating every invariant.
+func RehydrateDraft(p Persisted) (*Asn, error) {
+	if !p.State.valid() {
+		return nil, ErrInvalidState
+	}
+	if p.Version < 1 {
+		return nil, ErrInvalidVersion
+	}
+	return build(p)
+}
+
+func build(p Persisted) (*Asn, error) {
+	n, err := NewNumber(p.Number)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateSupplierRef(supplierRef); err != nil {
+	if err := validateSupplierRef(p.SupplierRef); err != nil {
 		return nil, err
 	}
-	lines, err := buildLines(inputs)
+	owner, err := shared.NewOwnerRef(p.OwnerRef)
+	if err != nil {
+		return nil, err
+	}
+	lines, err := buildLines(p.Lines)
+	if err != nil {
+		return nil, err
+	}
+	cartons, err := buildCartons(p.Cartons, lines)
 	if err != nil {
 		return nil, err
 	}
 	return &Asn{
 		number:          n,
-		supplierRef:     supplierRef,
-		expectedArrival: expectedArrival.UTC(),
+		supplierRef:     p.SupplierRef,
+		ownerRef:        owner,
+		expectedArrival: p.ExpectedArrival.UTC(),
 		lines:           lines,
-		state:           state,
-		version:         version,
+		cartons:         cartons,
+		state:           p.State,
+		version:         p.Version,
 	}, nil
 }
 
@@ -233,12 +282,19 @@ func (a *Asn) Number() Number { return a.number }
 // SupplierRef returns the supplier reference.
 func (a *Asn) SupplierRef() string { return a.supplierRef }
 
+// OwnerRef returns the opaque owner reference, or "" for fleet-owned stock.
+func (a *Asn) OwnerRef() shared.OwnerRef { return a.ownerRef }
+
 // ExpectedArrival returns the announced arrival, or the zero time when none
 // was given.
 func (a *Asn) ExpectedArrival() time.Time { return a.expectedArrival }
 
 // Lines returns a copy of the lines in line-number order.
 func (a *Asn) Lines() []Line { return append([]Line(nil), a.lines...) }
+
+// Cartons returns a copy of the carton tree in announced order; it is empty
+// for a flat ASN.
+func (a *Asn) Cartons() []Carton { return append([]Carton(nil), a.cartons...) }
 
 // State returns the lifecycle state.
 func (a *Asn) State() State { return a.state }
@@ -248,14 +304,16 @@ func (a *Asn) Version() int64 { return a.version }
 
 // Snapshot is the read-only copy of an ASN that a Receipt is opened against.
 type Snapshot struct {
-	Number Number
-	State  State
-	Lines  []Line
+	Number   Number
+	State    State
+	OwnerRef shared.OwnerRef
+	Lines    []Line
+	Cartons  []Carton
 }
 
 // Snapshot returns the ASN as the Receipt aggregate sees it.
 func (a *Asn) Snapshot() Snapshot {
-	return Snapshot{Number: a.number, State: a.state, Lines: a.Lines()}
+	return Snapshot{Number: a.number, State: a.state, OwnerRef: a.ownerRef, Lines: a.Lines(), Cartons: a.Cartons()}
 }
 
 // Cancel cancels a Registered ASN and raises ASNCancelled. An ASN that is
