@@ -7,7 +7,7 @@ import (
 )
 
 func TestNewOwnerRef(t *testing.T) {
-	valid := []string{"", "a", "Z", "0", "9", "tenant-7f3a", "a.b_c-d", strings.Repeat("o", MaxOwnerRefLength)}
+	valid := []string{"", "a", "z", "A", "Z", "0", "9", "tenant-7f3a", "a.b_c-d", strings.Repeat("o", MaxOwnerRefLength)}
 	for _, v := range valid {
 		got, err := NewOwnerRef(v)
 		if err != nil || got.String() != v {

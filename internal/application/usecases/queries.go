@@ -311,3 +311,74 @@ func (uc *ListDocks) Handle(ctx context.Context) (DockList, error) {
 	}
 	return DockList{Mode: uc.Mode, Items: items}, nil
 }
+
+// Statuses of a carton in GET /asns/{number}/cartons.
+const (
+	// CartonStatusExpected: announced, not yet received (the receipt is open or absent).
+	CartonStatusExpected = "expected"
+	// CartonStatusAccepted: its SSCC was scanned and the manifest accepted.
+	CartonStatusAccepted = "accepted"
+	// CartonStatusMissing: the receipt closed without it.
+	CartonStatusMissing = "missing"
+)
+
+// AsnCartonItem is one announced carton with its receive status.
+type AsnCartonItem struct {
+	Carton asn.Carton
+	Status string
+}
+
+// AsnCartons is the carton tree of an ASN with the receive status of each
+// carton. A flat ASN has no items.
+type AsnCartons struct {
+	Asn   *asn.Asn
+	Items []AsnCartonItem
+}
+
+// GetAsnCartons returns the announced cartons of an ASN and, from its
+// receipt, which of them were accepted or went missing. (`audited` is
+// reserved for the carton audit, which is not built yet.)
+type GetAsnCartons struct {
+	Asns     ports.AsnRepository
+	Receipts ports.ReceiptRepository
+}
+
+// Handle validates the number and loads the ASN
+// (repository.ErrAsnNotFound when unknown).
+func (uc *GetAsnCartons) Handle(ctx context.Context, rawNumber string) (AsnCartons, error) {
+	number, err := asn.NewNumber(rawNumber)
+	if err != nil {
+		return AsnCartons{}, err
+	}
+	a, err := uc.Asns.Get(ctx, number)
+	if err != nil {
+		return AsnCartons{}, err
+	}
+	out := AsnCartons{Asn: a, Items: []AsnCartonItem{}}
+	cartons := a.Cartons()
+	if len(cartons) == 0 {
+		return out, nil
+	}
+	receipts, err := uc.Receipts.List(ctx, repository.ReceiptFilter{AsnNumber: number}, "", 1)
+	if err != nil {
+		return AsnCartons{}, err
+	}
+	for _, c := range cartons {
+		out.Items = append(out.Items, AsnCartonItem{Carton: c, Status: cartonStatus(c, receipts)})
+	}
+	return out, nil
+}
+
+func cartonStatus(c asn.Carton, receipts []*receipt.Receipt) string {
+	if len(receipts) == 0 {
+		return CartonStatusExpected
+	}
+	r := receipts[0]
+	if got, ok := r.Carton(c.SSCC()); ok && got.Status() == receipt.CartonAccepted {
+		return CartonStatusAccepted
+	}
+	if r.State() == receipt.StateClosed {
+		return CartonStatusMissing
+	}
+	return CartonStatusExpected
+}

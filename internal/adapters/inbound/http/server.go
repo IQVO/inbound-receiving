@@ -31,6 +31,7 @@ type Server struct {
 	RegisterAsn        *usecases.RegisterAsn
 	CancelAsn          *usecases.CancelAsn
 	GetAsn             *usecases.GetAsn
+	GetAsnCartons      *usecases.GetAsnCartons
 	ListAsns           *usecases.ListAsns
 	BookAppointment    *usecases.BookAppointment
 	CheckInAppointment *usecases.CheckInAppointment
@@ -39,6 +40,7 @@ type Server struct {
 	ListAppointments   *usecases.ListAppointments
 	OpenReceipt        *usecases.OpenReceipt
 	ReceiveLine        *usecases.ReceiveLine
+	ReceiveScan        *usecases.ReceiveScan
 	CloseReceipt       *usecases.CloseReceipt
 	GetReceipt         *usecases.GetReceipt
 	ListReceipts       *usecases.ListReceipts
@@ -88,6 +90,7 @@ func NewRouter(s *Server) http.Handler {
 	create.Post("/asns", s.handleRegisterAsn)
 	r.Get("/asns", s.handleListAsns)
 	r.Get("/asns/{asnNumber}", s.handleGetAsn)
+	r.Get("/asns/{asnNumber}/cartons", s.handleGetAsnCartons)
 	action.Post("/asns/{asnNumber}/cancel", s.handleCancelAsn)
 
 	create.Post("/appointments", s.handleBookAppointment)
@@ -100,6 +103,7 @@ func NewRouter(s *Server) http.Handler {
 	r.Get("/receipts", s.handleListReceipts)
 	r.Get("/receipts/{receiptId}", s.handleGetReceipt)
 	create.Post("/receipts/{receiptId}/lines", s.handleReceiveLine)
+	create.Post("/receipts/{receiptId}/scans", s.handleReceiveScan)
 	action.Post("/receipts/{receiptId}/close", s.handleCloseReceipt)
 
 	r.Get("/docks", s.handleListDocks)

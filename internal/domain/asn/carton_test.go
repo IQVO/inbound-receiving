@@ -329,3 +329,23 @@ func wrongCheckDigit(s string) string {
 	}
 	return s[:len(s)-1] + "0"
 }
+
+func TestPersistedRoundTrips(t *testing.T) {
+	for name, d := range map[string]Draft{"cartons": cartonDraft(t), "flat": {Number: "ASN-1", SupplierRef: "ACME", Lines: twoLines()}} {
+		a, _, err := RegisterDraft(d, t0)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		p := a.Persisted()
+		back, err := RehydrateDraft(p)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !reflect.DeepEqual(back.Persisted(), p) || !reflect.DeepEqual(viewsOf(back.Cartons()), viewsOf(a.Cartons())) {
+			t.Fatalf("%s: round trip changed the asn:\n%+v\n%+v", name, back.Persisted(), p)
+		}
+		if p.State != Registered || p.Version != 1 || p.Number != "ASN-1001" && name == "cartons" {
+			t.Fatalf("%s: persisted = %+v", name, p)
+		}
+	}
+}

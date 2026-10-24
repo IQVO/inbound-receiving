@@ -817,3 +817,33 @@ func TestRehydrateRejectsMalformedCartons(t *testing.T) {
 		})
 	}
 }
+
+func TestAcceptCartonFillingALineExactlyToTheBoundIsAccepted(t *testing.T) {
+	r := openedCartons(t)
+	receive(t, r, 1, maxQty-20, ConditionGood)
+	res, err := r.AcceptCarton(scanOf(t, ssccA(t), 20), t0)
+	if err != nil || !res.Accepted || r.Lines()[0].ReceivedGood() != maxQty {
+		t.Fatalf("AcceptCarton = %+v, %v (good %d)", res, err, r.Lines()[0].ReceivedGood())
+	}
+}
+
+func TestPersistedRoundTripsTheCartonLedger(t *testing.T) {
+	r := openedCartons(t)
+	if _, err := r.AcceptCarton(scanOf(t, ssccA(t), 20), at(1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReceiveCases(caseScan(t, 1, "LPN-Z"), at(2)); err != nil {
+		t.Fatal(err)
+	}
+	p := r.Persisted()
+	back, err := Rehydrate(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(back.Persisted(), p) || !reflect.DeepEqual(viewsOf(back.Cartons()), viewsOf(r.Cartons())) {
+		t.Fatalf("round trip changed the receipt:\n%+v\n%+v", back.Persisted(), p)
+	}
+	if p.OwnerRef != owner || p.Version != r.Version() || len(p.Lines) != 2 || len(p.Cartons) != 4 {
+		t.Fatalf("persisted = %+v", p)
+	}
+}

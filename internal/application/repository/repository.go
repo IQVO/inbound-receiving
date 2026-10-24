@@ -12,6 +12,8 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
+	"github.com/claudioed/inbound-receiving/internal/domain/shared"
+	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
 )
 
 var (
@@ -31,6 +33,9 @@ var (
 	// inserting a receipt for an ASN that already has an open one (the
 	// partial unique index of ADR 0002).
 	ErrReceiptAlreadyOpen = errors.New("asn already has an open receipt")
+	// ErrPackLevelNotFound is returned by PackagingDirectory when no pack level
+	// matches the GTIN (or the SKU and level).
+	ErrPackLevelNotFound = errors.New("pack level not found")
 )
 
 // AsnFilter narrows AsnRepository.List. The zero value means no filter.
@@ -83,4 +88,32 @@ const (
 type DockDoor struct {
 	Code appointment.DoorCode
 	Flow DockFlow
+}
+
+// PackLevel is one row of the PackagingView, the local projection of
+// product-master's ProductPackLevelDeclared / ProductPackLevelRetired
+// (contracts R8). A GTIN identifies exactly one (SKU, level); its quantity
+// never changes (GS1 immutability, contracts G7), so a retired level stays
+// valid for the physical cases already printed with it.
+type PackLevel struct {
+	GTIN      gs1.GTIN
+	SKU       shared.SKU
+	Level     shared.PackLevel
+	ChildGTIN gs1.GTIN
+	// QtyOfChild is the count of the next lower level, 0 for EACH.
+	QtyOfChild int64
+	// UnitsPerPack is the direct factor to eaches (1 for EACH).
+	UnitsPerPack  int64
+	EffectiveFrom time.Time
+	// EffectiveTo is the zero time while the level is open-ended.
+	EffectiveTo time.Time
+	// Version is the product version of the last event applied (a stale
+	// event is ignored).
+	Version int64
+}
+
+// ActiveAt reports whether the level is in effect at t: effective from its
+// start (inclusive) until its end (exclusive), when it has one.
+func (p PackLevel) ActiveAt(t time.Time) bool {
+	return !t.Before(p.EffectiveFrom) && (p.EffectiveTo.IsZero() || t.Before(p.EffectiveTo))
 }

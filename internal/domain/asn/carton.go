@@ -333,3 +333,21 @@ func skuCount(contents []CartonContent) int {
 	}
 	return len(seen)
 }
+
+// input returns the unvalidated shape of the carton, the inverse of buildCarton.
+func (c Carton) input() CartonInput {
+	contents := make([]ContentInput, 0, len(c.contents))
+	for _, x := range c.contents {
+		contents = append(contents, ContentInput{
+			LineNo: x.lineNo, SKU: string(x.sku), GTIN: x.gtin.String(), Qty: x.qty, Lot: x.lot, Expiry: x.expiry,
+		})
+	}
+	in := CartonInput{
+		SSCC: c.sscc.String(), ParentSSCC: c.parent.String(), Kind: string(c.kind),
+		Contents: contents, GrossWeightG: c.grossWeightG,
+	}
+	if c.dims != nil {
+		in.Dims = &DimsInput{LengthMm: c.dims.lengthMm, WidthMm: c.dims.widthMm, HeightMm: c.dims.heightMm}
+	}
+	return in
+}

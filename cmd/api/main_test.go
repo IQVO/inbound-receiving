@@ -25,7 +25,7 @@ func envOf(m map[string]string) func(string) string { return func(k string) stri
 func validEnv() map[string]string {
 	return map[string]string{
 		"DATABASE_URL": "postgres://u@db:5432/x", "KAFKA_BROKERS": "a:9092,b:9092",
-		"PRODUCT_CONSUMER_GROUP": "g1", "DOCK_DOOR_CONSUMER_GROUP": "g2",
+		"PRODUCT_CONSUMER_GROUP": "g1", "DOCK_DOOR_CONSUMER_GROUP": "g2", "PACKAGING_CONSUMER_GROUP": "g3",
 	}
 }
 
@@ -43,7 +43,7 @@ func withEnv(overrides map[string]string) map[string]string {
 
 func TestLoadConfigAcceptsTheMinimalRealEnvironment(t *testing.T) {
 	cfg, err := loadConfig(envOf(validEnv()))
-	if err != nil || cfg.productGroup != "g1" || cfg.doorGroup != "g2" || len(cfg.kafkaBrokers) != 2 || cfg.kafkaBrokers[1] != "b:9092" {
+	if err != nil || cfg.productGroup != "g1" || cfg.doorGroup != "g2" || cfg.packagingGroup != "g3" || len(cfg.kafkaBrokers) != 2 || cfg.kafkaBrokers[1] != "b:9092" {
 		t.Fatalf("cfg = %+v, err = %v", cfg, err)
 	}
 	// The explicit values the chart renders are accepted too.
@@ -66,6 +66,7 @@ func TestLoadConfigRefusesWithAnErrorNamingTheVariable(t *testing.T) {
 		{"blank KAFKA_BROKERS", map[string]string{"KAFKA_BROKERS": " , "}, "KAFKA_BROKERS"},
 		{"no PRODUCT_CONSUMER_GROUP", map[string]string{"PRODUCT_CONSUMER_GROUP": "-"}, "PRODUCT_CONSUMER_GROUP"},
 		{"no DOCK_DOOR_CONSUMER_GROUP", map[string]string{"DOCK_DOOR_CONSUMER_GROUP": "-"}, "DOCK_DOOR_CONSUMER_GROUP"},
+		{"no PACKAGING_CONSUMER_GROUP", map[string]string{"PACKAGING_CONSUMER_GROUP": "-"}, "PACKAGING_CONSUMER_GROUP"},
 		{"PRODUCT_MODE=permissive", map[string]string{"PRODUCT_MODE": "permissive"}, "PRODUCT_MODE=permissive is not supported"},
 		{"PRODUCT_MODE=off", map[string]string{"PRODUCT_MODE": "off"}, "PRODUCT_MODE=off is not supported"},
 		{"DOCK_DOOR_MODE=permissive", map[string]string{"DOCK_DOOR_MODE": "permissive"}, "DOCK_DOOR_MODE=permissive is not supported"},
@@ -172,12 +173,12 @@ func TestStartOutboxRelayWithoutBrokersIsABootError(t *testing.T) {
 	}
 }
 
-func TestStartConsumersAlwaysStartsBothWithoutDialingAndStops(t *testing.T) {
-	cfg := config{productGroup: "product-group", doorGroup: "door-group", kafkaBrokers: []string{"127.0.0.1:1"}}
+func TestStartConsumersAlwaysStartsAllThreeWithoutDialingAndStops(t *testing.T) {
+	cfg := config{productGroup: "product-group", doorGroup: "door-group", packagingGroup: "packaging-group", kafkaBrokers: []string{"127.0.0.1:1"}}
 	start := time.Now()
 	workers := startConsumers(testDoubleAdapters(t), cfg, quietLogger())
-	if len(workers) != 2 {
-		t.Fatalf("workers = %d, want 2", len(workers))
+	if len(workers) != 3 {
+		t.Fatalf("workers = %d, want 3", len(workers))
 	}
 	if time.Since(start) > time.Second {
 		t.Fatal("starting the consumers must not dial Kafka")
@@ -197,7 +198,7 @@ func TestBuildServerWiresEveryUseCase(t *testing.T) {
 	useCases := []any{
 		s.RegisterAsn, s.CancelAsn, s.GetAsn, s.ListAsns, s.BookAppointment, s.CheckInAppointment, s.CancelAppointment,
 		s.GetAppointment, s.ListAppointments, s.OpenReceipt, s.ReceiveLine, s.CloseReceipt, s.GetReceipt, s.ListReceipts,
-		s.ListDocks, s.Idempotency,
+		s.ListDocks, s.Idempotency, s.GetAsnCartons, s.ReceiveScan,
 	}
 	for i, uc := range useCases {
 		if uc == nil {

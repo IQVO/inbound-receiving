@@ -60,6 +60,8 @@ type world struct {
 	skus   *memory.KnownSkus
 	doors  *memory.DockDoors
 
+	packaging *memory.PackagingView
+
 	uow       *memory.UnitOfWork
 	processed *memory.ProcessedEventRepo
 	build     func() *httptest.Server
@@ -78,14 +80,14 @@ type world struct {
 
 func (w *world) start() {
 	asns, appts, receipts := memory.NewAsnRepo(), memory.NewAppointmentRepo(), memory.NewReceiptRepo()
-	w.skus, w.doors = memory.NewKnownSkus(), memory.NewDockDoors()
+	w.skus, w.doors, w.packaging = memory.NewKnownSkus(), memory.NewDockDoors(), memory.NewPackagingView()
 	ob, processed := memory.NewOutboxRepo(), memory.NewProcessedEventRepo()
 	w.outbox, w.processed = ob, processed
 	w.clock = &steppingClock{now: bddStart}
 	w.skuMode, w.doorMode = usecases.ModePermissive, usecases.ModePermissive
 	w.status, w.header, w.body, w.keys, w.appointment, w.receipt, w.listQuery = 0, nil, nil, 0, "", "", ""
 	w.wave2 = wave2State{}
-	uow := memory.NewUnitOfWork(asns, appts, receipts, w.skus, w.doors, ob, processed)
+	uow := memory.NewUnitOfWork(asns, appts, receipts, w.skus, w.doors, w.packaging, ob, processed)
 	w.uow = uow
 	writer := usecases.Writer{
 		Asns: asns, Appointments: appts, Receipts: receipts, Outbox: ob, Encoder: outboundkafka.NewEncoder(),
@@ -99,6 +101,7 @@ func (w *world) start() {
 			RegisterAsn:        &usecases.RegisterAsn{Writer: writer, SkuMode: w.skuMode, Skus: w.skus},
 			CancelAsn:          &usecases.CancelAsn{Writer: writer},
 			GetAsn:             &usecases.GetAsn{Asns: asns},
+			GetAsnCartons:      &usecases.GetAsnCartons{Asns: asns, Receipts: receipts},
 			ListAsns:           &usecases.ListAsns{Asns: asns},
 			BookAppointment:    &usecases.BookAppointment{Writer: writer, DoorMode: w.doorMode, Doors: w.doors},
 			CheckInAppointment: &usecases.CheckInAppointment{Writer: writer},
@@ -107,6 +110,7 @@ func (w *world) start() {
 			ListAppointments:   &usecases.ListAppointments{Appointments: appts},
 			OpenReceipt:        &usecases.OpenReceipt{Writer: writer},
 			ReceiveLine:        &usecases.ReceiveLine{Writer: writer},
+			ReceiveScan:        &usecases.ReceiveScan{Writer: writer, Packaging: w.packaging},
 			CloseReceipt:       &usecases.CloseReceipt{Writer: writer},
 			GetReceipt:         &usecases.GetReceipt{Receipts: receipts},
 			ListReceipts:       &usecases.ListReceipts{Receipts: receipts},
@@ -484,4 +488,5 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the outbox is empty$`, w.theOutboxIsEmpty)
 	sc.Step(`^the listed "([^"]*)" values are "([^"]*)"$`, w.theListedItemsAre)
 	w.registerWave2(sc)
+	w.registerCartons(sc)
 }

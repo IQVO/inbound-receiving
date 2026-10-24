@@ -15,6 +15,8 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
+	"github.com/claudioed/inbound-receiving/internal/domain/shared"
+	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
 )
 
 // world is a complete in-memory set of fakes for every port plus the use
@@ -132,6 +134,10 @@ func (g *fakeIDs) uuid() string {
 }
 func (g *fakeIDs) NewAppointmentID() string { return "appt-" + g.uuid() }
 func (g *fakeIDs) NewReceiptID() string     { return "rcpt-" + g.uuid() }
+func (g *fakeIDs) NewLPN() string {
+	g.n++
+	return fmt.Sprintf("LPN-%026d", g.n)
+}
 
 // ---- fakeEncoder / fakeOutbox ---------------------------------------------
 
@@ -180,6 +186,7 @@ type fakeAsns struct {
 	items   map[asn.Number]*asn.Asn
 	getErr  error
 	saveErr error
+	ssccErr error
 }
 
 func (r *fakeAsns) Get(_ context.Context, n asn.Number) (*asn.Asn, error) {
@@ -229,15 +236,34 @@ func (r *fakeAsns) List(_ context.Context, f repository.AsnFilter, after asn.Num
 }
 
 func clone(a *asn.Asn) *asn.Asn {
-	lines := make([]asn.LineInput, 0, len(a.Lines()))
-	for _, l := range a.Lines() {
-		lines = append(lines, asn.LineInput{LineNo: l.LineNo(), SKU: string(l.SKU()), ExpectedQty: l.ExpectedQty()})
-	}
-	c, err := asn.Rehydrate(string(a.Number()), a.SupplierRef(), a.ExpectedArrival(), lines, a.State(), a.Version())
+	c, err := asn.RehydrateDraft(a.Persisted())
 	if err != nil {
 		panic(err)
 	}
 	return c
+}
+
+func (r *fakeAsns) ExistingSsccs(_ context.Context, ssccs []gs1.SSCC) ([]gs1.SSCC, error) {
+	if r.ssccErr != nil {
+		return nil, r.ssccErr
+	}
+	taken := map[gs1.SSCC]bool{}
+	for _, a := range r.items {
+		if a.State() == asn.Cancelled {
+			continue
+		}
+		for _, c := range a.Cartons() {
+			taken[c.SSCC()] = true
+			taken[c.ParentSSCC()] = !c.ParentSSCC().IsZero()
+		}
+	}
+	var out []gs1.SSCC
+	for _, s := range ssccs {
+		if taken[s] {
+			out = append(out, s)
+		}
+	}
+	return out, nil
 }
 
 // ---- fakeAppointments -----------------------------------------------------------
@@ -340,26 +366,37 @@ func (r *fakeAppointments) LockDoor(_ context.Context, door appointment.DoorCode
 // ---- fakeReceipts ---------------------------------------------------------------
 
 type fakeReceipts struct {
-	items map[receipt.ID]*receipt.Receipt
+	items   map[receipt.ID]*receipt.Receipt
+	ssccErr error
 }
 
 func cloneReceipt(r *receipt.Receipt) *receipt.Receipt {
-	lines := make([]receipt.LineState, 0, len(r.Lines()))
-	for _, l := range r.Lines() {
-		lines = append(lines, receipt.LineState{
-			LineNo: l.LineNo(), SKU: string(l.SKU()), ExpectedQty: l.ExpectedQty(),
-			ReceivedGood: l.ReceivedGood(), ReceivedDamaged: l.ReceivedDamaged(),
-		})
-	}
-	c, err := receipt.Rehydrate(receipt.Persisted{
-		ID: string(r.ID()), AsnNumber: string(r.AsnNumber()), AppointmentID: string(r.AppointmentID()),
-		DoorCode: string(r.DoorCode()), State: r.State(), Lines: lines, OpenedAt: r.OpenedAt(),
-		ClosedAt: r.ClosedAt(), Version: r.Version(),
-	})
+	c, err := receipt.Rehydrate(r.Persisted())
 	if err != nil {
 		panic(err)
 	}
 	return c
+}
+
+func (r *fakeReceipts) ReceivedSsccs(_ context.Context, ssccs []gs1.SSCC) ([]gs1.SSCC, error) {
+	if r.ssccErr != nil {
+		return nil, r.ssccErr
+	}
+	accepted := map[gs1.SSCC]bool{}
+	for _, x := range r.items {
+		for _, c := range x.Cartons() {
+			if c.Status() == receipt.CartonAccepted {
+				accepted[c.SSCC()] = true
+			}
+		}
+	}
+	var out []gs1.SSCC
+	for _, s := range ssccs {
+		if accepted[s] {
+			out = append(out, s)
+		}
+	}
+	return out, nil
 }
 
 func (r *fakeReceipts) Get(_ context.Context, id receipt.ID) (*receipt.Receipt, error) {
@@ -483,5 +520,66 @@ func (p *fakeProcessed) Claim(_ context.Context, consumer, eventID string) (bool
 		return false, nil
 	}
 	p.seen[key] = true
+	return true, nil
+}
+
+// ---- fakePackaging ------------------------------------------------------------
+
+type fakePackaging struct {
+	levels   map[gs1.GTIN]repository.PackLevel
+	err      error
+	storeErr error
+}
+
+func newFakePackaging() *fakePackaging {
+	return &fakePackaging{levels: map[gs1.GTIN]repository.PackLevel{}}
+}
+
+func (p *fakePackaging) add(l repository.PackLevel) { p.levels[l.GTIN] = l }
+
+func (p *fakePackaging) ByGTIN(_ context.Context, g gs1.GTIN) (repository.PackLevel, error) {
+	if p.err != nil {
+		return repository.PackLevel{}, p.err
+	}
+	l, ok := p.levels[g]
+	if !ok {
+		return repository.PackLevel{}, repository.ErrPackLevelNotFound
+	}
+	return l, nil
+}
+
+func (p *fakePackaging) ActiveLevel(_ context.Context, sku shared.SKU, level shared.PackLevel, at time.Time) (repository.PackLevel, error) {
+	if p.err != nil {
+		return repository.PackLevel{}, p.err
+	}
+	for _, l := range p.levels {
+		if l.SKU == sku && l.Level == level && l.ActiveAt(at) {
+			return l, nil
+		}
+	}
+	return repository.PackLevel{}, repository.ErrPackLevelNotFound
+}
+
+func (p *fakePackaging) ApplyDeclared(_ context.Context, l repository.PackLevel) (bool, error) {
+	if p.storeErr != nil {
+		return false, p.storeErr
+	}
+	if cur, ok := p.levels[l.GTIN]; ok && cur.Version >= l.Version {
+		return false, nil
+	}
+	p.levels[l.GTIN] = l
+	return true, nil
+}
+
+func (p *fakePackaging) ApplyRetired(_ context.Context, g gs1.GTIN, to time.Time, version int64) (bool, error) {
+	if p.storeErr != nil {
+		return false, p.storeErr
+	}
+	l, ok := p.levels[g]
+	if !ok || l.Version > version {
+		return false, nil
+	}
+	l.EffectiveTo, l.Version = to, version
+	p.levels[g] = l
 	return true, nil
 }

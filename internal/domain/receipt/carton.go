@@ -259,7 +259,7 @@ func (r *Receipt) acceptCarton(idx int, in CartonScan, at time.Time) (ScanResult
 	c := r.cartons[idx]
 	lines := r.Lines()
 	contents := make([]CartonContent, 0, len(c.contents))
-	events := make([]Event, 0, len(c.contents)+1)
+	var events []Event
 	for _, x := range c.contents {
 		if err := bookLine(lines, x.LineNo, x.Qty, in.Condition); err != nil {
 			return ScanResult{}, err
@@ -557,4 +557,38 @@ func buildCartonContent(s CartonContentState, accepted bool, lineCount int) (Car
 		return CartonContent{}, ErrInvalidCarton
 	}
 	return CartonContent{LineNo: s.LineNo, SKU: sku, GTIN: gtin, Qty: s.Qty, Lot: s.Lot, Expiry: s.Expiry, Condition: condition}, nil
+}
+
+// Persisted returns the stored shape of the receipt, the inverse of Rehydrate.
+func (r *Receipt) Persisted() Persisted {
+	lines := make([]LineState, 0, len(r.lines))
+	for _, l := range r.lines {
+		lines = append(lines, LineState{
+			LineNo: l.lineNo, SKU: string(l.sku), ExpectedQty: l.expectedQty,
+			ReceivedGood: l.receivedGood, ReceivedDamaged: l.receivedDamaged,
+		})
+	}
+	cartons := make([]CartonState, 0, len(r.cartons))
+	for _, c := range r.cartons {
+		cartons = append(cartons, c.state())
+	}
+	return Persisted{
+		ID: string(r.id), AsnNumber: string(r.asnNumber), OwnerRef: string(r.ownerRef),
+		AppointmentID: string(r.appointmentID), DoorCode: string(r.doorCode), State: r.state,
+		Lines: lines, Cartons: cartons, OpenedAt: r.openedAt, ClosedAt: r.closedAt, Version: r.version,
+	}
+}
+
+func (c Carton) state() CartonState {
+	contents := make([]CartonContentState, 0, len(c.contents))
+	for _, x := range c.contents {
+		contents = append(contents, CartonContentState{
+			LineNo: x.LineNo, SKU: string(x.SKU), GTIN: x.GTIN.String(), Qty: x.Qty,
+			Lot: x.Lot, Expiry: x.Expiry, Condition: string(x.Condition),
+		})
+	}
+	return CartonState{
+		LPN: c.lpn, SSCC: c.sscc.String(), ParentSSCC: c.parentSscc.String(), Kind: string(c.kind),
+		Status: c.status, Sealed: c.sealed, Contents: contents, ReceivedAt: c.receivedAt,
+	}
 }

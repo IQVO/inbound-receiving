@@ -231,6 +231,7 @@ func (e env) apply(t *testing.T) {
 	t.Setenv("PRODUCT_CONSUMER_GROUP", "inbound-receiving-product-e2e")
 	t.Setenv("DOCK_DOOR_MODE", "kafka")
 	t.Setenv("DOCK_DOOR_CONSUMER_GROUP", "inbound-receiving-dock-doors-e2e")
+	t.Setenv("PACKAGING_CONSUMER_GROUP", "inbound-receiving-packaging-e2e")
 	t.Setenv("HTTP_ADDR", e.addr)
 	t.Setenv("SHUTDOWN_DRAIN_DELAY", "0")
 	t.Setenv("OUTBOX_RELAY_INTERVAL", "200ms")

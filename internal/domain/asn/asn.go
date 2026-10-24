@@ -189,6 +189,25 @@ func RegisterDraft(d Draft, now time.Time) (*Asn, []Event, error) {
 	return a, []Event{registered}, nil
 }
 
+// Persisted returns the stored shape of the ASN, the inverse of RehydrateDraft.
+func (a *Asn) Persisted() Persisted {
+	lines := make([]LineInput, 0, len(a.lines))
+	for _, l := range a.lines {
+		lines = append(lines, LineInput{LineNo: l.lineNo, SKU: string(l.sku), ExpectedQty: l.expectedQty})
+	}
+	var cartons []CartonInput
+	for _, c := range a.cartons {
+		cartons = append(cartons, c.input())
+	}
+	return Persisted{
+		Draft: Draft{
+			Number: string(a.number), SupplierRef: a.supplierRef, OwnerRef: string(a.ownerRef),
+			ExpectedArrival: a.expectedArrival, Lines: lines, Cartons: cartons,
+		},
+		State: a.state, Version: a.version,
+	}
+}
+
 // Rehydrate rebuilds a persisted flat ASN, re-validating every invariant.
 func Rehydrate(number, supplierRef string, expectedArrival time.Time, lines []LineInput, state State, version int64) (*Asn, error) {
 	return RehydrateDraft(Persisted{
