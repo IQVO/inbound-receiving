@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -6,7 +6,7 @@ import { ReceiptDiscrepanciesRoute } from "./ReceiptDiscrepanciesScreen";
 import { CARTON_DISCREPANCY_KINDS } from "../types";
 import { DISCREPANCY_GUIDE } from "../cartons";
 import { json, mockApi, problem } from "../test/fetchMock";
-import { LPN, RCPT_ID, SSCC_1, asnCartons, closedReceipt, receipt, scanResult } from "../test/fixtures";
+import { LPN, RCPT_ID, SSCC_1, closedReceipt, receipt, scanResult } from "../test/fixtures";
 
 function mount() {
   return render(
@@ -20,15 +20,13 @@ function mount() {
   );
 }
 
-const flatCartons = json({ asnNumber: "ASN-1001", cartons: [] });
-
-beforeEach(() => sessionStorage.clear());
+const asnCartonsCalls = (api: ReturnType<typeof mockApi>) => api.calls.filter((c) => c.path.startsWith("/asns"));
 
 describe("ReceiptDiscrepanciesScreen", () => {
   it("explains all nine kinds, with what it means and what to do, even with no findings", async () => {
-    mockApi({ [`GET /receipts/${RCPT_ID}`]: json(receipt()), "GET /asns/ASN-1001/cartons": flatCartons });
+    mockApi({ [`GET /receipts/${RCPT_ID}`]: json(receipt()) });
     mount();
-    expect(await screen.findByText(/No carton findings to show/)).toBeInTheDocument();
+    expect(await screen.findByText(/No carton findings on this receipt/)).toBeInTheDocument();
     const guide = screen.getAllByRole("table")[0];
     const rows = within(guide).getAllByRole("row").slice(1);
     expect(rows).toHaveLength(9);
@@ -40,22 +38,63 @@ describe("ReceiptDiscrepanciesScreen", () => {
     expect(within(rows[0]).getByText("Goes to problem-solve")).toBeInTheDocument();
   });
 
-  it("shows MissingCarton for announced cartons the ASN reports Missing", async () => {
-    mockApi({ [`GET /receipts/${RCPT_ID}`]: json(closedReceipt()), "GET /asns/ASN-1001/cartons": json(asnCartons()) });
+  it("reads an older service's receipt, which has no cartonDiscrepancies, as no findings", async () => {
+    const { cartonDiscrepancies: _none, ...old } = receipt();
+    mockApi({ [`GET /receipts/${RCPT_ID}`]: json(old) });
     mount();
-    await screen.findByText("340123450000000037");
-    const table = screen.getAllByRole("table")[0];
-    const row = within(table).getAllByRole("row")[1];
-    expect(within(row).getByText("MissingCarton")).toBeInTheDocument();
-    expect(within(row).getByText("340123450000000037")).toBeInTheDocument();
+    expect(await screen.findByText(/No carton findings on this receipt/)).toBeInTheDocument();
+  });
+
+  it("lists the findings the receipt carries, in raise order, whoever raised them, with no other request", async () => {
+    const api = mockApi({
+      [`GET /receipts/${RCPT_ID}`]: json(
+        closedReceipt({
+          cartonDiscrepancies: [
+            { kind: "UnexpectedCarton", sscc: SSCC_1, at: "2026-10-09T08:20:00Z" },
+            { kind: "CartonOverLimit", sscc: SSCC_1, expected: "grossWeightG:20000", actual: "grossWeightG:25000", at: "2026-10-09T08:21:00Z" },
+            { kind: "MissingCarton", expected: "340123450000000031", at: "2026-10-09T09:30:00Z" },
+          ],
+        }),
+      ),
+    });
+    mount();
+    await screen.findAllByText("340123450000000031");
+    const rows = within(screen.getAllByRole("table")[0]).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(3);
+    expect(within(rows[0]).getByText("UnexpectedCarton")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("2026-10-09 08:20Z")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("weight 25000 g")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("CartonOverLimit")).toHaveAttribute("data-tone", "warning");
+    // a missing carton is named by the manifest SSCC the receipt carries in `expected`
+    expect(within(rows[2]).getByText("MissingCarton")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("2026-10-09 09:30Z")).toBeInTheDocument();
+    // the ASN carton tree is no longer a second source for this screen
+    expect(asnCartonsCalls(api)).toHaveLength(0);
     // a closed receipt takes no more scans
     expect(screen.queryByRole("button", { name: "Scan" })).not.toBeInTheDocument();
   });
 
-  it("sends a scan with its Idempotency-Key and lists the findings it raised, with expected/actual in eaches", async () => {
+  it("counts each kind on the receipt in the guide", async () => {
+    mockApi({
+      [`GET /receipts/${RCPT_ID}`]: json(
+        receipt({
+          cartonDiscrepancies: [
+            { kind: "DuplicateSscc", sscc: SSCC_1, at: "2026-10-09T08:20:00Z" },
+            { kind: "DuplicateSscc", sscc: SSCC_1, at: "2026-10-09T08:25:00Z" },
+          ],
+        }),
+      ),
+    });
+    mount();
+    await screen.findAllByText("DuplicateSscc");
+    const guide = within(screen.getAllByRole("table")[1]).getAllByRole("row").slice(1);
+    const duplicate = guide[CARTON_DISCREPANCY_KINDS.indexOf("DuplicateSscc")];
+    expect(within(duplicate).getByText("2")).toBeInTheDocument();
+  });
+
+  it("sends a scan with its Idempotency-Key, then re-reads the receipt and lists what it raised, with expected/actual in eaches", async () => {
     const api = mockApi({
       [`GET /receipts/${RCPT_ID}`]: json(receipt()),
-      "GET /asns/ASN-1001/cartons": flatCartons,
       [`POST /receipts/${RCPT_ID}/scans`]: json(
         scanResult({
           discrepancies: [
@@ -67,7 +106,20 @@ describe("ReceiptDiscrepanciesScreen", () => {
       ),
     });
     mount();
-    await screen.findByText(/No carton findings to show/);
+    await screen.findByText(/No carton findings on this receipt/);
+    // what the receipt answers once the scan is stored
+    api.set(
+      `GET /receipts/${RCPT_ID}`,
+      json(
+        receipt({
+          version: 2,
+          cartonDiscrepancies: [
+            { kind: "MixedCartonContentMismatch", sscc: SSCC_1, expected: "SKU-1:20", actual: "SKU-1:18", at: "2026-10-09T08:30:00Z" },
+            { kind: "CartonOverLimit", sscc: SSCC_1, expected: "grossWeightG:20000", actual: "grossWeightG:25000", at: "2026-10-09T08:30:00Z" },
+          ],
+        }),
+      ),
+    );
     await userEvent.type(screen.getByLabelText(/^Barcode/), SSCC_1);
     await userEvent.type(screen.getByLabelText("Counted contents"), "SKU-1:18");
     await userEvent.click(screen.getByRole("button", { name: "Scan" }));
@@ -76,40 +128,35 @@ describe("ReceiptDiscrepanciesScreen", () => {
     const [call] = api.to(`POST /receipts/${RCPT_ID}/scans`);
     expect(call.body).toEqual({ kind: "SSCC", id: SSCC_1, countedContents: [{ sku: "SKU-1", qty: 18 }] });
     expect(call.headers["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(api.to(`GET /receipts/${RCPT_ID}`)).toHaveLength(2);
 
     const rows = within(screen.getAllByRole("table")[0]).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(2);
     expect(within(rows[0]).getByText("SKU-1: 20 eaches")).toBeInTheDocument();
     expect(within(rows[0]).getByText("SKU-1: 18 eaches")).toBeInTheDocument();
     expect(within(rows[0]).getByText("MixedCartonContentMismatch")).toHaveAttribute("data-tone", "danger");
     expect(within(rows[1]).getByText("weight 25000 g")).toBeInTheDocument();
     expect(within(rows[1]).getByText("CartonOverLimit")).toHaveAttribute("data-tone", "warning");
+    // nothing is kept in the browser: the receipt is the record
+    expect(sessionStorage.length).toBe(0);
+    expect(localStorage.length).toBe(0);
   });
 
-  it("keeps findings for the session and links an unlabelled carton to its label", async () => {
+  it("links an unlabelled carton to its label by the plate the receipt carries, and keeps it after a reload", async () => {
     mockApi({
-      [`GET /receipts/${RCPT_ID}`]: json(receipt()),
-      "GET /asns/ASN-1001/cartons": flatCartons,
-      [`POST /receipts/${RCPT_ID}/scans`]: json(
-        scanResult({
-          kind: "CASE_GTIN",
-          cartons: [{ lpn: LPN, kind: "HOMOGENEOUS_CASE", status: "Accepted", sealed: false, contents: [] }],
-          discrepancies: [{ kind: "UnlabelledCarton" }],
-        }),
-        201,
+      [`GET /receipts/${RCPT_ID}`]: json(
+        receipt({ cartonDiscrepancies: [{ kind: "UnlabelledCarton", actual: LPN, at: "2026-10-09T08:30:00Z" }] }),
       ),
     });
     const first = mount();
-    await screen.findByText(/No carton findings to show/);
-    await userEvent.selectOptions(screen.getByLabelText(/Scan type/), "CASE_GTIN");
-    await userEvent.type(screen.getByLabelText(/^Barcode/), "00614141000036");
-    await userEvent.type(screen.getByLabelText("Cases"), "2");
-    await userEvent.click(screen.getByRole("button", { name: "Scan" }));
     expect(await screen.findByRole("link", { name: "Print label" })).toHaveAttribute(
       "href",
       `/receipts/${RCPT_ID}/cartons/${LPN}/label`,
     );
+    expect(screen.getAllByText(LPN).length).toBeGreaterThan(0);
     first.unmount();
 
+    // a fresh visit (another browser, a cleared session) shows the same
     mount();
     expect(await screen.findByRole("link", { name: "Print label" })).toBeInTheDocument();
   });
@@ -117,13 +164,12 @@ describe("ReceiptDiscrepanciesScreen", () => {
   it("reports a refused scan as not accepted, and a problem with what to do", async () => {
     const api = mockApi({
       [`GET /receipts/${RCPT_ID}`]: json(receipt()),
-      "GET /asns/ASN-1001/cartons": flatCartons,
       [`POST /receipts/${RCPT_ID}/scans`]: json(
         scanResult({ accepted: false, discrepancies: [{ kind: "UnexpectedCarton", sscc: SSCC_1 }] }),
       ),
     });
     mount();
-    await screen.findByText(/No carton findings to show/);
+    await screen.findByText(/No carton findings on this receipt/);
     await userEvent.type(screen.getByLabelText(/^Barcode/), SSCC_1);
     await userEvent.click(screen.getByRole("button", { name: "Scan" }));
     expect(await screen.findByText(/Not accepted: nothing was booked\. 1 finding/)).toBeInTheDocument();
@@ -135,10 +181,24 @@ describe("ReceiptDiscrepanciesScreen", () => {
     expect(screen.getByText("that is a case GTIN")).toBeInTheDocument();
   });
 
-  it("validates before sending", async () => {
-    const api = mockApi({ [`GET /receipts/${RCPT_ID}`]: json(receipt()), "GET /asns/ASN-1001/cartons": flatCartons });
+  it("says so when the receipt cannot be read again after a scan", async () => {
+    const api = mockApi({
+      [`GET /receipts/${RCPT_ID}`]: json(receipt()),
+      [`POST /receipts/${RCPT_ID}/scans`]: json(scanResult({ accepted: false, discrepancies: [{ kind: "UnexpectedCarton", sscc: SSCC_1 }] })),
+    });
     mount();
-    await screen.findByText(/No carton findings to show/);
+    await screen.findByText(/No carton findings on this receipt/);
+    api.set(`GET /receipts/${RCPT_ID}`, problem(500, "internal-error", "Internal error", "db down"));
+    await userEvent.type(screen.getByLabelText(/^Barcode/), SSCC_1);
+    await userEvent.click(screen.getByRole("button", { name: "Scan" }));
+    expect(await screen.findByText(/could not be read again/)).toBeInTheDocument();
+    expect(screen.getByText(/Not accepted: nothing was booked/)).toBeInTheDocument();
+  });
+
+  it("validates before sending", async () => {
+    const api = mockApi({ [`GET /receipts/${RCPT_ID}`]: json(receipt()) });
+    mount();
+    await screen.findByText(/No carton findings on this receipt/);
     await userEvent.click(screen.getByRole("button", { name: "Scan" }));
     expect(screen.getByText("Scan or type the barcode digits.")).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText(/^Barcode/), SSCC_1);

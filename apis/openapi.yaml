@@ -552,6 +552,7 @@ paths:
                   - { lineNo: 2, sku: SKU-2, expectedQty: 5, receivedGood: 0, receivedDamaged: 0 }
                 openedAt: "2026-10-09T08:05:00Z"
                 discrepancies: []
+                cartonDiscrepancies: []
                 version: 1
         "400":
           $ref: "#/components/responses/BadRequest"
@@ -602,7 +603,9 @@ paths:
       description: |
         Returns the receipt with its lines, state, version (also as the `ETag`)
         and the discrepancies as they stand now (final once the receipt is
-        `Closed`).
+        `Closed`). `cartonDiscrepancies` lists every carton finding raised on
+        the receipt so far, scans and the close alike, in the order they were
+        raised (ADR 0015); it is `[]` when there are none.
       tags: [Receipts]
       responses:
         "200":
@@ -614,6 +617,48 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Receipt"
+              examples:
+                withCartonFindings:
+                  summary: An open receipt that has had an unexpected carton scanned
+                  value:
+                    receiptId: rcpt-223e4567-e89b-12d3-a456-426614174000
+                    asnNumber: ASN-1001
+                    state: Open
+                    lines:
+                      - { lineNo: 1, sku: SKU-1, expectedQty: 40, receivedGood: 20, receivedDamaged: 0 }
+                    openedAt: "2026-10-09T08:05:00Z"
+                    discrepancies:
+                      - { lineNo: 1, sku: SKU-1, kind: Short, expectedQty: 40, receivedQty: 20, damagedQty: 0 }
+                    cartonDiscrepancies:
+                      - { kind: UnexpectedCarton, sscc: "340123450000000017", at: "2026-10-09T08:20:00Z" }
+                    version: 3
+                closedWithMissingCarton:
+                  summary: A closed receipt whose manifest carton never arrived
+                  value:
+                    receiptId: rcpt-223e4567-e89b-12d3-a456-426614174000
+                    asnNumber: ASN-1001
+                    state: Closed
+                    lines:
+                      - { lineNo: 1, sku: SKU-1, expectedQty: 40, receivedGood: 20, receivedDamaged: 0 }
+                    openedAt: "2026-10-09T08:05:00Z"
+                    closedAt: "2026-10-09T09:30:00Z"
+                    discrepancies:
+                      - { lineNo: 1, sku: SKU-1, kind: Short, expectedQty: 40, receivedQty: 20, damagedQty: 0 }
+                    cartonDiscrepancies:
+                      - { kind: MissingCarton, expected: "340123450000000024", at: "2026-10-09T09:30:00Z" }
+                    version: 5
+                clean:
+                  summary: No carton finding
+                  value:
+                    receiptId: rcpt-223e4567-e89b-12d3-a456-426614174000
+                    asnNumber: ASN-1001
+                    state: Open
+                    lines:
+                      - { lineNo: 1, sku: SKU-1, expectedQty: 40, receivedGood: 0, receivedDamaged: 0 }
+                    openedAt: "2026-10-09T08:05:00Z"
+                    discrepancies: []
+                    cartonDiscrepancies: []
+                    version: 1
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
@@ -756,7 +801,7 @@ paths:
                 summary: Scan of a carton label (SSCC)
                 value:
                   kind: SSCC
-                  id: "340123450000000013"
+                  id: "340123450000000017"
               cases:
                 summary: Two cases by their case GTIN
                 value:
@@ -779,7 +824,7 @@ paths:
                 lines: []
                 cartons: []
                 discrepancies:
-                  - { kind: UnexpectedCarton, sscc: "340123450000000013" }
+                  - { kind: UnexpectedCarton, sscc: "340123450000000017" }
                 version: 3
         "201":
           description: The scan was accepted.
@@ -845,6 +890,7 @@ paths:
                   - { lineNo: 1, sku: SKU-1, kind: Short, expectedQty: 40, receivedQty: 34, damagedQty: 4 }
                   - { lineNo: 1, sku: SKU-1, kind: Damaged, expectedQty: 40, receivedQty: 34, damagedQty: 4 }
                   - { lineNo: 2, sku: SKU-2, kind: Over, expectedQty: 5, receivedQty: 7, damagedQty: 0 }
+                cartonDiscrepancies: []
                 version: 6
         "400":
           $ref: "#/components/responses/BadRequest"
@@ -1600,6 +1646,21 @@ components:
         sscc: { type: string }
         expected: { type: string }
         actual: { type: string }
+    ReceiptCartonDiscrepancy:
+      type: object
+      description: |
+        A carton discrepancy as the receipt keeps it (ADR 0015): the finding of
+        `CartonDiscrepancy` plus the instant it was raised, the scan's for a
+        scan finding and the close's for `MissingCarton`. `sscc` is absent when
+        the finding is not about a scanned SSCC (an unknown GTIN, an
+        unlabelled case, a missing carton, whose manifest SSCC is `expected`).
+      required: [kind, at]
+      properties:
+        kind: { $ref: "#/components/schemas/CartonDiscrepancyKind" }
+        sscc: { type: string, pattern: "^[0-9]{18}$" }
+        expected: { type: string }
+        actual: { type: string }
+        at: { type: string, format: date-time }
     ScanResult:
       type: object
       required: [kind, accepted, lines, cartons, discrepancies, version]
@@ -1836,6 +1897,17 @@ components:
           description: Per line, in line order, one entry per kind (`Short`, `Over`, `Damaged`); empty when everything matches.
           items:
             $ref: "#/components/schemas/Discrepancy"
+        cartonDiscrepancies:
+          type: array
+          description: |
+            Every carton discrepancy raised on the receipt (scan findings and
+            the `MissingCarton` findings raised at close), in raise order, the
+            same findings that travel as `CartonDiscrepancyRaised` (ADR 0015).
+            `[]` when there are none, including for a receipt that predates
+            the field. Never `ReceiptClosed.discrepancies`, which keeps its
+            three line-level kinds.
+          items:
+            $ref: "#/components/schemas/ReceiptCartonDiscrepancy"
         version:
           type: integer
           format: int64

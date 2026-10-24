@@ -1,40 +1,23 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Card, DataTable } from "@warehouse/ui-kit";
-import { getAsnCartons, getReceipt, receiveScan, toApiError } from "../api";
+import { getReceipt, receiveScan, toApiError } from "../api";
 import type { ApiError } from "../api";
 import { Form, FormRow, InlineError, InlineSuccess, SelectField, SubmitButton, TextField } from "../components/formkit";
 import { CartonDiscrepancyPill, PageHeader, Stack } from "../components/layout";
 import { EmptyNote, ProblemAlert, RequestView } from "../components/ProblemAlert";
 import { useRequest } from "../hooks/useRequest";
 import { DISCREPANCY_GUIDE, describeValue, parseSkuQty, problemLead } from "../cartons";
-import { wholeNumber } from "../lib";
+import { utcLabel, wholeNumber } from "../lib";
 import { CARTON_DISCREPANCY_KINDS, SCAN_KINDS } from "../types";
-import type { CartonDiscrepancy, ReceiveScanInput, Receipt, ScanKind } from "../types";
+import type { ReceiptCartonDiscrepancy, ReceiveScanInput, Receipt, ScanKind } from "../types";
 
-/** A finding as this screen keeps it: the wire shape plus the plate to print a label for. */
-export interface Finding extends CartonDiscrepancy {
-  lpn?: string;
-}
-
-const storageKey = (receiptId: string) => `inbound-receiving.carton-findings.${receiptId}`;
-
-function loadFindings(receiptId: string): Finding[] {
-  try {
-    const raw = sessionStorage.getItem(storageKey(receiptId));
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? (parsed as Finding[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveFindings(receiptId: string, findings: Finding[]) {
-  try {
-    sessionStorage.setItem(storageKey(receiptId), JSON.stringify(findings));
-  } catch {
-    // storage full or blocked: the findings simply stay on screen for this visit
-  }
+/** The plate a finding is about: the SSCC, the manifest SSCC of a missing carton, or the internal plate of an unlabelled case. */
+function cartonOf(f: ReceiptCartonDiscrepancy): string | undefined {
+  if (f.sscc) return f.sscc;
+  if (f.kind === "MissingCarton") return f.expected || undefined;
+  if (f.kind === "UnlabelledCarton") return f.actual || undefined;
+  return undefined;
 }
 
 const SCAN_LABEL: Record<ScanKind, string> = {
@@ -49,13 +32,12 @@ export function ReceiptDiscrepanciesRoute() {
 }
 
 /**
- * Carton discrepancies of one receipt. The API raises them while a carton
- * is scanned (POST /receipts/{id}/scans answers them in the scan result) and
- * there is no endpoint that lists them afterwards, so this screen shows
- * (a) the findings of the scans made here, kept for the browser session, and
- * (b) MissingCarton for every announced carton the ASN endpoint reports as
- * Missing (a closed receipt that never accepted it). Each of the nine kinds
- * is explained with what to do about it.
+ * Carton discrepancies of one receipt, read from the receipt itself
+ * (GET /receipts/{id} `cartonDiscrepancies`, ADR 0015): every finding raised
+ * by a scan, by this screen or any other client, and the MissingCarton
+ * findings raised at close. The scan form posts to /receipts/{id}/scans and
+ * then re-reads the receipt, so the list never depends on this browser's
+ * session. Each of the nine kinds is explained with what to do about it.
  */
 export function ReceiptDiscrepanciesScreen({ receiptId }: { receiptId: string }) {
   const receipt = useRequest(() => getReceipt(receiptId), `receipt|${receiptId}`);
@@ -65,37 +47,36 @@ export function ReceiptDiscrepanciesScreen({ receiptId }: { receiptId: string })
         <Link to={`../receipts/${encodeURIComponent(receiptId)}`}>← {receiptId}</Link>
       </div>
       <RequestView state={receipt} what="receipt" lead={(e) => problemLead(e.slug)}>
-        {(r) => <Body receipt={r} />}
+        {(r) => <Body initial={r} />}
       </RequestView>
     </Stack>
   );
 }
 
-function Body({ receipt }: { receipt: Receipt }) {
-  const [recorded, setRecorded] = useState<Finding[]>(() => loadFindings(receipt.receiptId));
-  const cartons = useRequest(() => getAsnCartons(receipt.asnNumber), `receipt-cartons|${receipt.asnNumber}|${recorded.length}`);
+function Body({ initial }: { initial: Receipt }) {
+  const [receipt, setReceipt] = useState(initial);
+  const [refreshProblem, setRefreshProblem] = useState<ApiError | null>(null);
+  const findings = receipt.cartonDiscrepancies ?? [];
 
-  const missing: Finding[] =
-    cartons.status === "success"
-      ? cartons.data.cartons.filter((c) => c.status === "Missing").map((c) => ({ kind: "MissingCarton", sscc: c.sscc }))
-      : [];
-  const all = [...recorded, ...missing.filter((m) => !recorded.some((r) => r.kind === "MissingCarton" && r.sscc === m.sscc))];
-
-  const add = (found: Finding[]) => {
-    const next = [...recorded, ...found];
-    setRecorded(next);
-    saveFindings(receipt.receiptId, next);
+  /** After a scan: read the receipt again, which now lists what the scan raised. */
+  const refresh = async () => {
+    try {
+      setReceipt(await getReceipt(receipt.receiptId));
+      setRefreshProblem(null);
+    } catch (err) {
+      setRefreshProblem(toApiError(err));
+    }
   };
 
   return (
     <>
       <PageHeader title={`${receipt.receiptId} · carton discrepancies`} subtitle="inbound-receiving · findings from carton receiving" />
-      {receipt.state === "Open" && <ScanCard receipt={receipt} onFindings={add} />}
-      {cartons.status === "error" && (
-        <ProblemAlert error={cartons.error} lead="Announced cartons could not be loaded, so missing cartons are not shown." />
+      {receipt.state === "Open" && <ScanCard receipt={receipt} onScanned={refresh} />}
+      {refreshProblem && (
+        <ProblemAlert error={refreshProblem} lead="The scan was sent, but the receipt could not be read again, so the list below may be out of date." />
       )}
-      <FindingsCard findings={all} receiptId={receipt.receiptId} />
-      <GuideCard findings={all} />
+      <FindingsCard findings={findings} receiptId={receipt.receiptId} />
+      <GuideCard findings={findings} />
     </>
   );
 }
@@ -111,7 +92,7 @@ function parseCounted(raw: string): { sku: string; qty: number }[] | string {
 }
 
 /** POST /receipts/{id}/scans: one scan per submit, each with its own Idempotency-Key (minted by the api layer). */
-function ScanCard({ receipt, onFindings }: { receipt: Receipt; onFindings: (f: Finding[]) => void }) {
+function ScanCard({ receipt, onScanned }: { receipt: Receipt; onScanned: () => Promise<void> }) {
   const [kind, setKind] = useState<ScanKind>("SSCC");
   const [id, setId] = useState("");
   const [qty, setQty] = useState("");
@@ -140,10 +121,8 @@ function ScanCard({ receipt, onFindings }: { receipt: Receipt; onFindings: (f: F
     setSaving(true);
     try {
       const res = await receiveScan(receipt.receiptId, input);
-      const lpn = res.cartons.find((c) => !c.sscc)?.lpn;
-      const found = res.discrepancies.map((d): Finding => ({ ...d, ...(d.kind === "UnlabelledCarton" && lpn ? { lpn } : {}) }));
-      if (found.length > 0) onFindings(found);
-      setResult({ accepted: res.accepted, findings: found.length });
+      setResult({ accepted: res.accepted, findings: res.discrepancies.length });
+      await onScanned();
       setId("");
       setQty("");
       setCounted("");
@@ -193,17 +172,17 @@ function ScanCard({ receipt, onFindings }: { receipt: Receipt; onFindings: (f: F
   );
 }
 
-function FindingsCard({ findings, receiptId }: { findings: Finding[]; receiptId: string }) {
+function FindingsCard({ findings, receiptId }: { findings: ReceiptCartonDiscrepancy[]; receiptId: string }) {
   return (
     <Card title="Findings on this receipt">
       {findings.length === 0 ? (
         <EmptyNote>
-          No carton findings to show. Findings appear here as cartons are scanned on this screen, and announced cartons that never
-          arrived appear once the receipt is closed.
+          No carton findings on this receipt. Findings appear here as cartons are scanned, and announced cartons that never arrived
+          appear once the receipt is closed.
         </EmptyNote>
       ) : (
         <DataTable
-          rowKey={(f: Finding) => `${f.kind}|${f.sscc ?? f.lpn ?? ""}|${f.expected ?? ""}|${f.actual ?? ""}`}
+          rowKey={(f: ReceiptCartonDiscrepancy) => `${f.at}|${f.kind}|${cartonOf(f) ?? ""}|${f.expected ?? ""}|${f.actual ?? ""}`}
           rows={findings}
           columns={[
             {
@@ -211,7 +190,8 @@ function FindingsCard({ findings, receiptId }: { findings: Finding[]; receiptId:
               header: "Kind",
               render: (f) => <CartonDiscrepancyPill kind={f.kind} blocking={DISCREPANCY_GUIDE[f.kind].blocking} />,
             },
-            { key: "sscc", header: "Carton", render: (f) => (f.sscc ? <code>{f.sscc}</code> : f.lpn ? <code>{f.lpn}</code> : "—") },
+            { key: "sscc", header: "Carton", render: (f) => (cartonOf(f) ? <code>{cartonOf(f)}</code> : "—") },
+            { key: "at", header: "Raised", render: (f) => utcLabel(f.at) },
             { key: "expected", header: "Expected", render: (f) => describeValue(f, "expected") },
             { key: "actual", header: "Actual", render: (f) => describeValue(f, "actual") },
             {
@@ -225,10 +205,10 @@ function FindingsCard({ findings, receiptId }: { findings: Finding[]; receiptId:
               render: (f) => (
                 <div>
                   {DISCREPANCY_GUIDE[f.kind].action}
-                  {f.kind === "UnlabelledCarton" && f.lpn && (
+                  {f.kind === "UnlabelledCarton" && f.actual && (
                     <>
                       {" "}
-                      <Link to={`../receipts/${encodeURIComponent(receiptId)}/cartons/${encodeURIComponent(f.lpn)}/label`}>
+                      <Link to={`../receipts/${encodeURIComponent(receiptId)}/cartons/${encodeURIComponent(f.actual)}/label`}>
                         Print label
                       </Link>
                     </>
@@ -244,7 +224,7 @@ function FindingsCard({ findings, receiptId }: { findings: Finding[]; receiptId:
 }
 
 /** All nine kinds, always: what each means, what to do, and how many of them this receipt has. */
-function GuideCard({ findings }: { findings: Finding[] }) {
+function GuideCard({ findings }: { findings: ReceiptCartonDiscrepancy[] }) {
   return (
     <Card title="What each finding means">
       <DataTable

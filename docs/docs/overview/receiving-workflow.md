@@ -97,10 +97,12 @@ eaches; a homogeneous case reads "Case of N eaches".
 | Screen | Route under `/inbound-receiving` | Data |
 | --- | --- | --- |
 | ASN carton tree | `asns/:asnNumber/cartons` | `GET /asns/{asnNumber}/cartons`: pallet SSCC → carton SSCC → contents per SKU, status `Expected` / `Accepted` / `Missing` |
-| Carton discrepancies | `receipts/:receiptId/discrepancies` | `POST /receipts/{receiptId}/scans` (a scan form) and the `Missing` cartons of the ASN; explains all nine kinds with what to do |
+| Carton discrepancies | `receipts/:receiptId/discrepancies` | `GET /receipts/{receiptId}` (`cartonDiscrepancies`) and `POST /receipts/{receiptId}/scans` (a scan form); explains all nine kinds with what to do |
 | Carton label | `receipts/:receiptId/cartons/:lpn/label` | `GET /receipts/{receiptId}/cartons/{lpn}/label`; Code 128 drawn as inline SVG (GS1-128 for an SSCC), printed with `window.print()` and a print stylesheet |
 
-The API has no endpoint that lists a receipt's carton discrepancies after the fact (they travel on the
-scan result and on `CartonDiscrepancyRaised`), so the discrepancies screen shows the findings of the scans
-made in the current browser session plus `MissingCarton` derived from the ASN's `Missing` cartons. Errors
+The receipt keeps every carton discrepancy it raises (ADR 0015): `GET /receipts/{receiptId}` lists them as
+`cartonDiscrepancies[]` (`kind`, `sscc?`, `expected?`, `actual?`, `at`), in raise order, scan findings and the
+`MissingCarton` findings raised at close alike; the array is `[]` when there are none. The discrepancies
+screen shows that list, so it is the same in every browser, and re-reads the receipt after each scan. A
+receipt closed before ADR 0015 has none stored. Errors
 are keyed by problem code (`carton-not-found`, `scan-kind-mismatch`, ...) with what happened and what to do.

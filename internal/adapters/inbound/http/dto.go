@@ -289,7 +289,20 @@ type receiptResponse struct {
 	OpenedAt      time.Time             `json:"openedAt"`
 	ClosedAt      *time.Time            `json:"closedAt,omitempty"`
 	Discrepancies []discrepancyResponse `json:"discrepancies"`
-	Version       int64                 `json:"version"`
+	// CartonDiscrepancies are the carton findings raised on the receipt, in
+	// raise order (ADR 0015); always present, [] when none.
+	CartonDiscrepancies []receiptCartonDiscrepancyResponse `json:"cartonDiscrepancies"`
+	Version             int64                              `json:"version"`
+}
+
+// receiptCartonDiscrepancyResponse is a carton discrepancy as the receipt
+// keeps it: the scan answer's finding plus when it was raised.
+type receiptCartonDiscrepancyResponse struct {
+	Kind     string    `json:"kind"`
+	SSCC     string    `json:"sscc,omitempty"`
+	Expected string    `json:"expected,omitempty"`
+	Actual   string    `json:"actual,omitempty"`
+	At       time.Time `json:"at"`
 }
 
 type receiptPageResponse struct {
@@ -313,10 +326,17 @@ func toReceipt(r *receipt.Receipt) receiptResponse {
 			ExpectedQty: d.ExpectedQty, ReceivedQty: d.ReceivedQty, DamagedQty: d.DamagedQty,
 		})
 	}
+	findings := r.CartonDiscrepancies()
+	cartonDiscrepancies := make([]receiptCartonDiscrepancyResponse, 0, len(findings))
+	for _, f := range findings {
+		cartonDiscrepancies = append(cartonDiscrepancies, receiptCartonDiscrepancyResponse{
+			Kind: string(f.Kind), SSCC: f.SSCC.String(), Expected: f.Expected, Actual: f.Actual, At: f.At,
+		})
+	}
 	out := receiptResponse{
 		ReceiptID: string(r.ID()), AsnNumber: string(r.AsnNumber()), AppointmentID: string(r.AppointmentID()),
 		DoorCode: string(r.DoorCode()), State: string(r.State()), Lines: lines, OpenedAt: r.OpenedAt(),
-		Discrepancies: discrepancies, Version: r.Version(),
+		Discrepancies: discrepancies, CartonDiscrepancies: cartonDiscrepancies, Version: r.Version(),
 	}
 	if t := r.ClosedAt(); !t.IsZero() {
 		out.ClosedAt = &t

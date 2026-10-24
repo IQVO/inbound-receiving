@@ -48,13 +48,14 @@ export function receipt(over: Partial<Receipt> = {}): Receipt {
     ],
     openedAt: "2026-10-09T08:05:00Z",
     discrepancies: [],
+    cartonDiscrepancies: [],
     version: 1,
     ...over,
   };
 }
 
 /** The closeReceipt example: line 1 short + damaged, line 2 over. */
-export function closedReceipt(): Receipt {
+export function closedReceipt(over: Partial<Receipt> = {}): Receipt {
   return receipt({
     state: "Closed",
     lines: [
@@ -68,6 +69,7 @@ export function closedReceipt(): Receipt {
       { lineNo: 2, sku: "SKU-2", kind: "Over", expectedQty: 5, receivedQty: 7, damagedQty: 0 },
     ],
     version: 6,
+    ...over,
   });
 }
 
@@ -82,9 +84,9 @@ export function docks(mode: DockList["mode"] = "kafka"): DockList {
 
 /* ---- cartons ---- */
 
-export const SSCC_1 = "340123450000000013";
-export const SSCC_2 = "340123450000000020";
-export const PALLET = "340123450000000099";
+export const SSCC_1 = "340123450000000017";
+export const SSCC_2 = "340123450000000024";
+export const PALLET = "340123450000000093";
 
 export function cartonStatus(over: Partial<AsnCartonStatus> = {}): AsnCartonStatus {
   return {
@@ -111,7 +113,7 @@ export function asnCartons(over: Partial<AsnCartons> = {}): AsnCartons {
         ],
         status: "Accepted",
       }),
-      cartonStatus({ sscc: "340123450000000037", parentSscc: undefined, status: "Missing" }),
+      cartonStatus({ sscc: "340123450000000031", parentSscc: undefined, status: "Missing" }),
     ],
     ...over,
   };

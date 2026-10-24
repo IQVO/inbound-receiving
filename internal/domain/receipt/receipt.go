@@ -168,9 +168,11 @@ type Persisted struct {
 	State         State
 	Lines         []LineState
 	Cartons       []CartonState
-	OpenedAt      time.Time
-	ClosedAt      time.Time
-	Version       int64
+	// CartonDiscrepancies are the carton findings raised so far, in raise order (ADR 0015).
+	CartonDiscrepancies []CartonFindingState
+	OpenedAt            time.Time
+	ClosedAt            time.Time
+	Version             int64
 }
 
 // Receipt is the aggregate root.
@@ -191,6 +193,7 @@ type Receipt struct {
 	state         State
 	lines         []Line
 	cartons       []Carton
+	findings      []CartonFinding
 	openedAt      time.Time
 	closedAt      time.Time
 	version       int64
@@ -265,6 +268,10 @@ func build(p Persisted) (*Receipt, error) {
 	if err != nil {
 		return nil, err
 	}
+	findings, err := buildFindings(p.CartonDiscrepancies)
+	if err != nil {
+		return nil, err
+	}
 	return &Receipt{
 		id:            id,
 		asnNumber:     number,
@@ -274,6 +281,7 @@ func build(p Persisted) (*Receipt, error) {
 		state:         p.State,
 		lines:         lines,
 		cartons:       cartons,
+		findings:      findings,
 		openedAt:      p.OpenedAt.UTC(),
 		closedAt:      p.ClosedAt.UTC(),
 		version:       p.Version,

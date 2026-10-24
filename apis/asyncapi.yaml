@@ -472,9 +472,9 @@ components:
             data:
               receipt_id: "rcpt-223e4567-e89b-12d3-a456-426614174000"
               asn_number: "ASN-1001"
-              sscc: "340123450000000013"
+              sscc: "340123450000000017"
               sealed: true
-              lpn: "340123450000000013"
+              lpn: "340123450000000017"
               contents:
                 - { line_no: 1, sku: "SKU-1", gtin: "13041090004824", qty: 24, condition: "Good" }
               received_at: "2026-10-09T08:10:00Z"
@@ -508,7 +508,7 @@ components:
             dataschema: "urn:warehouse:inbound-receiving:events:CartonDiscrepancyRaised:v1"
             data:
               receipt_id: "rcpt-223e4567-e89b-12d3-a456-426614174000"
-              sscc: "340123450000000013"
+              sscc: "340123450000000017"
               kind: "UnexpectedCarton"
               at: "2026-10-09T08:10:00Z"
 
@@ -806,9 +806,9 @@ components:
             data:
               receipt_id: "rcpt-223e4567-e89b-12d3-a456-426614174000"
               asn_number: "ASN-1001"
-              sscc: "340123450000000013"
+              sscc: "340123450000000017"
               sealed: true
-              lpn: "340123450000000013"
+              lpn: "340123450000000017"
               contents:
                 - { line_no: 1, sku: "SKU-1", gtin: "13041090004824", qty: 24, condition: "Good" }
               received_at: "2026-10-09T08:10:00Z"
@@ -842,7 +842,7 @@ components:
             dataschema: "urn:warehouse:inbound-receiving:analytics:CartonDiscrepancyRaised:v1"
             data:
               receipt_id: "rcpt-223e4567-e89b-12d3-a456-426614174000"
-              sscc: "340123450000000013"
+              sscc: "340123450000000017"
               kind: "UnexpectedCarton"
               at: "2026-10-09T08:10:00Z"
 

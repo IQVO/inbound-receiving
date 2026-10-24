@@ -176,7 +176,7 @@ stays the each ([18]).
       "ownerRef": "tenant-7f3a",
       "packGtin": "00012345678905",
       "cases": 1,
-      "sscc": "003456789012345678"
+      "sscc": "003456789012345670"
     }
     ```
 
@@ -192,10 +192,10 @@ stays the each ([18]).
       "asnNumber": "ASN-1001",
       "siteId": "SITE-01",
       "ownerRef": "tenant-7f3a",
-      "sscc": "003456789012345678",
-      "parentSscc": "003456789099999991",
+      "sscc": "003456789012345670",
+      "parentSscc": "003456789099999995",
       "sealed": true,
-      "lpn": "003456789012345678",
+      "lpn": "003456789012345670",
       "contents": [
         {"lineNo": 1, "sku": "SKU-CHAIR-01", "gtin": "00012345678905",
          "qty": 12, "lot": "L2310", "expiry": "2027-10-31", "condition": "Good"}
@@ -212,7 +212,7 @@ stays the each ([18]).
     ```json
     {
       "receiptId": "rcpt-1b4e28ba-2fa1-4d3c-8f6e-0a1b2c3d4e5f",
-      "sscc": "003456789012345679",
+      "sscc": "003456789012345687",
       "kind": "CaseQtyMismatch",
       "expected": "12",
       "actual": "10",

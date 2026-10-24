@@ -26,3 +26,4 @@ the authority; ADR bodies are never edited after acceptance.
 | [0012](./0012-hierarchical-asn-with-sscc-cartons-and-carton-aware-receiving.md) | Hierarchical ASN with SSCC cartons and carton-aware receiving | Proposed (2026-10-23); additive, no existing contract changes meaning |
 | [0013](./0013-carton-receiving-amendments-no-site-case-scan-cases-packaging-view.md) | Carton receiving amendments: no site, case scans count cases, local PackagingView | Proposed (2026-10-24); amends 0012 |
 | [0014](./0014-carton-discrepancies-over-limit-mixed-count-and-label-data.md) | Carton discrepancies: CartonOverLimit, mixed-carton audit count, label data | Proposed (2026-10-24); extends 0012 and 0013 |
+| [0015](./0015-carton-discrepancies-are-part-of-the-receipt-read-model.md) | Carton discrepancies are part of the receipt read model | Proposed (2026-10-24); amends 0014 |
