@@ -14,7 +14,8 @@ release=inbound-receiving
 base=(--set database.url=postgres://u@example.invalid:5432/db
   --set kafka.brokers=kafka.example.invalid:9092
   --set config.productConsumerGroup=inbound-receiving-product
-  --set config.dockDoorConsumerGroup=inbound-receiving-dock-doors)
+  --set config.dockDoorConsumerGroup=inbound-receiving-dock-doors
+  --set config.packagingConsumerGroup=inbound-receiving-packaging)
 analytics=(--set analytics.enabled=true
   --set analytics.database.projectorUrl=postgres://projector@example.invalid:5432/a
   --set analytics.database.reportsUrl=postgres://reports@example.invalid:5432/a)
@@ -84,7 +85,8 @@ env_value() { # env_value <rendered> <NAME>
 }
 [[ "$(env_value "$api_deployment" KAFKA_BROKERS)" == "kafka.example.invalid:9092" ]] || fail "KAFKA_BROKERS is not rendered from kafka.brokers"
 for kv in 'EVENT_PUBLISHER=kafka' 'PRODUCT_MODE=kafka' 'DOCK_DOOR_MODE=kafka' \
-  'PRODUCT_CONSUMER_GROUP=inbound-receiving-product' 'DOCK_DOOR_CONSUMER_GROUP=inbound-receiving-dock-doors'; do
+  'PRODUCT_CONSUMER_GROUP=inbound-receiving-product' 'DOCK_DOOR_CONSUMER_GROUP=inbound-receiving-dock-doors' \
+  'PACKAGING_CONSUMER_GROUP=inbound-receiving-packaging'; do
   [[ "$(env_value "$api_deployment" "${kv%%=*}")" == "${kv#*=}" ]] || fail "the api Deployment does not render $kv"
   grep -q "^  ${kv%%=*}: \"${kv#*=}\"" <<<"$configmap" || fail "the ConfigMap does not carry $kv"
 done
@@ -132,15 +134,17 @@ $err"
 }
 expect_refusal "no database source" "database.url or database.existingSecret" "${base[@]:2}"
 expect_refusal "no brokers" "kafka.brokers" --set database.url=postgres://u@h/db \
-  --set config.productConsumerGroup=g1 --set config.dockDoorConsumerGroup=g2
+  --set config.productConsumerGroup=g1 --set config.dockDoorConsumerGroup=g2 --set config.packagingConsumerGroup=g3
 expect_refusal "kafka switched off" "Kafka cannot be switched off" "${base[@]}" --set kafka.enabled=false
 expect_refusal "the log publisher" "config.eventPublisher" "${base[@]}" --set config.eventPublisher=log
 expect_refusal "permissive product mode" "config.productMode" "${base[@]}" --set config.productMode=permissive
 expect_refusal "off dock-door mode" "config.dockDoorMode" "${base[@]}" --set config.dockDoorMode=off
 expect_refusal "no product group" "config.productConsumerGroup" --set database.url=postgres://u@h/db --set kafka.brokers=k:9092 \
-  --set config.dockDoorConsumerGroup=g2
+  --set config.dockDoorConsumerGroup=g2 --set config.packagingConsumerGroup=g3
 expect_refusal "no dock-door group" "config.dockDoorConsumerGroup" --set database.url=postgres://u@h/db --set kafka.brokers=k:9092 \
-  --set config.productConsumerGroup=g1
+  --set config.productConsumerGroup=g1 --set config.packagingConsumerGroup=g3
+expect_refusal "no packaging group" "config.packagingConsumerGroup" --set database.url=postgres://u@h/db --set kafka.brokers=k:9092 \
+  --set config.productConsumerGroup=g1 --set config.dockDoorConsumerGroup=g2
 expect_refusal "the log publisher through extraEnv" "EVENT_PUBLISHER" "${base[@]}" --set 'extraEnv[0].name=EVENT_PUBLISHER' --set 'extraEnv[0].value=log'
 expect_refusal "a *_MODE through extraEnv" "_MODE" "${base[@]}" --set 'extraEnv[0].name=PRODUCT_MODE' --set 'extraEnv[0].value=permissive'
 expect_refusal "analytics without a DSN source" "analytics.database.projectorUrl" "${base[@]}" --set analytics.enabled=true
@@ -160,6 +164,7 @@ infra_api="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only tem
 [[ "$(env_value "$infra_api" EVENT_PUBLISHER)" == "kafka" ]] || fail "infra values: EVENT_PUBLISHER"
 [[ "$(env_value "$infra_api" PRODUCT_CONSUMER_GROUP)" == "inbound-receiving-product" ]] || fail "infra values: PRODUCT_CONSUMER_GROUP"
 [[ "$(env_value "$infra_api" DOCK_DOOR_CONSUMER_GROUP)" == "inbound-receiving-dock-doors" ]] || fail "infra values: DOCK_DOOR_CONSUMER_GROUP"
+[[ "$(env_value "$infra_api" PACKAGING_CONSUMER_GROUP)" == "inbound-receiving-packaging" ]] || fail "infra values: PACKAGING_CONSUMER_GROUP"
 grep -q 'inbound-receiving-db' <<<"$infra_api" || fail "infra values: DATABASE_URL must come from the inbound-receiving-db secret"
 infra_proj="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/projector-deployment.yaml)"
 [[ "$(env_value "$infra_proj" ANALYTICS_CONSUMER_GROUP)" == "inbound-receiving-analytics" ]] || fail "infra values: ANALYTICS_CONSUMER_GROUP"

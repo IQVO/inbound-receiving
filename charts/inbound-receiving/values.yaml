@@ -168,6 +168,9 @@ config:
   # DOCK_DOOR_CONSUMER_GROUP: the dock-door consumer's STABLE group id.
   # REQUIRED, like productConsumerGroup.
   dockDoorConsumerGroup: ""
+  # PACKAGING_CONSUMER_GROUP (ADR 0012): the PackagingView consumer's STABLE group id
+  # (product-master pack-level events). REQUIRED, like productConsumerGroup.
+  packagingConsumerGroup: ""
   # SHUTDOWN_DRAIN_DELAY: wait after /readyz flips before closing the
   # listener. Empty = not rendered; the binary defaults to 5s.
   shutdownDrainDelay: ""

@@ -91,6 +91,9 @@ spec:
               value: {{ .Values.config.dockDoorMode | quote }}
             - name: DOCK_DOOR_CONSUMER_GROUP
               value: {{ .Values.config.dockDoorConsumerGroup | quote }}
+            # PackagingView (ADR 0012): local copy of product-master pack levels, always on.
+            - name: PACKAGING_CONSUMER_GROUP
+              value: {{ .Values.config.packagingConsumerGroup | quote }}
             {{- with .Values.config.shutdownDrainDelay }}
             - name: SHUTDOWN_DRAIN_DELAY
               value: {{ . | quote }}

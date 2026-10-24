@@ -18,6 +18,7 @@ data:
   ENVIRONMENT: {{ .Values.environment | quote }}
   PRODUCT_CONSUMER_GROUP: {{ .Values.config.productConsumerGroup | quote }}
   DOCK_DOOR_CONSUMER_GROUP: {{ .Values.config.dockDoorConsumerGroup | quote }}
+  PACKAGING_CONSUMER_GROUP: {{ .Values.config.packagingConsumerGroup | quote }}
   {{- with .Values.config.outboxRelayInterval }}
   OUTBOX_RELAY_INTERVAL: {{ . | quote }}
   {{- end }}

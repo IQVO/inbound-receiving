@@ -55,6 +55,7 @@ ENABLE_KONG = [
     "--set", "kafka.brokers=dummy:9092",
     "--set", "config.productConsumerGroup=inbound-receiving-product",
     "--set", "config.dockDoorConsumerGroup=inbound-receiving-dock-doors",
+    "--set", "config.packagingConsumerGroup=inbound-receiving-packaging",
     "--set", "analytics.reports.route.enabled=true",
     "--set", "analytics.reports.route.parentRefs[0].name=warehouse-gateway",
     "--set", "analytics.reports.route.parentRefs[0].namespace=kong",
@@ -83,6 +84,7 @@ def main() -> int:
         "--set", "kafka.brokers=dummy:9092",
         "--set", "config.productConsumerGroup=inbound-receiving-product",
         "--set", "config.dockDoorConsumerGroup=inbound-receiving-dock-doors",
+        "--set", "config.packagingConsumerGroup=inbound-receiving-packaging",
     ])
     kong_docs = [d for d in default_docs if "Kong" in (d.get("kind") or "")]
     if kong_docs:
