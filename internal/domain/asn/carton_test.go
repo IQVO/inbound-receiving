@@ -111,7 +111,7 @@ func wantCartonViews(t *testing.T) []cartonView {
 			Contents: []contentView{{1, "SKU-1", g1, 20, "L2310", "2027-10-31"}},
 		},
 		{
-			SSCC: sscc(t, ssccPayloadB), Parent: "", Kind: CartonHomogeneousCase,
+			SSCC: sscc(t, ssccPayloadB), Parent: sscc(t, ssccPayloadP), Kind: CartonHomogeneousCase,
 			Contents: []contentView{{1, "SKU-1", g1, 20, "", ""}},
 		},
 		{
@@ -206,7 +206,7 @@ func TestRegisterDraftRejectsBadCartons(t *testing.T) {
 		want   error
 	}{
 		{"sscc too short", func(d *Draft) { d.Cartons[0].SSCC = "0034567890123456" }, ErrInvalidSscc},
-		{"sscc bad check digit", func(d *Draft) { d.Cartons[0].SSCC = d.Cartons[0].SSCC[:17] + "0" }, ErrInvalidSscc},
+		{"sscc bad check digit", func(d *Draft) { d.Cartons[0].SSCC = wrongCheckDigit(d.Cartons[0].SSCC) }, ErrInvalidSscc},
 		{"sscc not digits", func(d *Draft) { d.Cartons[0].SSCC = "00345678901234567x" }, ErrInvalidSscc},
 		{"pallet sscc invalid", func(d *Draft) { d.Cartons[0].ParentSSCC = "123" }, ErrInvalidSscc},
 		{"duplicate sscc", func(d *Draft) { d.Cartons[1].SSCC = d.Cartons[0].SSCC }, ErrDuplicateSscc},
@@ -229,7 +229,7 @@ func TestRegisterDraftRejectsBadCartons(t *testing.T) {
 		{"expiry with time", func(d *Draft) { d.Cartons[0].Contents[0].Expiry = "2027-10-31T00:00:00Z" }, ErrInvalidCarton},
 		{"zero quantity", func(d *Draft) { d.Cartons[0].Contents[0].Qty = 0 }, shared.ErrInvalidQuantity},
 		{"bad sku", func(d *Draft) { d.Cartons[0].Contents[0].SKU = "bad sku" }, shared.ErrInvalidSKU},
-		{"gtin bad check digit", func(d *Draft) { d.Cartons[0].Contents[0].GTIN = g1[:13] + "0" }, gs1.ErrInvalidGTIN},
+		{"gtin bad check digit", func(d *Draft) { d.Cartons[0].Contents[0].GTIN = wrongCheckDigit(g1) }, gs1.ErrInvalidGTIN},
 		{"gtin empty", func(d *Draft) { d.Cartons[0].Contents[0].GTIN = "" }, gs1.ErrInvalidGTIN},
 		{"gtin variable measure", func(d *Draft) { d.Cartons[0].Contents[0].GTIN = gtin(t, "9000123456789") }, gs1.ErrVariableMeasure},
 		{"homogeneous with two skus", func(d *Draft) {
@@ -319,4 +319,13 @@ func TestCartonGTINIsNormalisedToFourteenDigits(t *testing.T) {
 	if got := a.Cartons()[0].Contents()[0].GTIN().String(); len(got) != 14 || got[0] != '0' || got[1:13] != "629104150021" {
 		t.Fatalf("gtin = %q", got)
 	}
+}
+
+// wrongCheckDigit returns s with its last digit changed.
+func wrongCheckDigit(s string) string {
+	last := s[len(s)-1]
+	if last == '0' {
+		return s[:len(s)-1] + "1"
+	}
+	return s[:len(s)-1] + "0"
 }

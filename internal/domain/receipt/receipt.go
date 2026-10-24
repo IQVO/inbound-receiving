@@ -210,10 +210,12 @@ func Open(id string, snapshot asn.Snapshot, appointmentID, doorCode string, now 
 	r, err := build(Persisted{
 		ID:            id,
 		AsnNumber:     string(snapshot.Number),
+		OwnerRef:      string(snapshot.OwnerRef),
 		AppointmentID: appointmentID,
 		DoorCode:      doorCode,
 		State:         StateOpen,
 		Lines:         lines,
+		Cartons:       manifestStates(snapshot.Cartons),
 		OpenedAt:      now,
 		Version:       1,
 	})
@@ -411,6 +413,7 @@ func (r *Receipt) ReceiveLine(lineNo int, qty int64, condition Condition, at tim
 		SKU:       line.sku,
 		Quantity:  qty,
 		Condition: condition,
+		OwnerRef:  r.ownerRef,
 	}
 	return []Event{received}, nil
 }
@@ -425,8 +428,11 @@ func (r *Receipt) Close(at time.Time) ([]Event, error) {
 	r.state = StateClosed
 	r.closedAt = at.UTC()
 	r.version++
+	// Manifest cartons never accepted are raised first (MissingCarton), so
+	// ReceiptClosed is the last event of the receipt's life. ReceiptClosed
+	// itself keeps its three line-level kinds.
 	closed := ReceiptClosed{Header: r.header(at), Discrepancies: r.Discrepancies()}
-	return []Event{closed}, nil
+	return append(r.missingCartonEvents(at), closed), nil
 }
 
 // Discrepancies computes the differences between announced and received

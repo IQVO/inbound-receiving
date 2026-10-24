@@ -2,6 +2,8 @@ package asn
 
 import (
 	"errors"
+	"fmt"
+	"time"
 
 	"github.com/claudioed/inbound-receiving/internal/domain/shared"
 	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
@@ -157,11 +159,177 @@ func (c Carton) Dims() (Dims, bool) {
 }
 
 // buildCartons validates the carton inputs against the (already validated)
-// lines.
+// lines: every SSCC valid and unique, no pallet SSCC that is also a carton,
+// and the contents adding up to every line's expected quantity.
 func buildCartons(inputs []CartonInput, lines []Line) ([]Carton, error) {
 	if len(inputs) == 0 {
 		return nil, nil
 	}
-	_ = lines
-	return nil, errors.New("not implemented")
+	cartons := make([]Carton, 0, len(inputs))
+	seen := make(map[gs1.SSCC]struct{}, len(inputs))
+	sums := make(map[int]int64, len(lines))
+	for _, in := range inputs {
+		c, err := buildCarton(in, lines)
+		if err != nil {
+			return nil, err
+		}
+		if _, dup := seen[c.sscc]; dup {
+			return nil, ErrDuplicateSscc
+		}
+		seen[c.sscc] = struct{}{}
+		for _, x := range c.contents {
+			sums[x.lineNo] += x.qty
+		}
+		cartons = append(cartons, c)
+	}
+	for _, c := range cartons {
+		if _, isCarton := seen[c.parent]; isCarton {
+			return nil, ErrDuplicateSscc
+		}
+	}
+	for _, l := range lines {
+		if sums[l.lineNo] != l.expectedQty {
+			return nil, ErrCartonContentsMismatch
+		}
+	}
+	return cartons, nil
+}
+
+func buildCarton(in CartonInput, lines []Line) (Carton, error) {
+	sscc, err := parseSSCC(in.SSCC)
+	if err != nil {
+		return Carton{}, err
+	}
+	var parent gs1.SSCC
+	if in.ParentSSCC != "" {
+		if parent, err = parseSSCC(in.ParentSSCC); err != nil {
+			return Carton{}, err
+		}
+	}
+	kind, err := ParseCartonKind(in.Kind)
+	if err != nil {
+		return Carton{}, err
+	}
+	dims, err := buildDims(in)
+	if err != nil {
+		return Carton{}, err
+	}
+	contents, err := buildContents(in.Contents, lines)
+	if err != nil {
+		return Carton{}, err
+	}
+	if kind == CartonHomogeneousCase && skuCount(contents) > 1 {
+		return Carton{}, ErrHomogeneousCartonMixed
+	}
+	return Carton{sscc: sscc, parent: parent, kind: kind, contents: contents, grossWeightG: in.GrossWeightG, dims: dims}, nil
+}
+
+func parseSSCC(value string) (gs1.SSCC, error) {
+	s, err := gs1.ParseSSCC(value)
+	if err != nil {
+		return gs1.SSCC{}, fmt.Errorf("%w: %w", ErrInvalidSscc, err)
+	}
+	return s, nil
+}
+
+// ParseCartonKind validates a carton kind text.
+func ParseCartonKind(value string) (CartonKind, error) {
+	switch CartonKind(value) {
+	case CartonHomogeneousCase, CartonMixed:
+		return CartonKind(value), nil
+	default:
+		return "", ErrInvalidCartonKind
+	}
+}
+
+func buildDims(in CartonInput) (*Dims, error) {
+	if in.GrossWeightG < 0 {
+		return nil, ErrInvalidCarton
+	}
+	if in.Dims == nil {
+		return nil, nil
+	}
+	d := *in.Dims
+	if d.LengthMm < 1 || d.WidthMm < 1 || d.HeightMm < 1 {
+		return nil, ErrInvalidCarton
+	}
+	return &Dims{lengthMm: d.LengthMm, widthMm: d.WidthMm, heightMm: d.HeightMm}, nil
+}
+
+func buildContents(inputs []ContentInput, lines []Line) ([]CartonContent, error) {
+	if len(inputs) == 0 {
+		return nil, ErrInvalidCarton
+	}
+	out := make([]CartonContent, 0, len(inputs))
+	for _, in := range inputs {
+		c, err := buildContent(in, lines)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+func buildContent(in ContentInput, lines []Line) (CartonContent, error) {
+	if in.LineNo < 1 || in.LineNo > len(lines) {
+		return CartonContent{}, ErrCartonContentsMismatch
+	}
+	sku, err := shared.NewSKU(in.SKU)
+	if err != nil {
+		return CartonContent{}, err
+	}
+	if lines[in.LineNo-1].sku != sku {
+		return CartonContent{}, ErrCartonContentsMismatch
+	}
+	if err := shared.ValidateQuantity(in.Qty); err != nil {
+		return CartonContent{}, err
+	}
+	gtin, err := gs1.ParseGTIN(in.GTIN)
+	if err != nil {
+		return CartonContent{}, err
+	}
+	if err := gs1.RejectVariableMeasure(gtin); err != nil {
+		return CartonContent{}, err
+	}
+	if err := validateLot(in.Lot); err != nil {
+		return CartonContent{}, err
+	}
+	if err := validateExpiry(in.Expiry); err != nil {
+		return CartonContent{}, err
+	}
+	return CartonContent{lineNo: in.LineNo, sku: sku, gtin: gtin, qty: in.Qty, lot: in.Lot, expiry: in.Expiry}, nil
+}
+
+// validateLot accepts "" (no lot) or 1..MaxLotLength printable ASCII
+// characters without a space.
+func validateLot(lot string) error {
+	if len(lot) > MaxLotLength {
+		return ErrInvalidCarton
+	}
+	for i := 0; i < len(lot); i++ {
+		if lot[i] < '!' || lot[i] > '~' {
+			return ErrInvalidCarton
+		}
+	}
+	return nil
+}
+
+// validateExpiry accepts "" (no expiry) or a calendar date as YYYY-MM-DD.
+func validateExpiry(expiry string) error {
+	if expiry == "" {
+		return nil
+	}
+	if _, err := time.Parse(ExpiryLayout, expiry); err != nil {
+		return ErrInvalidCarton
+	}
+	return nil
+}
+
+func skuCount(contents []CartonContent) int {
+	seen := make(map[shared.SKU]struct{}, len(contents))
+	for _, c := range contents {
+		seen[c.sku] = struct{}{}
+	}
+	return len(seen)
 }

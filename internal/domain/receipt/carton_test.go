@@ -802,6 +802,7 @@ func TestRehydrateRejectsMalformedCartons(t *testing.T) {
 		"accepted without time":      func(p *Persisted) { p.Cartons[1].ReceivedAt = time.Time{} },
 		"expected with a time":       func(p *Persisted) { p.Cartons[0].ReceivedAt = at(1) },
 		"expected and sealed":        func(p *Persisted) { p.Cartons[0].Sealed = true },
+		"expected with a condition":  func(p *Persisted) { p.Cartons[0].Contents[0].Condition = "Good" },
 		"no contents":                func(p *Persisted) { p.Cartons[0].Contents = nil },
 	}
 	for name, mutate := range cases {

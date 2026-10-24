@@ -2,6 +2,8 @@ package receipt
 
 import (
 	"errors"
+	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
@@ -187,22 +189,240 @@ type ScanResult struct {
 	Discrepancies []CartonDiscrepancy
 }
 
-// AcceptCarton accepts the manifest of the scanned SSCC.
+// AcceptCarton accepts the manifest of the scanned SSCC: every content line
+// is booked through the same rules as ReceiveLine (so ReceiptLineReceived
+// stays the sole quantity authority), then the carton's identity is recorded
+// on ReceiptCartonReceived. A scan that cannot be accepted books nothing and
+// raises its findings as CartonDiscrepancyRaised; the receipt still changes
+// version, because the findings are part of its history.
 func (r *Receipt) AcceptCarton(in CartonScan, at time.Time) (ScanResult, error) {
-	_, _ = in, at
-	return ScanResult{}, errors.New("not implemented")
+	if err := r.requireOpen(); err != nil {
+		return ScanResult{}, err
+	}
+	if !in.Condition.valid() {
+		return ScanResult{}, ErrInvalidCondition
+	}
+	idx := r.cartonIndex(in.SSCC)
+	if idx >= 0 && r.cartons[idx].status == CartonAccepted {
+		return r.reject(at, []Carton{r.cartons[idx]}, CartonDiscrepancy{Kind: KindDuplicateSscc, SSCC: in.SSCC}), nil
+	}
+	if in.ReceivedElsewhere {
+		return r.reject(at, nil, CartonDiscrepancy{Kind: KindDuplicateSscc, SSCC: in.SSCC}), nil
+	}
+	if idx < 0 {
+		return r.reject(at, nil, CartonDiscrepancy{Kind: KindUnexpectedCarton, SSCC: in.SSCC}), nil
+	}
+	if findings := checkCarton(r.cartons[idx], in); len(findings) > 0 {
+		return r.reject(at, nil, findings...), nil
+	}
+	return r.acceptCarton(idx, in, at)
 }
 
-// ReceiveCases receives cases scanned by their case GTIN.
+// checkCarton compares a homogeneous carton with what its label says and with
+// the active CASE level of its SKU. A mixed carton has no pack GTIN and a
+// label that need not be homogeneous, so it is never checked.
+func checkCarton(c Carton, in CartonScan) []CartonDiscrepancy {
+	if c.kind != asn.CartonHomogeneousCase {
+		return nil
+	}
+	sku, qty := c.contents[0].SKU, cartonQty(c)
+	var out []CartonDiscrepancy
+	if !in.LabelContentGTIN.IsZero() {
+		if in.LabelContentSKU == "" {
+			out = append(out, CartonDiscrepancy{Kind: KindUnknownGtin, SSCC: in.SSCC, Actual: in.LabelContentGTIN.String()})
+		} else if in.LabelContentSKU != sku {
+			out = append(out, CartonDiscrepancy{Kind: KindMixedCaseDeclaredAsCasePack, SSCC: in.SSCC, Expected: string(sku), Actual: string(in.LabelContentSKU)})
+		}
+	}
+	if in.LabelCount != 0 && in.LabelCount != qty {
+		out = append(out, mismatch(in.SSCC, qty, in.LabelCount))
+	}
+	if pack, ok := in.CasePacks[sku]; ok && pack.UnitsPerPack != qty {
+		out = append(out, mismatch(in.SSCC, pack.UnitsPerPack, qty))
+	}
+	return out
+}
+
+func mismatch(sscc gs1.SSCC, expected, actual int64) CartonDiscrepancy {
+	return CartonDiscrepancy{Kind: KindCaseQtyMismatch, SSCC: sscc, Expected: strconv.FormatInt(expected, 10), Actual: strconv.FormatInt(actual, 10)}
+}
+
+func cartonQty(c Carton) int64 {
+	var total int64
+	for _, x := range c.contents {
+		total += x.Qty
+	}
+	return total
+}
+
+func (r *Receipt) acceptCarton(idx int, in CartonScan, at time.Time) (ScanResult, error) {
+	c := r.cartons[idx]
+	lines := r.Lines()
+	contents := make([]CartonContent, 0, len(c.contents))
+	events := make([]Event, 0, len(c.contents)+1)
+	for _, x := range c.contents {
+		if err := bookLine(lines, x.LineNo, x.Qty, in.Condition); err != nil {
+			return ScanResult{}, err
+		}
+		x.Condition = in.Condition
+		contents = append(contents, x)
+		line := ReceiptLineReceived{
+			Header: r.header(at), LineNo: x.LineNo, SKU: x.SKU, Quantity: x.Qty, Condition: in.Condition,
+			OwnerRef: r.ownerRef, SSCC: in.SSCC,
+		}
+		if pack, ok := in.CasePacks[x.SKU]; ok && c.kind == asn.CartonHomogeneousCase {
+			line.PackGTIN, line.Cases = pack.GTIN, 1
+		}
+		events = append(events, line)
+	}
+	c.contents, c.status, c.sealed, c.receivedAt = contents, CartonAccepted, true, at.UTC()
+	events = append(events, r.cartonReceived(c, at))
+	r.lines, r.cartons[idx] = lines, c
+	r.version++
+	return ScanResult{Events: events, Accepted: true, Cartons: []Carton{c}}, nil
+}
+
+func (r *Receipt) cartonReceived(c Carton, at time.Time) ReceiptCartonReceived {
+	return ReceiptCartonReceived{
+		Header: r.header(at), OwnerRef: r.ownerRef, SSCC: c.sscc, ParentSSCC: c.parentSscc,
+		Sealed: c.sealed, LPN: c.lpn, Contents: c.Contents(),
+	}
+}
+
+// ReceiveCases receives cases scanned by their case GTIN: Cases x
+// UnitsPerPack eaches are booked on the SKU's line by ONE ReceiptLineReceived,
+// and every case becomes its own sealed carton with an internal license plate
+// on ReceiptCartonReceived. Against a carton ASN a case without an SSCC also
+// raises UnlabelledCarton; against a flat ASN nobody promised a label.
 func (r *Receipt) ReceiveCases(in CaseScan, at time.Time) (ScanResult, error) {
-	_, _ = in, at
-	return ScanResult{}, errors.New("not implemented")
+	if err := r.requireOpen(); err != nil {
+		return ScanResult{}, err
+	}
+	if !in.Condition.valid() {
+		return ScanResult{}, ErrInvalidCondition
+	}
+	if in.Cases < 1 || in.Cases > MaxCasesPerScan {
+		return ScanResult{}, ErrInvalidCases
+	}
+	if int64(len(in.LPNs)) != in.Cases {
+		return ScanResult{}, ErrScanMismatch
+	}
+	lineNo, ok := r.LineOfSKU(in.SKU)
+	if !ok {
+		return ScanResult{}, ErrLineNotOnAsn
+	}
+	if err := shared.ValidateQuantity(in.Pack.UnitsPerPack); err != nil {
+		return ScanResult{}, err
+	}
+	qty := in.Cases * in.Pack.UnitsPerPack
+	lines := r.Lines()
+	if err := bookLine(lines, lineNo, qty, in.Condition); err != nil {
+		return ScanResult{}, err
+	}
+	labelled := r.hasManifest()
+	events := []Event{ReceiptLineReceived{
+		Header: r.header(at), LineNo: lineNo, SKU: in.SKU, Quantity: qty, Condition: in.Condition,
+		OwnerRef: r.ownerRef, PackGTIN: in.Pack.GTIN, Cases: in.Cases,
+	}}
+	res := ScanResult{Accepted: true}
+	for _, lpn := range in.LPNs {
+		c := Carton{
+			lpn: lpn, kind: asn.CartonHomogeneousCase, status: CartonAccepted, sealed: true, receivedAt: at.UTC(),
+			contents: []CartonContent{{LineNo: lineNo, SKU: in.SKU, GTIN: in.ChildGTIN, Qty: in.Pack.UnitsPerPack, Lot: in.Lot, Expiry: in.Expiry, Condition: in.Condition}},
+		}
+		r.cartons = append(r.cartons, c)
+		res.Cartons = append(res.Cartons, c)
+		events = append(events, r.cartonReceived(c, at))
+		if labelled {
+			res.Discrepancies = append(res.Discrepancies, CartonDiscrepancy{Kind: KindUnlabelledCarton, Actual: lpn})
+		}
+	}
+	res.Events = events
+	res.Events = append(res.Events, r.discrepancyEvents(res.Discrepancies, at)...)
+	r.lines = lines
+	r.version++
+	return res, nil
 }
 
-// RejectUnknownGtin records that a scanned GTIN did not resolve.
+// RejectUnknownGtin records that a scanned GTIN does not resolve in the
+// PackagingView: nothing is booked, the finding is raised.
 func (r *Receipt) RejectUnknownGtin(gtin gs1.GTIN, at time.Time) (ScanResult, error) {
-	_, _ = gtin, at
-	return ScanResult{}, errors.New("not implemented")
+	if err := r.requireOpen(); err != nil {
+		return ScanResult{}, err
+	}
+	return r.reject(at, nil, CartonDiscrepancy{Kind: KindUnknownGtin, Actual: gtin.String()}), nil
+}
+
+func (r *Receipt) requireOpen() error {
+	if r.state != StateOpen {
+		return ErrReceiptClosed
+	}
+	return nil
+}
+
+// reject raises the findings of a scan that was not accepted.
+func (r *Receipt) reject(at time.Time, cartons []Carton, findings ...CartonDiscrepancy) ScanResult {
+	r.version++
+	return ScanResult{Events: r.discrepancyEvents(findings, at), Cartons: cartons, Discrepancies: findings}
+}
+
+func (r *Receipt) discrepancyEvents(findings []CartonDiscrepancy, at time.Time) []Event {
+	out := make([]Event, 0, len(findings))
+	for _, d := range findings {
+		out = append(out, CartonDiscrepancyRaised{Header: r.header(at), CartonDiscrepancy: d})
+	}
+	return out
+}
+
+// missingCartonEvents raises MissingCarton for every manifest carton that was
+// never accepted.
+func (r *Receipt) missingCartonEvents(at time.Time) []Event {
+	var missing []CartonDiscrepancy
+	for _, c := range r.cartons {
+		if c.status == CartonExpected {
+			missing = append(missing, CartonDiscrepancy{Kind: KindMissingCarton, Expected: c.sscc.String()})
+		}
+	}
+	return r.discrepancyEvents(missing, at)
+}
+
+// bookLine adds qty to the line of lines in the given condition, enforcing
+// the quantity bound. lines is a COPY of the receipt's lines, so a failure
+// part-way through a carton leaves the receipt untouched.
+func bookLine(lines []Line, lineNo int, qty int64, condition Condition) error {
+	line := &lines[lineNo-1]
+	if err := shared.ValidateQuantity(qty); err != nil {
+		return err
+	}
+	if line.Received()+qty > shared.MaxQuantity {
+		return shared.ErrInvalidQuantity
+	}
+	if condition == ConditionGood {
+		line.receivedGood += qty
+	} else {
+		line.receivedDamaged += qty
+	}
+	return nil
+}
+
+// hasManifest reports whether the ASN announced labelled cartons: a labelled
+// carton exists on the ledger only through the manifest.
+func (r *Receipt) hasManifest() bool {
+	for _, c := range r.cartons {
+		if !c.sscc.IsZero() {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Receipt) cartonIndex(sscc gs1.SSCC) int {
+	for i, c := range r.cartons {
+		if c.sscc == sscc && !sscc.IsZero() {
+			return i
+		}
+	}
+	return -1
 }
 
 // OwnerRef returns the owner reference copied from the ASN, or "".
@@ -214,20 +434,127 @@ func (r *Receipt) Cartons() []Carton { return append([]Carton(nil), r.cartons...
 
 // Carton returns the ledger entry with the given SSCC.
 func (r *Receipt) Carton(sscc gs1.SSCC) (Carton, bool) {
-	_ = sscc
-	return Carton{}, false
+	idx := r.cartonIndex(sscc)
+	if idx < 0 {
+		return Carton{}, false
+	}
+	return r.cartons[idx], true
 }
 
 // LineOfSKU returns the line number carrying sku.
 func (r *Receipt) LineOfSKU(sku shared.SKU) (int, bool) {
-	_ = sku
+	for _, l := range r.lines {
+		if l.sku == sku {
+			return l.lineNo, true
+		}
+	}
 	return 0, false
 }
 
+func (s CartonStatus) valid() bool { return s == CartonExpected || s == CartonAccepted }
+
+// manifestStates turns the ASN's cartons into Expected ledger entries.
+func manifestStates(cartons []asn.Carton) []CartonState {
+	out := make([]CartonState, 0, len(cartons))
+	for _, c := range cartons {
+		contents := make([]CartonContentState, 0, len(c.Contents()))
+		for _, x := range c.Contents() {
+			contents = append(contents, CartonContentState{
+				LineNo: x.LineNo(), SKU: string(x.SKU()), GTIN: x.GTIN().String(), Qty: x.Qty(), Lot: x.Lot(), Expiry: x.Expiry(),
+			})
+		}
+		out = append(out, CartonState{
+			LPN: c.SSCC().String(), SSCC: c.SSCC().String(), ParentSSCC: c.ParentSSCC().String(),
+			Kind: string(c.Kind()), Status: CartonExpected, Contents: contents,
+		})
+	}
+	return out
+}
+
+// buildCartons rebuilds the ledger from its stored shape, re-validating it
+// against the lines.
 func buildCartons(states []CartonState, lines []Line) ([]Carton, error) {
 	if len(states) == 0 {
 		return nil, nil
 	}
-	_ = lines
-	return nil, errors.New("not implemented")
+	out := make([]Carton, 0, len(states))
+	for _, s := range states {
+		c, err := buildCarton(s, len(lines))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+func buildCarton(s CartonState, lineCount int) (Carton, error) {
+	if s.LPN == "" || !s.Status.valid() || len(s.Contents) == 0 {
+		return Carton{}, ErrInvalidCarton
+	}
+	accepted := s.Status == CartonAccepted
+	if accepted == s.ReceivedAt.IsZero() || (s.Sealed && !accepted) {
+		return Carton{}, ErrInvalidCarton
+	}
+	sscc, err := optionalSSCC(s.SSCC)
+	if err != nil {
+		return Carton{}, err
+	}
+	parent, err := optionalSSCC(s.ParentSSCC)
+	if err != nil {
+		return Carton{}, err
+	}
+	kind, err := asn.ParseCartonKind(s.Kind)
+	if err != nil {
+		return Carton{}, fmt.Errorf("%w: %w", ErrInvalidCarton, err)
+	}
+	contents := make([]CartonContent, 0, len(s.Contents))
+	for _, x := range s.Contents {
+		c, err := buildCartonContent(x, accepted, lineCount)
+		if err != nil {
+			return Carton{}, err
+		}
+		contents = append(contents, c)
+	}
+	return Carton{
+		lpn: s.LPN, sscc: sscc, parentSscc: parent, kind: kind, status: s.Status, sealed: s.Sealed,
+		contents: contents, receivedAt: s.ReceivedAt.UTC(),
+	}, nil
+}
+
+func optionalSSCC(value string) (gs1.SSCC, error) {
+	if value == "" {
+		return gs1.SSCC{}, nil
+	}
+	s, err := gs1.ParseSSCC(value)
+	if err != nil {
+		return gs1.SSCC{}, fmt.Errorf("%w: %w", ErrInvalidCarton, err)
+	}
+	return s, nil
+}
+
+func buildCartonContent(s CartonContentState, accepted bool, lineCount int) (CartonContent, error) {
+	if s.LineNo < 1 || s.LineNo > lineCount {
+		return CartonContent{}, ErrInvalidCarton
+	}
+	sku, err := shared.NewSKU(s.SKU)
+	if err != nil {
+		return CartonContent{}, err
+	}
+	gtin, err := gs1.ParseGTIN(s.GTIN)
+	if err != nil {
+		return CartonContent{}, err
+	}
+	if err := shared.ValidateQuantity(s.Qty); err != nil {
+		return CartonContent{}, err
+	}
+	var condition Condition
+	if accepted {
+		if condition, err = ParseCondition(s.Condition); err != nil {
+			return CartonContent{}, fmt.Errorf("%w: %w", ErrInvalidCarton, err)
+		}
+	} else if s.Condition != "" {
+		return CartonContent{}, ErrInvalidCarton
+	}
+	return CartonContent{LineNo: s.LineNo, SKU: sku, GTIN: gtin, Qty: s.Qty, Lot: s.Lot, Expiry: s.Expiry, Condition: condition}, nil
 }
