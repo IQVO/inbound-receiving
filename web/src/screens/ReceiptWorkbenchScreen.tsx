@@ -63,6 +63,12 @@ function Workbench({ receipt, onChange }: { receipt: Receipt; onChange: (r: Rece
               value: <Link to={`../asns/${encodeURIComponent(receipt.asnNumber)}`}>{receipt.asnNumber}</Link>,
             },
             { label: "Door", value: receipt.doorCode ?? "Walk-in delivery (no appointment)" },
+            {
+              label: "Cartons",
+              value: (
+                <Link to={`../receipts/${encodeURIComponent(receipt.receiptId)}/discrepancies`}>Carton discrepancies and scanning</Link>
+              ),
+            },
             { label: "Opened", value: utcLabel(receipt.openedAt) },
             { label: "Closed", value: utcLabel(receipt.closedAt) },
             { label: "Version", value: String(receipt.version) },

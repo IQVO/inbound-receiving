@@ -63,6 +63,9 @@ function AsnBody({ asn, reload }: { asn: Asn; reload: () => void }) {
           ]}
         />
       </Card>
+      <Card title="Cartons">
+        <Link to={`../asns/${encodeURIComponent(asn.asnNumber)}/cartons`}>View the pallet and carton tree</Link>
+      </Card>
       <ReceiptsCard asnNumber={asn.asnNumber} />
       {receivable && <OpenReceiptCard asnNumber={asn.asnNumber} />}
       {asn.state === "Registered" && <CancelAsnCard asnNumber={asn.asnNumber} onCancelled={reload} />}

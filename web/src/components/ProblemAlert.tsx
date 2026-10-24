@@ -60,6 +60,7 @@ export function RequestView<T>({
   isEmpty,
   empty,
   whenIdle,
+  lead,
   children,
 }: {
   state: RequestState<T>;
@@ -68,6 +69,8 @@ export function RequestView<T>({
   isEmpty?: (data: T) => boolean;
   empty?: ReactNode;
   whenIdle?: ReactNode;
+  /** Plain-words guidance for a specific problem (keyed by its slug); the server title and detail still show. */
+  lead?: (error: ApiError) => string | undefined;
   children: (data: T) => ReactNode;
 }) {
   switch (state.status) {
@@ -76,7 +79,7 @@ export function RequestView<T>({
     case "loading":
       return <LoadingNote what={what} />;
     case "error":
-      return <ProblemAlert error={state.error} />;
+      return <ProblemAlert error={state.error} lead={lead?.(state.error)} />;
     case "success":
       return isEmpty?.(state.data) ? <EmptyNote>{empty}</EmptyNote> : <>{children(state.data)}</>;
   }
