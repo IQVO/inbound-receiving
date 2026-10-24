@@ -415,7 +415,7 @@ func (s *Server) handleReceiveScan(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.ReceiveScan.Handle(r.Context(), usecases.ReceiveScanCommand{
 		ReceiptID: id, Scan: req.Scan, Kind: req.Kind, ID: req.ID, Qty: req.Qty, ExpectedKind: req.ExpectedKind,
-		Condition: req.Condition, Lot: req.Lot, Expiry: req.Expiry, ExpectedVersion: version,
+		Condition: req.Condition, Lot: req.Lot, Expiry: req.Expiry, CountedContents: req.counted(), ExpectedVersion: version,
 	})
 	if err != nil {
 		writeError(w, r, err)
@@ -426,4 +426,25 @@ func (s *Server) handleReceiveScan(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 	}
 	writeVersioned(w, status, out.Receipt.Version(), toScan(out))
+}
+
+// handleGetCartonLabel backs GET /receipts/{receiptId}/cartons/{lpn}/label:
+// the DATA of a license plate label (R11); the floor client prints it.
+func (s *Server) handleGetCartonLabel(w http.ResponseWriter, r *http.Request) {
+	id, err := pathParam(r, "receiptId")
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	lpn, err := pathParam(r, "lpn")
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	label, err := s.GetCartonLabel.Handle(r.Context(), id, lpn)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toCartonLabel(label))
 }

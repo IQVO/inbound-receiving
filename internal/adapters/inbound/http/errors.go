@@ -88,6 +88,7 @@ var problemCatalogue = []struct {
 	{repository.ErrAsnNotFound, notFound("asn-not-found", "ASN not found")},
 	{repository.ErrAppointmentNotFound, notFound("appointment-not-found", "Appointment not found")},
 	{repository.ErrReceiptNotFound, notFound("receipt-not-found", "Receipt not found")},
+	{usecases.ErrCartonNotFound, notFound("carton-not-found", "Carton not found on the receipt")},
 
 	{usecases.ErrAsnAlreadyExists, conflict("asn-already-exists", "ASN already exists")},
 	{asn.ErrAsnInProgress, conflict("asn-in-progress", "ASN is being received")},
@@ -112,6 +113,9 @@ var problemCatalogue = []struct {
 	{asn.ErrDuplicateSscc, unprocessable("duplicate-sscc", "An SSCC may appear once per site")},
 	{asn.ErrHomogeneousCartonMixed, unprocessable("homogeneous-carton-mixed", "A homogeneous case carton may hold one SKU only")},
 	{asn.ErrCartonContentsMismatch, unprocessable("carton-contents-mismatch", "Carton contents must add up to every line")},
+	{receipt.ErrCountedContentsNotMixed, unprocessable("counted-contents-not-mixed", "Counted contents apply to a mixed carton only")},
+	{receipt.ErrInvalidCount, bad("invalid-counted-contents", "Counted contents need a unique SKU and a quantity of zero or more")},
+	{usecases.ErrCountedSkuUnknown, unprocessable("counted-sku-unknown", "A counted SKU has no each GTIN in the packaging view")},
 	{usecases.ErrScanKindMismatch, unprocessable("scan-kind-mismatch", "The scan is not of the kind the screen expects")},
 	{usecases.ErrUnsupportedPackLevel, unprocessable("unsupported-pack-level", "Only EACH and CASE pack levels can be received by scan")},
 

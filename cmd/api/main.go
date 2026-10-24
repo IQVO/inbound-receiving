@@ -12,6 +12,8 @@
 //	EVENT_PUBLISHER               kafka (default kafka); log is a boot error
 //	OUTBOX_RELAY_INTERVAL         relay poll interval (Go duration or seconds, default 1s)
 //	OUTBOX_MAX_ATTEMPTS           failures before the relay excludes a row (default 20, 0 = unlimited)
+//	CARTON_MAX_GROSS_WEIGHT_G     CartonOverLimit weight limit in grams (default 0 = unchecked, ADR 0014)
+//	CARTON_MAX_LONGEST_SIDE_MM    CartonOverLimit longest-side limit in mm (default 0 = unchecked, ADR 0014)
 //	HOUSEKEEPING_INTERVAL         sweeper interval (default 1h, 0 = sweeper off)
 //	IDEMPOTENCY_KEY_TTL           idempotency_keys row lifetime (default 24h, 0 = keep forever)
 //	OUTBOX_RETENTION              published outbox_events retention (default 168h, 0 = keep forever)
@@ -56,6 +58,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 	"github.com/claudioed/inbound-receiving/internal/bootretry"
+	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 	"github.com/claudioed/inbound-receiving/internal/housekeeping"
 )
 
@@ -279,7 +282,8 @@ func buildServer(ad adapters, readiness *inboundhttp.Readiness, metrics http.Han
 		ListAppointments:   &usecases.ListAppointments{Appointments: ad.appointments},
 		OpenReceipt:        &usecases.OpenReceipt{Writer: w},
 		ReceiveLine:        (&usecases.ReceiveLine{Writer: w}).WithMetrics(receiptMetrics),
-		ReceiveScan:        (&usecases.ReceiveScan{Writer: w, Packaging: ad.packaging}).WithMetrics(receiptMetrics),
+		ReceiveScan:        (&usecases.ReceiveScan{Writer: w, Packaging: ad.packaging, Limits: cartonLimits(os.Getenv, slog.Default())}).WithMetrics(receiptMetrics),
+		GetCartonLabel:     &usecases.GetCartonLabel{Receipts: ad.receipts},
 		CloseReceipt:       &usecases.CloseReceipt{Writer: w},
 		GetReceipt:         &usecases.GetReceipt{Receipts: ad.receipts},
 		ListReceipts:       &usecases.ListReceipts{Receipts: ad.receipts},
@@ -441,6 +445,35 @@ func parseRelayInterval(raw string, logger *slog.Logger) time.Duration {
 		return outboxrelay.DefaultInterval
 	}
 	return d
+}
+
+// Env names of the CartonOverLimit limits (contracts R9, ADR 0014).
+const (
+	envCartonMaxGrossWeightG  = "CARTON_MAX_GROSS_WEIGHT_G"
+	envCartonMaxLongestSideMm = "CARTON_MAX_LONGEST_SIDE_MM"
+)
+
+// cartonLimits reads the two carton handling limits. Unset or 0 = unchecked;
+// a negative or unparsable value logs a warning and is unchecked, so a typo
+// never rejects or flags goods by accident.
+func cartonLimits(env func(string) string, logger *slog.Logger) receipt.CartonLimits {
+	return receipt.CartonLimits{
+		MaxGrossWeightG:  limitFromEnv(env, envCartonMaxGrossWeightG, logger),
+		MaxLongestSideMm: limitFromEnv(env, envCartonMaxLongestSideMm, logger),
+	}
+}
+
+func limitFromEnv(env func(string) string, name string, logger *slog.Logger) int64 {
+	raw := env(name)
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n < 0 {
+		logger.Warn("invalid "+name+"; the limit is unchecked", "value", raw)
+		return 0
+	}
+	return n
 }
 
 // outboxMaxAttempts reads OUTBOX_MAX_ATTEMPTS (gap fix D12): how many times

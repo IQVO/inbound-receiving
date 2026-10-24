@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
@@ -23,14 +24,20 @@ var (
 	// inconsistent with each other (the use case resolves them; this guards
 	// the aggregate).
 	ErrScanMismatch = errors.New("scan inputs are inconsistent")
+	// ErrCountedContentsNotMixed is returned when countedContents is given
+	// for a carton that is not a MIXED one: only a mixed carton has no pack
+	// GTIN to check its quantity against, so only it is audited by count.
+	ErrCountedContentsNotMixed = errors.New("counted contents apply to a mixed carton only")
+	// ErrInvalidCount is returned for a counted content with a negative
+	// quantity or a repeated SKU.
+	ErrInvalidCount = errors.New("counted contents are invalid")
 )
 
 // MaxCasesPerScan bounds the cases of one case-GTIN scan: each case becomes
 // its own ReceiptCartonReceived.
 const MaxCasesPerScan = 1000
 
-// The carton discrepancy kinds of ADR 0012 decision 7 (CartonOverLimit is not
-// raised yet: this service holds no site handling limits).
+// The carton discrepancy kinds of ADR 0012 decision 7 and ADR 0014.
 const (
 	// KindUnexpectedCarton: a valid SSCC that is not on the manifest was scanned.
 	KindUnexpectedCarton Kind = "UnexpectedCarton"
@@ -47,7 +54,37 @@ const (
 	KindMixedCaseDeclaredAsCasePack Kind = "MixedCaseDeclaredAsCasePack"
 	// KindUnlabelledCarton: a case with no SSCC was received against a carton ASN.
 	KindUnlabelledCarton Kind = "UnlabelledCarton"
+	// KindCartonOverLimit: a carton's DECLARED gross weight or longest side
+	// is above the configured handling limit. The carton is still accepted
+	// (ADR 0014); Expected holds the breached limits, Actual the declared values.
+	KindCartonOverLimit Kind = "CartonOverLimit"
+	// KindMixedCartonContentMismatch: the counted contents of a mixed carton
+	// differ from its manifest for a SKU (Expected and Actual are "sku:qty").
+	KindMixedCartonContentMismatch Kind = "MixedCartonContentMismatch"
 )
+
+// CartonLimits are the handling limits a carton is checked against at
+// acceptance. A zero limit is unchecked (ADR 0014).
+type CartonLimits struct {
+	MaxGrossWeightG  int64
+	MaxLongestSideMm int64
+}
+
+// DeclaredCarton is what the ASN declared about a carton's weight and size;
+// zero means it declared nothing, which is never over a limit.
+type DeclaredCarton struct {
+	GrossWeightG  int64
+	LongestSideMm int64
+}
+
+// CountedContent is one line of an audit count of a mixed carton: Qty eaches
+// of SKU were counted (0 = looked for and found none). GTIN is the each GTIN
+// of a SKU the manifest does not list.
+type CountedContent struct {
+	SKU  shared.SKU
+	GTIN gs1.GTIN
+	Qty  int64
+}
 
 // CartonStatus is where a carton of the receipt's ledger stands.
 type CartonStatus string
@@ -155,6 +192,12 @@ type CartonScan struct {
 	ReceivedElsewhere bool
 	// CasePacks holds the active CASE level of each SKU that has one.
 	CasePacks map[shared.SKU]CasePack
+	// Declared and Limits drive CartonOverLimit (R9).
+	Declared DeclaredCarton
+	Limits   CartonLimits
+	// Counted is the optional audit count of a MIXED carton (R10); when
+	// present the RECEIVED quantity is the counted one, never the label.
+	Counted []CountedContent
 }
 
 // CaseScan is the resolved input of ReceiveCases: Cases cases of one SKU,
@@ -212,6 +255,9 @@ func (r *Receipt) AcceptCarton(in CartonScan, at time.Time) (ScanResult, error) 
 	if idx < 0 {
 		return r.reject(at, nil, CartonDiscrepancy{Kind: KindUnexpectedCarton, SSCC: in.SSCC}), nil
 	}
+	if len(in.Counted) > 0 && r.cartons[idx].kind != asn.CartonMixed {
+		return ScanResult{}, ErrCountedContentsNotMixed
+	}
 	if findings := checkCarton(r.cartons[idx], in); len(findings) > 0 {
 		return r.reject(at, nil, findings...), nil
 	}
@@ -258,9 +304,17 @@ func cartonQty(c Carton) int64 {
 func (r *Receipt) acceptCarton(idx int, in CartonScan, at time.Time) (ScanResult, error) {
 	c := r.cartons[idx]
 	lines := r.Lines()
-	contents := make([]CartonContent, 0, len(c.contents))
+	manifest := c.contents
+	var findings []CartonDiscrepancy
+	if len(in.Counted) > 0 {
+		var err error
+		if manifest, findings, err = r.audit(c, in); err != nil {
+			return ScanResult{}, err
+		}
+	}
+	contents := make([]CartonContent, 0, len(manifest))
 	var events []Event
-	for _, x := range c.contents {
+	for _, x := range manifest {
 		if err := bookLine(lines, x.LineNo, x.Qty, in.Condition); err != nil {
 			return ScanResult{}, err
 		}
@@ -277,9 +331,79 @@ func (r *Receipt) acceptCarton(idx int, in CartonScan, at time.Time) (ScanResult
 	}
 	c.contents, c.status, c.sealed, c.receivedAt = contents, CartonAccepted, true, at.UTC()
 	events = append(events, r.cartonReceived(c, at))
+	if f, over := overLimit(in); over {
+		findings = append(findings, f)
+	}
+	events = append(events, r.discrepancyEvents(findings, at)...)
 	r.lines, r.cartons[idx] = lines, c
 	r.version++
-	return ScanResult{Events: events, Accepted: true, Cartons: []Carton{c}}, nil
+	return ScanResult{Events: events, Accepted: true, Cartons: []Carton{c}, Discrepancies: findings}, nil
+}
+
+// overLimit compares the declared weight and longest side with the limits;
+// one finding names every breached limit (ADR 0014).
+func overLimit(in CartonScan) (CartonDiscrepancy, bool) {
+	var expected, actual []string
+	if in.Limits.MaxGrossWeightG > 0 && in.Declared.GrossWeightG > in.Limits.MaxGrossWeightG {
+		expected = append(expected, "grossWeightG:"+strconv.FormatInt(in.Limits.MaxGrossWeightG, 10))
+		actual = append(actual, "grossWeightG:"+strconv.FormatInt(in.Declared.GrossWeightG, 10))
+	}
+	if in.Limits.MaxLongestSideMm > 0 && in.Declared.LongestSideMm > in.Limits.MaxLongestSideMm {
+		expected = append(expected, "longestSideMm:"+strconv.FormatInt(in.Limits.MaxLongestSideMm, 10))
+		actual = append(actual, "longestSideMm:"+strconv.FormatInt(in.Declared.LongestSideMm, 10))
+	}
+	if len(expected) == 0 {
+		return CartonDiscrepancy{}, false
+	}
+	return CartonDiscrepancy{Kind: KindCartonOverLimit, SSCC: in.SSCC, Expected: strings.Join(expected, ","), Actual: strings.Join(actual, ",")}, true
+}
+
+// audit turns the counted contents of a mixed carton into the contents that
+// are received (the COUNTED quantities) and one MixedCartonContentMismatch
+// per SKU whose count differs from the manifest.
+func (r *Receipt) audit(c Carton, in CartonScan) ([]CartonContent, []CartonDiscrepancy, error) {
+	counted := make(map[shared.SKU]CountedContent, len(in.Counted))
+	for _, x := range in.Counted {
+		if _, dup := counted[x.SKU]; dup || x.Qty < 0 {
+			return nil, nil, ErrInvalidCount
+		}
+		counted[x.SKU] = x
+	}
+	var contents []CartonContent
+	var findings []CartonDiscrepancy
+	listed := map[shared.SKU]bool{}
+	for _, m := range c.contents {
+		listed[m.SKU] = true
+		got := counted[m.SKU].Qty
+		if got != m.Qty {
+			findings = append(findings, skuMismatch(in.SSCC, m.SKU, m.Qty, got))
+		}
+		if got > 0 {
+			m.Qty = got
+			contents = append(contents, m)
+		}
+	}
+	for _, x := range in.Counted {
+		if listed[x.SKU] {
+			continue
+		}
+		lineNo, ok := r.LineOfSKU(x.SKU)
+		if !ok {
+			return nil, nil, ErrLineNotOnAsn
+		}
+		if x.Qty > 0 {
+			findings = append(findings, skuMismatch(in.SSCC, x.SKU, 0, x.Qty))
+			contents = append(contents, CartonContent{LineNo: lineNo, SKU: x.SKU, GTIN: x.GTIN, Qty: x.Qty})
+		}
+	}
+	return contents, findings, nil
+}
+
+func skuMismatch(sscc gs1.SSCC, sku shared.SKU, expected, actual int64) CartonDiscrepancy {
+	return CartonDiscrepancy{
+		Kind: KindMixedCartonContentMismatch, SSCC: sscc,
+		Expected: string(sku) + ":" + strconv.FormatInt(expected, 10), Actual: string(sku) + ":" + strconv.FormatInt(actual, 10),
+	}
 }
 
 func (r *Receipt) cartonReceived(c Carton, at time.Time) ReceiptCartonReceived {
@@ -439,6 +563,17 @@ func (r *Receipt) Carton(sscc gs1.SSCC) (Carton, bool) {
 		return Carton{}, false
 	}
 	return r.cartons[idx], true
+}
+
+// CartonByLPN returns the ledger entry with the given license plate (the
+// SSCC, or an internal LPN).
+func (r *Receipt) CartonByLPN(lpn string) (Carton, bool) {
+	for _, c := range r.cartons {
+		if c.lpn == lpn && lpn != "" {
+			return c, true
+		}
+	}
+	return Carton{}, false
 }
 
 // LineOfSKU returns the line number carrying sku.

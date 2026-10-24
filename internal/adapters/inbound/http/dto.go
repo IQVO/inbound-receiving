@@ -71,14 +71,42 @@ func (r registerAsnRequest) cartonInputs() []asn.CartonInput {
 // a scanner delivered) OR kind and id. kind is the kind the screen expects; with
 // a raw scan the optional expectedKind plays that part.
 type receiveScanRequest struct {
-	Scan         string `json:"scan"`
-	Kind         string `json:"kind"`
-	ID           string `json:"id"`
-	Qty          int64  `json:"qty"`
-	ExpectedKind string `json:"expectedKind"`
-	Condition    string `json:"condition"`
-	Lot          string `json:"lot"`
-	Expiry       string `json:"expiry"`
+	Scan            string                  `json:"scan"`
+	Kind            string                  `json:"kind"`
+	ID              string                  `json:"id"`
+	Qty             int64                   `json:"qty"`
+	ExpectedKind    string                  `json:"expectedKind"`
+	Condition       string                  `json:"condition"`
+	Lot             string                  `json:"lot"`
+	Expiry          string                  `json:"expiry"`
+	CountedContents []countedContentRequest `json:"countedContents"`
+}
+
+type countedContentRequest struct {
+	SKU string `json:"sku"`
+	Qty int64  `json:"qty"`
+}
+
+func (r receiveScanRequest) counted() []usecases.CountedContent {
+	var out []usecases.CountedContent
+	for _, c := range r.CountedContents {
+		out = append(out, usecases.CountedContent{SKU: c.SKU, Qty: c.Qty})
+	}
+	return out
+}
+
+// cartonLabelResponse is the data of a license plate label.
+type cartonLabelResponse struct {
+	Lpn           string    `json:"lpn"`
+	Symbology     string    `json:"symbology"`
+	HumanReadable string    `json:"humanReadable"`
+	SKU           string    `json:"sku,omitempty"`
+	Units         int64     `json:"units"`
+	ReceivedAt    time.Time `json:"receivedAt"`
+}
+
+func toCartonLabel(l usecases.CartonLabel) cartonLabelResponse {
+	return cartonLabelResponse{Lpn: l.LPN, Symbology: l.Symbology, HumanReadable: l.HumanReadable, SKU: l.SKU, Units: l.Units, ReceivedAt: l.ReceivedAt}
 }
 
 type reasonRequest struct {
