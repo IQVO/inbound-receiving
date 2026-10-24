@@ -63,7 +63,7 @@ func TestCartonDiscrepanciesArePersistedWithTheReceipt(t *testing.T) {
 		t.Fatalf("stored findings = %+v, want %+v", gotFindings, want)
 	}
 	for i := range want {
-		if gotFindings[i].CartonDiscrepancy != want[i].CartonDiscrepancy || !gotFindings[i].At.Equal(want[i].At.Truncate(time.Microsecond)) {
+		if gotFindings[i].CartonDiscrepancy != want[i].CartonDiscrepancy || !gotFindings[i].At.Equal(want[i].At.Round(time.Microsecond)) {
 			t.Fatalf("finding %d = %+v, want %+v", i, gotFindings[i], want[i])
 		}
 	}
