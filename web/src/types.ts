@@ -86,6 +86,12 @@ export interface Receipt {
   /** Present once the receipt is Closed. */
   closedAt?: string;
   discrepancies: Discrepancy[];
+  /**
+   * The carton findings raised on the receipt (scans and the close), in raise
+   * order (ADR 0015). The API always sends it; optional here only so a service
+   * older than ADR 0015 reads as "none".
+   */
+  cartonDiscrepancies?: ReceiptCartonDiscrepancy[];
   version: number;
 }
 
@@ -219,6 +225,11 @@ export interface CartonDiscrepancy {
   sscc?: string;
   expected?: string;
   actual?: string;
+}
+
+/** A carton finding as the receipt keeps it: when it was raised, and for a MissingCarton the manifest SSCC is `expected`. */
+export interface ReceiptCartonDiscrepancy extends CartonDiscrepancy {
+  at: string;
 }
 
 export const SCAN_KINDS = ["SSCC", "CASE_GTIN", "EACH_GTIN"] as const;

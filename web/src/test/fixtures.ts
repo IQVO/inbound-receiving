@@ -48,13 +48,14 @@ export function receipt(over: Partial<Receipt> = {}): Receipt {
     ],
     openedAt: "2026-10-09T08:05:00Z",
     discrepancies: [],
+    cartonDiscrepancies: [],
     version: 1,
     ...over,
   };
 }
 
 /** The closeReceipt example: line 1 short + damaged, line 2 over. */
-export function closedReceipt(): Receipt {
+export function closedReceipt(over: Partial<Receipt> = {}): Receipt {
   return receipt({
     state: "Closed",
     lines: [
@@ -68,6 +69,7 @@ export function closedReceipt(): Receipt {
       { lineNo: 2, sku: "SKU-2", kind: "Over", expectedQty: 5, receivedQty: 7, damagedQty: 0 },
     ],
     version: 6,
+    ...over,
   });
 }
 
