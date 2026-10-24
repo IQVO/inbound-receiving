@@ -334,7 +334,7 @@ func (r *Receipt) acceptCarton(idx int, in CartonScan, at time.Time) (ScanResult
 	if f, over := overLimit(in); over {
 		findings = append(findings, f)
 	}
-	events = append(events, r.discrepancyEvents(findings, at)...)
+	events = append(events, r.raise(findings, at)...)
 	r.lines, r.cartons[idx] = lines, c
 	r.version++
 	return ScanResult{Events: events, Accepted: true, Cartons: []Carton{c}, Discrepancies: findings}, nil
@@ -462,7 +462,7 @@ func (r *Receipt) ReceiveCases(in CaseScan, at time.Time) (ScanResult, error) {
 		}
 	}
 	res.Events = events
-	res.Events = append(res.Events, r.discrepancyEvents(res.Discrepancies, at)...)
+	res.Events = append(res.Events, r.raise(res.Discrepancies, at)...)
 	r.lines = lines
 	r.version++
 	return res, nil
@@ -487,15 +487,7 @@ func (r *Receipt) requireOpen() error {
 // reject raises the findings of a scan that was not accepted.
 func (r *Receipt) reject(at time.Time, cartons []Carton, findings ...CartonDiscrepancy) ScanResult {
 	r.version++
-	return ScanResult{Events: r.discrepancyEvents(findings, at), Cartons: cartons, Discrepancies: findings}
-}
-
-func (r *Receipt) discrepancyEvents(findings []CartonDiscrepancy, at time.Time) []Event {
-	out := make([]Event, 0, len(findings))
-	for _, d := range findings {
-		out = append(out, CartonDiscrepancyRaised{Header: r.header(at), CartonDiscrepancy: d})
-	}
-	return out
+	return ScanResult{Events: r.raise(findings, at), Cartons: cartons, Discrepancies: findings}
 }
 
 // missingCartonEvents raises MissingCarton for every manifest carton that was
@@ -507,7 +499,7 @@ func (r *Receipt) missingCartonEvents(at time.Time) []Event {
 			missing = append(missing, CartonDiscrepancy{Kind: KindMissingCarton, Expected: c.sscc.String()})
 		}
 	}
-	return r.discrepancyEvents(missing, at)
+	return r.raise(missing, at)
 }
 
 // bookLine adds qty to the line of lines in the given condition, enforcing
@@ -710,7 +702,7 @@ func (r *Receipt) Persisted() Persisted {
 	return Persisted{
 		ID: string(r.id), AsnNumber: string(r.asnNumber), OwnerRef: string(r.ownerRef),
 		AppointmentID: string(r.appointmentID), DoorCode: string(r.doorCode), State: r.state,
-		Lines: lines, Cartons: cartons, OpenedAt: r.openedAt, ClosedAt: r.closedAt, Version: r.version,
+		Lines: lines, Cartons: cartons, CartonDiscrepancies: findingStates(r.findings), OpenedAt: r.openedAt, ClosedAt: r.closedAt, Version: r.version,
 	}
 }
 

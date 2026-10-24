@@ -54,10 +54,10 @@ func (r *receiptRow) targets() []any {
 	return []any{&r.id, &r.asnNumber, &r.ownerRef, &r.appointmentID, &r.doorCode, &r.state, &r.openedAt, &r.closedAt, &r.version}
 }
 
-func (r receiptRow) toReceipt(lines []receipt.LineState, cartons []receipt.CartonState) (*receipt.Receipt, error) {
+func (r receiptRow) toReceipt(lines []receipt.LineState, cartons []receipt.CartonState, findings []receipt.CartonFindingState) (*receipt.Receipt, error) {
 	p := receipt.Persisted{
 		ID: r.id, AsnNumber: r.asnNumber, OwnerRef: deref(r.ownerRef), AppointmentID: deref(r.appointmentID), DoorCode: deref(r.doorCode),
-		State: receipt.State(r.state), Lines: lines, Cartons: cartons, OpenedAt: r.openedAt.UTC(), Version: r.version,
+		State: receipt.State(r.state), Lines: lines, Cartons: cartons, CartonDiscrepancies: findings, OpenedAt: r.openedAt.UTC(), Version: r.version,
 	}
 	if r.closedAt != nil {
 		p.ClosedAt = r.closedAt.UTC()
@@ -134,9 +134,13 @@ func rehydrateReceipts(ctx context.Context, q querier, rows []receiptRow) ([]*re
 	if err != nil {
 		return nil, err
 	}
+	findings, err := loadReceiptFindings(ctx, q, ids)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]*receipt.Receipt, 0, len(rows))
 	for _, row := range rows {
-		x, err := row.toReceipt(lines[row.id], cartons[row.id])
+		x, err := row.toReceipt(lines[row.id], cartons[row.id], findings[row.id])
 		if err != nil {
 			return nil, err
 		}
@@ -189,7 +193,10 @@ func (r *ReceiptRepo) Save(ctx context.Context, x *receipt.Receipt, loadedVersio
 				return fmt.Errorf("update receipt line %d of %s: %w", l.LineNo(), x.ID(), err)
 			}
 		}
-		return upsertReceiptCartons(ctx, q, x)
+		if err := upsertReceiptCartons(ctx, q, x); err != nil {
+			return err
+		}
+		return insertReceiptFindings(ctx, q, x)
 	})
 }
 
@@ -235,6 +242,9 @@ func insertReceipt(ctx context.Context, q querier, x *receipt.Receipt) (err erro
 		}
 	}
 	if err := upsertReceiptCartons(ctx, sp, x); err != nil {
+		return err
+	}
+	if err := insertReceiptFindings(ctx, sp, x); err != nil {
 		return err
 	}
 	return sp.Commit(ctx)
