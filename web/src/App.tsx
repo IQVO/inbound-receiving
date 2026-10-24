@@ -1,7 +1,10 @@
 import { Navigate, NavLink, Outlet, Route, Routes } from "react-router-dom";
 import { AppointmentBoardScreen } from "./screens/AppointmentBoardScreen";
+import { AsnCartonTreeRoute } from "./screens/AsnCartonTreeScreen";
 import { AsnDetailRoute } from "./screens/AsnDetailScreen";
 import { AsnListScreen } from "./screens/AsnListScreen";
+import { CartonLabelRoute } from "./screens/CartonLabelScreen";
+import { ReceiptDiscrepanciesRoute } from "./screens/ReceiptDiscrepanciesScreen";
 import { ReceiptListScreen } from "./screens/ReceiptListScreen";
 import { ReceiptWorkbenchRoute } from "./screens/ReceiptWorkbenchScreen";
 import { RegisterAsnScreen } from "./screens/RegisterAsnScreen";
@@ -63,7 +66,10 @@ function InboundLayout() {
  *   - asns/:asnNumber: one ASN, its receipts, open a receipt, cancel it.
  *   - appointments: the dock board per door and day; book, check in, cancel.
  *   - receipts: receipt list.
- *   - receipts/:receiptId: the receipt workbench (receive lines, close). */
+ *   - asns/:asnNumber/cartons: the ASN's pallet -> carton -> contents tree with statuses.
+ *   - receipts/:receiptId: the receipt workbench (receive lines, close).
+ *   - receipts/:receiptId/discrepancies: scan cartons; the nine carton findings explained.
+ *   - receipts/:receiptId/cartons/:lpn/label: printable carton label (Code 128). */
 export default function App() {
   return (
     <Routes>
@@ -72,9 +78,12 @@ export default function App() {
         <Route path="asns" element={<AsnListScreen />} />
         <Route path="asns/register" element={<RegisterAsnScreen />} />
         <Route path="asns/:asnNumber" element={<AsnDetailRoute />} />
+        <Route path="asns/:asnNumber/cartons" element={<AsnCartonTreeRoute />} />
         <Route path="appointments" element={<AppointmentBoardScreen />} />
         <Route path="receipts" element={<ReceiptListScreen />} />
         <Route path="receipts/:receiptId" element={<ReceiptWorkbenchRoute />} />
+        <Route path="receipts/:receiptId/discrepancies" element={<ReceiptDiscrepanciesRoute />} />
+        <Route path="receipts/:receiptId/cartons/:lpn/label" element={<CartonLabelRoute />} />
       </Route>
     </Routes>
   );
