@@ -11,7 +11,7 @@ info:
     as events (ADR 0003) and stow stays an RF action there.
 
     Every resource-creating `POST` (`/asns`, `/appointments`, `/receipts`,
-    `/receipts/{id}/lines`) requires an `Idempotency-Key` header: a missing key
+    `/receipts/{id}/lines`, `/receipts/{id}/scans`) requires an `Idempotency-Key` header: a missing key
     is a 400 `idempotency-key-required`, a replay with the same key and body
     returns the original response, the same key with a different body is a 422
     `idempotency-key-reused`. The action `POST`s (`cancel`, `check-in`,
@@ -43,7 +43,11 @@ info:
     `appointment-not-checked-in`, `outside-check-in-window`,
     `door-window-overlap`, `receipt-already-open`, `receipt-closed`,
     `unknown-sku`, `unknown-dock-door`, `unknown-asn`, `unknown-appointment`,
-    `asn-not-on-appointment`, `line-not-on-asn`, `version-mismatch`,
+    `asn-not-on-appointment`, `line-not-on-asn`, `invalid-owner-ref`,
+    `invalid-carton-kind`, `invalid-carton`, `invalid-sscc`, `invalid-gtin`,
+    `unsupported-gtin`, `invalid-scan-kind`, `invalid-scan`, `invalid-cases`,
+    `duplicate-sscc`, `homogeneous-carton-mixed`, `carton-contents-mismatch`,
+    `scan-kind-mismatch`, `unsupported-pack-level`, `version-mismatch`,
     `concurrent-modification`, `resource-not-found` (a NUL character in the
     request path), `dependency-unavailable` (`/readyz` while Postgres or Kafka
     is unreachable), `internal-error`. A NUL (U+0000) in a JSON body is a 400
@@ -196,6 +200,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Asn"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /asns/{asnNumber}/cartons:
+    parameters:
+      - $ref: "#/components/parameters/AsnNumber"
+    get:
+      operationId: getAsnCartons
+      summary: List the announced cartons of an ASN
+      description: |
+        The cartons the supplier announced (`cartons` is empty for a flat ASN)
+        with the status of each against the ASN's receipt: `Expected` (no
+        receipt yet, or not scanned yet), `Accepted` (its SSCC was scanned) or
+        `Missing` (the receipt is closed and it never was). Cartons are
+        announced on `POST /asns`; there is no endpoint to add one later.
+      tags: [ASNs]
+      responses:
+        "200":
+          description: The announced cartons.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AsnCartons"
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
@@ -638,6 +672,94 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /receipts/{receiptId}/scans:
+    parameters:
+      - $ref: "#/components/parameters/ReceiptId"
+    post:
+      operationId: receiveScan
+      summary: Receive by scan
+      description: |
+        Receives goods from ONE scan. Give EITHER `scan` (the raw string the
+        scanner delivered; GS1-128 element strings and `]E0`/`]I1`/`]C1`
+        symbology prefixes are parsed server-side) OR `kind` and `id` (a client
+        that already parsed it; the service re-validates). The scan resolves to
+        `SSCC` (the carton's whole manifest is accepted), `CASE_GTIN` (`qty`
+        counts CASES, default 1; the service multiplies by the active CASE
+        units per pack) or `EACH_GTIN` (`qty` eaches, default 1). Every
+        quantity booked, and every event, is in eaches. `kind` (or
+        `expectedKind` with a raw scan) is the kind the screen expects: a scan
+        of another kind is 422 `scan-kind-mismatch` and changes nothing.
+
+        A scan that cannot be accepted because of a finding (an SSCC not on the
+        manifest or already received, an unknown GTIN, a quantity that
+        contradicts the pack) is NOT an error: it books nothing, raises the
+        finding as `CartonDiscrepancyRaised` and answers **200** with
+        `accepted=false`; an accepted scan answers **201**. Carton discrepancies
+        are never added to `ReceiptClosed`, whose three v1 kinds stay
+        `Short`, `Over` and `Damaged`. This is NOT naturally idempotent, so the
+        `Idempotency-Key` is required.
+      tags: [Receipts]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyRequired"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReceiveScanRequest"
+            examples:
+              carton:
+                summary: Scan of a carton label (SSCC)
+                value:
+                  kind: SSCC
+                  id: "340123450000000013"
+              cases:
+                summary: Two cases by their case GTIN
+                value:
+                  kind: CASE_GTIN
+                  id: "13041090004824"
+                  qty: 2
+      responses:
+        "200":
+          description: The scan was refused with findings; nothing was booked.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanResult"
+              example:
+                kind: SSCC
+                accepted: false
+                lines: []
+                cartons: []
+                discrepancies:
+                  - { kind: UnexpectedCarton, sscc: "340123450000000013" }
+                version: 3
+        "201":
+          description: The scan was accepted.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/VersionMismatch"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /receipts/{receiptId}/close:
     parameters:
       - $ref: "#/components/parameters/ReceiptId"
@@ -997,7 +1119,8 @@ components:
         parameter (`invalid-query`), a missing `Idempotency-Key`
         (`idempotency-key-required`), or a value that breaks a domain rule
         (the `invalid-*`, `*-requires-*`, `duplicate-*`, `window-in-past` and
-        `invalid-condition` slugs).
+        `invalid-condition`, `invalid-carton*`, `invalid-scan*`, `invalid-cases`,
+        `invalid-gtin`, `invalid-sscc` and `invalid-owner-ref` slugs).
       content:
         application/problem+json:
           schema:
@@ -1146,7 +1269,9 @@ components:
         The request is well-formed but refers to something that does not hold:
         `unknown-sku` (`PRODUCT_MODE=kafka` only), `unknown-dock-door`
         (`DOCK_DOOR_MODE=kafka` only), `unknown-asn`, `unknown-appointment`,
-        `asn-not-on-appointment`, `line-not-on-asn`, or an `Idempotency-Key`
+        `asn-not-on-appointment`, `line-not-on-asn`, `invalid-sscc`,
+        `duplicate-sscc`, `homogeneous-carton-mixed`, `carton-contents-mismatch`,
+        `scan-kind-mismatch`, `unsupported-pack-level`, or an `Idempotency-Key`
         reused with a different body (`idempotency-key-reused`).
       content:
         application/problem+json:
@@ -1265,6 +1390,147 @@ components:
           minItems: 1
           items:
             $ref: "#/components/schemas/AsnLine"
+    CartonKind:
+      type: string
+      description: |
+        `HOMOGENEOUS_CASE` = one SKU in a case pack; `MIXED` = several SKUs, a
+        logistic unit only (no pack GTIN).
+      enum: [HOMOGENEOUS_CASE, MIXED]
+    CartonDims:
+      type: object
+      additionalProperties: false
+      required: [lengthMm, widthMm, heightMm]
+      properties:
+        lengthMm: { type: integer, format: int64, minimum: 1 }
+        widthMm: { type: integer, format: int64, minimum: 1 }
+        heightMm: { type: integer, format: int64, minimum: 1 }
+    CartonContent:
+      type: object
+      additionalProperties: false
+      required: [lineNo, sku, gtin, qty]
+      properties:
+        lineNo: { type: integer, format: int32, minimum: 1 }
+        sku: { type: string, minLength: 1, maxLength: 64 }
+        gtin:
+          type: string
+          description: GTIN of the content, 8, 12, 13 or 14 digits with a valid GS1 check digit; returned zero-padded to 14.
+        qty: { type: integer, format: int64, minimum: 1, description: Eaches. }
+        lot: { type: string, maxLength: 20, description: GS1 AI 10. }
+        expiry: { type: string, description: "Expiry date, `YYYY-MM-DD`." }
+    AsnCarton:
+      type: object
+      additionalProperties: false
+      required: [sscc, kind, contents]
+      properties:
+        sscc: { type: string, pattern: "^[0-9]{18}$", description: SSCC-18 with a valid GS1 check digit; unique per site. }
+        parentSscc: { type: string, pattern: "^[0-9]{18}$", description: "The pallet SSCC, when the carton is on one." }
+        kind: { $ref: "#/components/schemas/CartonKind" }
+        contents:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/CartonContent" }
+        grossWeightG: { type: integer, format: int64, minimum: 1, description: Declared gross weight in grams. }
+        dims: { $ref: "#/components/schemas/CartonDims" }
+    AsnCartonStatus:
+      type: object
+      required: [sscc, kind, contents, status]
+      properties:
+        sscc: { type: string }
+        parentSscc: { type: string }
+        kind: { $ref: "#/components/schemas/CartonKind" }
+        contents:
+          type: array
+          items: { $ref: "#/components/schemas/CartonContent" }
+        grossWeightG: { type: integer, format: int64 }
+        dims: { $ref: "#/components/schemas/CartonDims" }
+        status: { type: string, enum: [Expected, Accepted, Missing] }
+    AsnCartons:
+      type: object
+      required: [asnNumber, cartons]
+      properties:
+        asnNumber: { type: string }
+        ownerRef: { type: string, description: Opaque tenant tag; omitted for fleet-owned stock. }
+        cartons:
+          type: array
+          items: { $ref: "#/components/schemas/AsnCartonStatus" }
+    ScanKind:
+      type: string
+      description: What a scan resolves to. `qty` counts cases for `CASE_GTIN` and eaches for `EACH_GTIN`.
+      enum: [SSCC, CASE_GTIN, EACH_GTIN]
+    ReceiveScanRequest:
+      type: object
+      additionalProperties: false
+      description: Either `scan`, or `kind` and `id`; both is 400 `invalid-scan`.
+      properties:
+        scan: { type: string, maxLength: 512, description: The raw scanner string. }
+        kind: { $ref: "#/components/schemas/ScanKind" }
+        id: { type: string, maxLength: 64, description: The SSCC or GTIN when `kind` is given. }
+        expectedKind: { $ref: "#/components/schemas/ScanKind" }
+        qty:
+          type: integer
+          format: int64
+          minimum: 0
+          description: "Cases for a case GTIN (1 to 1000), eaches for an each GTIN; 0 or absent = 1; ignored for an SSCC."
+        condition: { $ref: "#/components/schemas/Condition" }
+        lot: { type: string, maxLength: 20 }
+        expiry: { type: string, description: "`YYYY-MM-DD`." }
+    ReceiptCarton:
+      type: object
+      required: [lpn, kind, status, sealed, contents]
+      properties:
+        lpn: { type: string, description: "The SSCC, or an internal `LPN-<ulid>` for a carton received without one." }
+        sscc: { type: string }
+        parentSscc: { type: string }
+        kind: { $ref: "#/components/schemas/CartonKind" }
+        status: { type: string, enum: [Expected, Accepted] }
+        sealed: { type: boolean }
+        contents:
+          type: array
+          items:
+            allOf:
+              - $ref: "#/components/schemas/CartonContent"
+              - type: object
+                properties:
+                  condition: { $ref: "#/components/schemas/Condition" }
+        receivedAt: { type: string, format: date-time }
+    CartonDiscrepancyKind:
+      type: string
+      description: |
+        Raised on `CartonDiscrepancyRaised`, never on `ReceiptClosed`.
+        `UnexpectedCarton` = an SSCC not on the manifest; `MissingCarton` = a
+        manifest carton never accepted (raised at close); `DuplicateSscc` =
+        scanned twice or already received; `UnknownGtin` = a GTIN the
+        PackagingView does not know; `CaseQtyMismatch` = quantity differs from
+        the active CASE units per pack or the label count;
+        `MixedCaseDeclaredAsCasePack` = the label's content contradicts the
+        manifest SKU; `UnlabelledCarton` = a case with no SSCC against a carton
+        ASN.
+      enum: [UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton]
+    CartonDiscrepancy:
+      type: object
+      required: [kind]
+      properties:
+        kind: { $ref: "#/components/schemas/CartonDiscrepancyKind" }
+        sscc: { type: string }
+        expected: { type: string }
+        actual: { type: string }
+    ScanResult:
+      type: object
+      required: [kind, accepted, lines, cartons, discrepancies, version]
+      properties:
+        kind: { $ref: "#/components/schemas/ScanKind" }
+        accepted: { type: boolean }
+        lines:
+          type: array
+          description: The receipt's lines after the scan.
+          items: { $ref: "#/components/schemas/ReceiptLine" }
+        cartons:
+          type: array
+          items: { $ref: "#/components/schemas/ReceiptCarton" }
+        discrepancies:
+          type: array
+          items: { $ref: "#/components/schemas/CartonDiscrepancy" }
+        version: { type: integer, format: int64 }
     ReasonRequest:
       type: object
       additionalProperties: false
@@ -1288,10 +1554,16 @@ components:
           description: Omitted when the supplier gave none.
         state:
           $ref: "#/components/schemas/AsnState"
+        ownerRef:
+          type: string
         lines:
           type: array
           items:
             $ref: "#/components/schemas/AsnLine"
+        cartons:
+          type: array
+          items:
+            $ref: "#/components/schemas/AsnCarton"
         version:
           type: integer
           format: int64

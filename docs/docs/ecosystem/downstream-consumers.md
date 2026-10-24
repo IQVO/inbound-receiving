@@ -6,7 +6,7 @@ sidebar_position: 1
 
 # Downstream consumers
 
-`inbound-receiving` publishes its nine events on
+`inbound-receiving` publishes its eleven events on
 `warehouse.inbound-receiving.events`. None of its consumers calls this service
 at request time: each keeps what it needs from the events (ADR 0001, ADR 0003).
 The table reflects each consumer's code on its `develop` branch.
@@ -74,7 +74,7 @@ inbound process path is superseded by that ADR.
 no sibling consumes them on `develop` today (`warehouse-planning` reads only
 `DockAppointmentBooked` and `DockAppointmentCancelled`; its ADR 0017 lists
 `ASNRegistered`, `DockAppointmentCheckedIn` and `DockAppointmentCompleted` as not
-consumed). All nine events are also copied to
+consumed). All eleven events are also copied to
 the internal analytics topic, whose only consumer is this context's own
 `inbound-projector` ([ADR 0006](/docs/adr/0006-analytics-read-side)); it is not
 an integration contract.
