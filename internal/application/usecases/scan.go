@@ -52,8 +52,19 @@ type ReceiveScanCommand struct {
 	Condition       string
 	Lot             string
 	Expiry          string
+	CountedContents []CountedContent
 	ExpectedVersion int64
 }
+
+// CountedContent is one line of the audit count of a mixed carton: Qty
+// eaches of SKU (0 = none found).
+type CountedContent struct {
+	SKU string
+	Qty int64
+}
+
+// MaxCountedContents bounds the audit count of one scan.
+const MaxCountedContents = 200
 
 // ScanOutcome is the answer of ReceiveScan: the receipt after the scan, what
 // the scan resolved to and what it did.
@@ -74,7 +85,9 @@ type ScanOutcome struct {
 type ReceiveScan struct {
 	Writer
 	Packaging ports.PackagingDirectory
-	metrics   ports.ReceiptMetrics
+	// Limits are the carton handling limits of ADR 0014; zero = unchecked.
+	Limits  receipt.CartonLimits
+	metrics ports.ReceiptMetrics
 }
 
 // WithMetrics attaches the business-metric port (optional).
@@ -94,6 +107,7 @@ type scanInput struct {
 	qty       int64
 	lot       string
 	expiry    string
+	counted   []CountedContent
 }
 
 // Handle runs the use case.
@@ -158,7 +172,10 @@ func (uc *ReceiveScan) recordMetrics(ctx context.Context, res receipt.ScanResult
 
 // parseScan turns the command into a scanInput without touching any port.
 func parseScan(cmd ReceiveScanCommand) (scanInput, error) {
-	in := scanInput{qty: cmd.Qty, lot: cmd.Lot, expiry: cmd.Expiry}
+	in := scanInput{qty: cmd.Qty, lot: cmd.Lot, expiry: cmd.Expiry, counted: cmd.CountedContents}
+	if len(in.counted) > MaxCountedContents {
+		return scanInput{}, fmt.Errorf("%w: at most %d counted contents", ErrInvalidScan, MaxCountedContents)
+	}
 	if cmd.Scan != "" {
 		if cmd.Kind != "" || cmd.ID != "" {
 			return scanInput{}, fmt.Errorf("%w: give either a raw scan or a kind and id, not both", ErrInvalidScan)
@@ -170,6 +187,9 @@ func parseScan(cmd ReceiveScanCommand) (scanInput, error) {
 		return scanInput{}, err
 	}
 	in.expected = kind
+	if len(in.counted) > 0 && kind != ScanSSCC {
+		return scanInput{}, fmt.Errorf("%w: countedContents apply to an SSCC scan only", ErrInvalidScan)
+	}
 	if kind == ScanSSCC {
 		if in.sscc, err = gs1.ParseSSCC(cmd.ID); err != nil {
 			return scanInput{}, err
@@ -195,6 +215,9 @@ func parseRawScan(in scanInput, cmd ReceiveScanCommand) (scanInput, error) {
 		return scanInput{}, fmt.Errorf("%w: %w", ErrInvalidScan, err)
 	}
 	in.sscc, in.gtin, in.labelGTIN, in.labelQty = scan.SSCC, scan.GTIN, scan.ContentGTIN, int64(scan.Count)
+	if len(in.counted) > 0 && in.sscc.IsZero() {
+		return scanInput{}, fmt.Errorf("%w: countedContents apply to an SSCC scan only", ErrInvalidScan)
+	}
 	if in.lot == "" {
 		in.lot = scan.Lot
 	}
@@ -260,6 +283,13 @@ func (uc *ReceiveScan) acceptCarton(ctx context.Context, r *receipt.Receipt, in 
 		if scan.CasePacks, err = uc.casePacks(ctx, carton, now); err != nil {
 			return receipt.ScanResult{}, err
 		}
+		if scan.Declared, err = uc.declared(ctx, r, in.sscc); err != nil {
+			return receipt.ScanResult{}, err
+		}
+		scan.Limits = uc.Limits
+		if scan.Counted, err = uc.counted(ctx, carton, in.counted, now); err != nil {
+			return receipt.ScanResult{}, err
+		}
 	}
 	if !in.labelGTIN.IsZero() {
 		if scan.LabelContentSKU, err = uc.skuOf(ctx, in.labelGTIN); err != nil {
@@ -267,6 +297,58 @@ func (uc *ReceiveScan) acceptCarton(ctx context.Context, r *receipt.Receipt, in 
 		}
 	}
 	return r.AcceptCarton(scan, now)
+}
+
+// declared reads the weight and longest side the ASN declared for the carton.
+// Nothing is read when no limit is configured.
+func (uc *ReceiveScan) declared(ctx context.Context, r *receipt.Receipt, sscc gs1.SSCC) (receipt.DeclaredCarton, error) {
+	if uc.Limits.MaxGrossWeightG <= 0 && uc.Limits.MaxLongestSideMm <= 0 {
+		return receipt.DeclaredCarton{}, nil
+	}
+	a, err := uc.Asns.Get(ctx, r.AsnNumber())
+	if err != nil {
+		return receipt.DeclaredCarton{}, err
+	}
+	for _, c := range a.Cartons() {
+		if c.SSCC() != sscc {
+			continue
+		}
+		out := receipt.DeclaredCarton{GrossWeightG: c.GrossWeightG()}
+		if d, ok := c.Dims(); ok {
+			out.LongestSideMm = max(d.LengthMm(), d.WidthMm(), d.HeightMm())
+		}
+		return out, nil
+	}
+	return receipt.DeclaredCarton{}, nil
+}
+
+// counted validates the audit count and gives every SKU the manifest does not
+// list its each GTIN from the PackagingView.
+func (uc *ReceiveScan) counted(ctx context.Context, carton receipt.Carton, in []CountedContent, now time.Time) ([]receipt.CountedContent, error) {
+	listed := map[shared.SKU]bool{}
+	for _, x := range carton.Contents() {
+		listed[x.SKU] = true
+	}
+	out := make([]receipt.CountedContent, 0, len(in))
+	for _, x := range in {
+		sku, err := shared.NewSKU(x.SKU)
+		if err != nil {
+			return nil, err
+		}
+		item := receipt.CountedContent{SKU: sku, Qty: x.Qty}
+		if !listed[sku] && x.Qty > 0 {
+			level, err := uc.Packaging.ActiveLevel(ctx, sku, shared.PackEach, now)
+			if errors.Is(err, repository.ErrPackLevelNotFound) {
+				return nil, fmt.Errorf("%w: %s", ErrCountedSkuUnknown, sku)
+			}
+			if err != nil {
+				return nil, err
+			}
+			item.GTIN = level.GTIN
+		}
+		out = append(out, item)
+	}
+	return out, nil
 }
 
 // casePacks reads the active CASE level of every SKU in the carton.

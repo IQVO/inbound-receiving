@@ -94,7 +94,7 @@ flowchart LR
     BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>ReceiptLineReceived"| out0
     BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>DockAppointmentBooked,<br/>DockAppointmentCancelled"| out1
     BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>ASNRegistered, ASNCancelled,<br/>DockAppointmentCheckedIn,<br/>DockAppointmentCompleted,<br/>ReceiptOpened, ReceiptClosed"| out2
-    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.analytics<br/>all nine events (analytics<br/>copy)"| out3
+    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.analytics<br/>all eleven events (analytics<br/>copy)"| out3
     linkStyle 0 stroke:#e8590c,stroke-width:2.5px
     linkStyle 1 stroke:#e8590c,stroke-width:2.5px
     linkStyle 2 stroke:#e8590c,stroke-width:2.5px
@@ -176,7 +176,7 @@ outbox and the relay in `cmd/api`.
 | `warehouse-planning` | `DockAppointmentBooked`, `DockAppointmentCancelled` | Event | same topic, `...dockappointment.DockAppointmentBooked` and `...DockAppointmentCancelled` | OHS + PL; consumed as inbound-labour demand by warehouse-planning's `InboundDemandConsumer` (its ADR 0017), group `warehouse-planning-inbound-demand` |
 | none today | `DockAppointmentCheckedIn`, `DockAppointmentCompleted` | Event | same topic, `...dockappointment.*` | OHS + PL |
 | none today | `ReceiptOpened`, `ReceiptClosed` | Event | same topic, `...receipt.*` | OHS + PL |
-| this context's own `inbound-projector` | all nine events, same `type` and `id` | Event | Kafka `warehouse.inbound-receiving.analytics` (DLQ `.dlq`), `dataschema=urn:warehouse:inbound-receiving:analytics:<EventName>:v1` | internal data stream, not an integration contract (ADR 0006) |
+| this context's own `inbound-projector` | all eleven events, same `type` and `id` | Event | Kafka `warehouse.inbound-receiving.analytics` (DLQ `.dlq`), `dataschema=urn:warehouse:inbound-receiving:analytics:<EventName>:v1` | internal data stream, not an integration contract (ADR 0006) |
 
 ## Ubiquitous Language
 

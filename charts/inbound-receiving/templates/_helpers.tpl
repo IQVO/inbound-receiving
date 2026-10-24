@@ -136,6 +136,15 @@ come from values (cmd/api exits at boot without PRODUCT_CONSUMER_GROUP /
 DOCK_DOOR_CONSUMER_GROUP). A stable id is what lets a rescheduled pod resume
 from its committed offsets.
 */}}
+{{- define "inbound-receiving.requireCartonLimits" -}}
+{{- range $key := list "cartonMaxGrossWeightG" "cartonMaxLongestSideMm" -}}
+{{- $v := int64 (index $.Values.config $key) -}}
+{{- if lt $v 0 -}}
+{{- fail (printf "config.%s is %d — a carton limit is a non-negative number (0 = unchecked, ADR 0014)." $key $v) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "inbound-receiving.requireConsumerGroups" -}}
 {{- if not .Values.config.productConsumerGroup -}}
 {{- fail "config.productConsumerGroup is required (PRODUCT_CONSUMER_GROUP): the product consumer always runs on real Kafka and cmd/api exits at boot without a group. Use a STABLE id (ADR 0011)." -}}
@@ -176,6 +185,7 @@ Deployment (always rendered) includes it, so a mis-set release fails
 {{- include "inbound-receiving.requireKafka" . -}}
 {{- include "inbound-receiving.requireConsumerModes" . -}}
 {{- include "inbound-receiving.requireConsumerGroups" . -}}
+{{- include "inbound-receiving.requireCartonLimits" . -}}
 {{- include "inbound-receiving.requireNoInMemoryEnv" . -}}
 {{- end -}}
 

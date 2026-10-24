@@ -32,6 +32,7 @@ type Server struct {
 	CancelAsn          *usecases.CancelAsn
 	GetAsn             *usecases.GetAsn
 	GetAsnCartons      *usecases.GetAsnCartons
+	GetCartonLabel     *usecases.GetCartonLabel
 	ListAsns           *usecases.ListAsns
 	BookAppointment    *usecases.BookAppointment
 	CheckInAppointment *usecases.CheckInAppointment
@@ -102,6 +103,7 @@ func NewRouter(s *Server) http.Handler {
 	create.Post("/receipts", s.handleOpenReceipt)
 	r.Get("/receipts", s.handleListReceipts)
 	r.Get("/receipts/{receiptId}", s.handleGetReceipt)
+	r.Get("/receipts/{receiptId}/cartons/{lpn}/label", s.handleGetCartonLabel)
 	create.Post("/receipts/{receiptId}/lines", s.handleReceiveLine)
 	create.Post("/receipts/{receiptId}/scans", s.handleReceiveScan)
 	action.Post("/receipts/{receiptId}/close", s.handleCloseReceipt)

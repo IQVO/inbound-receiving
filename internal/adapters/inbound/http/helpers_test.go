@@ -189,6 +189,7 @@ func build(t *testing.T, mode usecases.Mode) *fixture {
 		ReceiveLine:        &usecases.ReceiveLine{Writer: w},
 		CloseReceipt:       &usecases.CloseReceipt{Writer: w},
 		GetReceipt:         &usecases.GetReceipt{Receipts: fr},
+		GetCartonLabel:     &usecases.GetCartonLabel{Receipts: fr},
 		ListReceipts:       &usecases.ListReceipts{Receipts: fr},
 		ListDocks:          &usecases.ListDocks{Doors: fd, Mode: mode},
 		Idempotency:        faultyIdempotency{memory.NewIdempotencyStore(), f},

@@ -50,9 +50,15 @@ var (
 	// ErrScanKindMismatch is returned when a scan resolves to another kind than
 	// the screen expects (for example the each EAN printed on a case).
 	ErrScanKindMismatch = errors.New("scan kind does not match the expected kind")
+	// ErrCountedSkuUnknown is returned when an audit count names a SKU that
+	// is not on the carton's manifest and has no each GTIN in the PackagingView.
+	ErrCountedSkuUnknown = errors.New("counted sku has no each GTIN in the packaging view")
 	// ErrUnsupportedPackLevel is returned when a scanned GTIN identifies an
 	// INNER or PALLET level: receiving implements EACH and CASE only (G6).
 	ErrUnsupportedPackLevel = errors.New("receiving by scan supports EACH and CASE pack levels only")
+	// ErrCartonNotFound is returned when a receipt has no accepted carton
+	// with the requested license plate.
+	ErrCartonNotFound = errors.New("carton not found on the receipt")
 )
 
 // detailed is an error with a caller-facing message that still matches its

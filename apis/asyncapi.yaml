@@ -15,7 +15,7 @@ info:
     (ADR 0001, ADR 0002).
 
     **Published.** The `Asn`, `DockAppointment` and `Receipt` aggregates raise
-    nine events, published to `warehouse.inbound-receiving.events` through a
+    eleven events, published to `warehouse.inbound-receiving.events` through a
     **transactional outbox**: the aggregate row and its already-encoded events
     are written in ONE database transaction and a relay drains them to Kafka
     (at-least-once; the CloudEvents `id` is stored with the outbox row, so a
@@ -33,7 +33,7 @@ info:
     default to `permissive` (consumer not started); a `kafka` mode with an
     unset group is a boot error.
 
-    **Analytics (ADR 0006).** The same nine events are ALSO written, in the
+    **Analytics (ADR 0006).** The same eleven events are ALSO written, in the
     same transaction, to `warehouse.inbound-receiving.analytics` with the same
     `type` and the same `id` per occurrence, `dataschema`
     `urn:warehouse:inbound-receiving:analytics:<EventName>:v1` and payloads
@@ -115,6 +115,8 @@ channels:
           - $ref: "#/components/messages/DockAppointmentCompleted"
           - $ref: "#/components/messages/ReceiptOpened"
           - $ref: "#/components/messages/ReceiptLineReceived"
+          - $ref: "#/components/messages/ReceiptCartonReceived"
+          - $ref: "#/components/messages/CartonDiscrepancyRaised"
           - $ref: "#/components/messages/ReceiptClosed"
 
   warehouse.inbound-receiving.analytics:
@@ -152,6 +154,8 @@ channels:
           - $ref: "#/components/messages/DockAppointmentCompletedAnalytics"
           - $ref: "#/components/messages/ReceiptOpenedAnalytics"
           - $ref: "#/components/messages/ReceiptLineReceivedAnalytics"
+          - $ref: "#/components/messages/ReceiptCartonReceivedAnalytics"
+          - $ref: "#/components/messages/CartonDiscrepancyRaisedAnalytics"
           - $ref: "#/components/messages/ReceiptClosedAnalytics"
 
   warehouse.product-master.events:
@@ -436,6 +440,78 @@ components:
               condition: "Good"
               received_at: "2026-10-09T08:10:00Z"
 
+    ReceiptCartonReceived:
+      name: ReceiptCartonReceived
+      title: Receipt carton received
+      summary: "A carton (or one case) was received - identity only."
+      description: |
+        `type` = `com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived`;
+        subject = the receipt id, key = the ASN number.
+        IDENTITY ONLY: it never books quantity (`ReceiptLineReceived` stays the
+        sole quantity authority, in eaches). inventory-storage uses it to
+        create or link a Container keyed (receipt_id, line_no, lpn), in either
+        arrival order. `lpn` is the SSCC, or an internal `LPN-<ulid>` for a
+        case received without one. There is no site: the site is derived by
+        inventory-storage at stow (ADR 0013).
+      contentType: application/cloudevents+json
+      tags:
+        - name: receipt
+      payload:
+        $ref: "#/components/schemas/ReceiptCartonReceivedEvent"
+      examples:
+        - name: example
+          payload:
+            specversion: "1.0"
+            id: "4a9f6c2e-9b1a-4d6e-8a52-0c7d1e4b9a11"
+            source: "/warehouse/inbound-receiving"
+            type: "com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived"
+            subject: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-09T08:10:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inbound-receiving:events:ReceiptCartonReceived:v1"
+            data:
+              receipt_id: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+              asn_number: "ASN-1001"
+              sscc: "340123450000000013"
+              sealed: true
+              lpn: "340123450000000013"
+              contents:
+                - { line_no: 1, sku: "SKU-1", gtin: "13041090004824", qty: 24, condition: "Good" }
+              received_at: "2026-10-09T08:10:00Z"
+
+    CartonDiscrepancyRaised:
+      name: CartonDiscrepancyRaised
+      title: Carton discrepancy raised
+      summary: A finding about a physical carton.
+      description: |
+        `type` = `com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised`;
+        subject = the receipt id, key = the ASN number.
+        Carton discrepancies travel ONLY on this event; `ReceiptClosed` keeps
+        its three v1 kinds. A refused scan books nothing and raises this
+        event; an accepted carton can raise it too (for example
+        `UnlabelledCarton`).
+      contentType: application/cloudevents+json
+      tags:
+        - name: receipt
+      payload:
+        $ref: "#/components/schemas/CartonDiscrepancyRaisedEvent"
+      examples:
+        - name: example
+          payload:
+            specversion: "1.0"
+            id: "5b0a7d3f-0c2b-4e7f-9b63-1d8e2f5c0b22"
+            source: "/warehouse/inbound-receiving"
+            type: "com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised"
+            subject: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-09T08:10:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inbound-receiving:events:CartonDiscrepancyRaised:v1"
+            data:
+              receipt_id: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+              sscc: "340123450000000013"
+              kind: "UnexpectedCarton"
+              at: "2026-10-09T08:10:00Z"
+
     ReceiptClosed:
       name: ReceiptClosed
       title: Receipt closed
@@ -698,6 +774,78 @@ components:
               condition: "Good"
               received_at: "2026-10-09T08:10:00Z"
 
+    ReceiptCartonReceivedAnalytics:
+      name: ReceiptCartonReceived
+      title: Receipt carton received
+      summary: "A carton (or one case) was received - identity only."
+      description: |
+        `type` = `com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived`;
+        subject = the receipt id, key = the ASN number. Same payload as on the integration topic; dataschema `urn:warehouse:inbound-receiving:analytics:ReceiptCartonReceived:v1`.
+        IDENTITY ONLY: it never books quantity (`ReceiptLineReceived` stays the
+        sole quantity authority, in eaches). inventory-storage uses it to
+        create or link a Container keyed (receipt_id, line_no, lpn), in either
+        arrival order. `lpn` is the SSCC, or an internal `LPN-<ulid>` for a
+        case received without one. There is no site: the site is derived by
+        inventory-storage at stow (ADR 0013).
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/ReceiptCartonReceivedEvent"
+      examples:
+        - name: example
+          payload:
+            specversion: "1.0"
+            id: "4a9f6c2e-9b1a-4d6e-8a52-0c7d1e4b9a11"
+            source: "/warehouse/inbound-receiving"
+            type: "com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived"
+            subject: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-09T08:10:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inbound-receiving:analytics:ReceiptCartonReceived:v1"
+            data:
+              receipt_id: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+              asn_number: "ASN-1001"
+              sscc: "340123450000000013"
+              sealed: true
+              lpn: "340123450000000013"
+              contents:
+                - { line_no: 1, sku: "SKU-1", gtin: "13041090004824", qty: 24, condition: "Good" }
+              received_at: "2026-10-09T08:10:00Z"
+
+    CartonDiscrepancyRaisedAnalytics:
+      name: CartonDiscrepancyRaised
+      title: Carton discrepancy raised
+      summary: A finding about a physical carton.
+      description: |
+        `type` = `com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised`;
+        subject = the receipt id, key = the ASN number. Same payload as on the integration topic; dataschema `urn:warehouse:inbound-receiving:analytics:CartonDiscrepancyRaised:v1`.
+        Carton discrepancies travel ONLY on this event; `ReceiptClosed` keeps
+        its three v1 kinds. A refused scan books nothing and raises this
+        event; an accepted carton can raise it too (for example
+        `UnlabelledCarton`).
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/CartonDiscrepancyRaisedEvent"
+      examples:
+        - name: example
+          payload:
+            specversion: "1.0"
+            id: "5b0a7d3f-0c2b-4e7f-9b63-1d8e2f5c0b22"
+            source: "/warehouse/inbound-receiving"
+            type: "com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised"
+            subject: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-09T08:10:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inbound-receiving:analytics:CartonDiscrepancyRaised:v1"
+            data:
+              receipt_id: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+              sscc: "340123450000000013"
+              kind: "UnexpectedCarton"
+              at: "2026-10-09T08:10:00Z"
+
     ReceiptClosedAnalytics:
       name: ReceiptClosed
       title: Receipt closed (analytics)
@@ -881,10 +1029,40 @@ components:
                 asn_number: { type: string }
                 supplier_ref: { type: string }
                 expected_arrival: { type: string, format: date-time, description: Omitted when the supplier gave none. }
+                owner_ref: { type: string, description: Optional opaque tenant tag. }
                 lines:
                   type: array
                   minItems: 1
                   items: { $ref: "#/components/schemas/AsnLineData" }
+                cartons:
+                  type: array
+                  description: Optional announced cartons.
+                  items:
+                    type: object
+                    required: [sscc, kind, contents]
+                    properties:
+                      sscc: { type: string }
+                      parent_sscc: { type: string }
+                      kind: { type: string, enum: [HOMOGENEOUS_CASE, MIXED] }
+                      gross_weight_g: { type: integer }
+                      dims:
+                        type: object
+                        properties:
+                          length_mm: { type: integer }
+                          width_mm: { type: integer }
+                          height_mm: { type: integer }
+                      contents:
+                        type: array
+                        items:
+                          type: object
+                          required: [line_no, sku, gtin, qty]
+                          properties:
+                            line_no: { type: integer }
+                            sku: { type: string }
+                            gtin: { type: string }
+                            qty: { type: integer, description: Eaches. }
+                            lot: { type: string }
+                            expiry: { type: string }
 
     ASNCancelledEvent:
       allOf:
@@ -987,6 +1165,59 @@ components:
                 quantity: { type: integer, minimum: 1 }
                 condition: { type: string, enum: [Good, Damaged] }
                 received_at: { type: string, format: date-time }
+                owner_ref: { type: string, description: Optional; omitted for fleet-owned stock. }
+                pack_gtin: { type: string, description: Optional; the CASE GTIN when received as cases or from a homogeneous carton. }
+                cases: { type: integer, minimum: 1, description: Optional; cases booked; `quantity` stays eaches. }
+                sscc: { type: string, description: Optional; the carton the quantity came from. }
+
+    ReceiptCartonReceivedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [receipt_id, asn_number, sealed, lpn, contents, received_at]
+              properties:
+                receipt_id: { type: string }
+                asn_number: { type: string }
+                owner_ref: { type: string, description: Omitted for fleet-owned stock. }
+                sscc: { type: string, description: Omitted for an unlabelled carton. }
+                parent_sscc: { type: string }
+                sealed: { type: boolean }
+                lpn: { type: string, description: "The SSCC, or an internal `LPN-<ulid>`." }
+                contents:
+                  type: array
+                  items:
+                    type: object
+                    required: [line_no, sku, gtin, qty, condition]
+                    properties:
+                      line_no: { type: integer, minimum: 1 }
+                      sku: { type: string }
+                      gtin: { type: string }
+                      qty: { type: integer, minimum: 1, description: Eaches. }
+                      lot: { type: string }
+                      expiry: { type: string }
+                      condition: { type: string, enum: [Good, Damaged] }
+                received_at: { type: string, format: date-time }
+
+    CartonDiscrepancyRaisedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [receipt_id, kind, at]
+              properties:
+                receipt_id: { type: string }
+                sscc: { type: string, description: Omitted when the finding has no SSCC. }
+                kind:
+                  type: string
+                  enum: [UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch]
+                expected: { type: string, description: "A count, a SKU, or `sku:qty` / `grossWeightG:<n>` pairs (CartonOverLimit: the breached limits; MixedCartonContentMismatch: the manifest)." }
+                actual: { type: string, description: The counterpart of `expected`. }
+                at: { type: string, format: date-time }
 
     ReceiptClosedEvent:
       allOf:

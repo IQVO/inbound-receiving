@@ -171,6 +171,12 @@ config:
   # PACKAGING_CONSUMER_GROUP (ADR 0012): the PackagingView consumer's STABLE group id
   # (product-master pack-level events). REQUIRED, like productConsumerGroup.
   packagingConsumerGroup: ""
+  # CARTON_MAX_GROSS_WEIGHT_G / CARTON_MAX_LONGEST_SIDE_MM (ADR 0014): the
+  # CartonOverLimit handling limits, in grams and millimetres, checked against
+  # a carton's DECLARED weight and longest side at acceptance. 0 = unchecked.
+  # An over-limit carton is still accepted; the finding is raised.
+  cartonMaxGrossWeightG: 0
+  cartonMaxLongestSideMm: 0
   # SHUTDOWN_DRAIN_DELAY: wait after /readyz flips before closing the
   # listener. Empty = not rendered; the binary defaults to 5s.
   shutdownDrainDelay: ""

@@ -94,6 +94,11 @@ spec:
             # PackagingView (ADR 0012): local copy of product-master pack levels, always on.
             - name: PACKAGING_CONSUMER_GROUP
               value: {{ .Values.config.packagingConsumerGroup | quote }}
+            # ADR 0014: CartonOverLimit handling limits (0 = unchecked).
+            - name: CARTON_MAX_GROSS_WEIGHT_G
+              value: {{ .Values.config.cartonMaxGrossWeightG | int64 | quote }}
+            - name: CARTON_MAX_LONGEST_SIDE_MM
+              value: {{ .Values.config.cartonMaxLongestSideMm | int64 | quote }}
             {{- with .Values.config.shutdownDrainDelay }}
             - name: SHUTDOWN_DRAIN_DELAY
               value: {{ . | quote }}
