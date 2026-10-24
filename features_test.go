@@ -23,6 +23,7 @@ import (
 	outboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/outbound/kafka"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/memory"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
+	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
 
 // TestFeatures runs every Gherkin feature under features/.
@@ -75,6 +76,8 @@ type world struct {
 	body   []byte
 
 	appointment, receipt string
+	lpn                  string
+	limits               receipt.CartonLimits
 	listQuery            string
 }
 
@@ -86,6 +89,7 @@ func (w *world) start() {
 	w.clock = &steppingClock{now: bddStart}
 	w.skuMode, w.doorMode = usecases.ModePermissive, usecases.ModePermissive
 	w.status, w.header, w.body, w.keys, w.appointment, w.receipt, w.listQuery = 0, nil, nil, 0, "", "", ""
+	w.lpn, w.limits = "", receipt.CartonLimits{}
 	w.wave2 = wave2State{}
 	uow := memory.NewUnitOfWork(asns, appts, receipts, w.skus, w.doors, w.packaging, ob, processed)
 	w.uow = uow
@@ -110,7 +114,8 @@ func (w *world) start() {
 			ListAppointments:   &usecases.ListAppointments{Appointments: appts},
 			OpenReceipt:        &usecases.OpenReceipt{Writer: writer},
 			ReceiveLine:        &usecases.ReceiveLine{Writer: writer},
-			ReceiveScan:        &usecases.ReceiveScan{Writer: writer, Packaging: w.packaging},
+			ReceiveScan:        &usecases.ReceiveScan{Writer: writer, Packaging: w.packaging, Limits: w.limits},
+			GetCartonLabel:     &usecases.GetCartonLabel{Receipts: receipts},
 			CloseReceipt:       &usecases.CloseReceipt{Writer: writer},
 			GetReceipt:         &usecases.GetReceipt{Receipts: receipts},
 			ListReceipts:       &usecases.ListReceipts{Receipts: receipts},
@@ -130,7 +135,7 @@ func (w *world) stop() {
 
 // expand substitutes the remembered ids into a path.
 func (w *world) expand(s string) string {
-	return strings.NewReplacer("{appointment}", w.appointment, "{receipt}", w.receipt).Replace(s)
+	return strings.NewReplacer("{appointment}", w.appointment, "{receipt}", w.receipt, "{lpn}", w.lpn).Replace(s)
 }
 
 // call issues a request and remembers the response. A non-empty key is sent
