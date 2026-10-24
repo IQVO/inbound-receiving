@@ -185,3 +185,35 @@ func TestCartonByLPN(t *testing.T) {
 		t.Fatal("an empty lpn must not match an unlabelled entry")
 	}
 }
+
+// A counted quantity of exactly zero is a legitimate answer ("looked, found
+// none"), not an invalid count, and for a SKU the manifest does not list it
+// is no finding at all: nothing was expected and nothing was found.
+func TestMixedCountZeroIsValid(t *testing.T) {
+	r := openedCartons(t)
+	zero := []CountedContent{{SKU: "SKU-1", Qty: 10}, {SKU: "SKU-2", Qty: 0}}
+	res, err := r.AcceptCarton(CartonScan{SSCC: ssccM(t), Condition: ConditionGood, Counted: zero}, at(1))
+	if err != nil {
+		t.Fatalf("explicit zero count rejected: %v", err)
+	}
+	want := CartonDiscrepancy{Kind: KindMixedCartonContentMismatch, SSCC: ssccM(t), Expected: "SKU-2:5", Actual: "SKU-2:0"}
+	if got := res.Discrepancies; len(got) != 1 || got[0] != want {
+		t.Fatalf("findings = %+v, want [%+v]", got, want)
+	}
+
+	r2 := openedCartons(t)
+	m := r2.cartons[2]
+	m.contents = m.contents[:1] // the manifest lists SKU-1 only
+	r2.cartons[2] = m
+	res, err = r2.AcceptCarton(CartonScan{SSCC: ssccM(t), Condition: ConditionGood,
+		Counted: []CountedContent{{SKU: "SKU-1", Qty: 10}, {SKU: "SKU-2", Qty: 0, GTIN: eachGTIN2(t)}}}, at(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Discrepancies; len(got) != 0 {
+		t.Fatalf("a zero count of an unlisted SKU raised %+v, want nothing", got)
+	}
+	if got := r2.Lines()[1].Received(); got != 0 {
+		t.Fatalf("unlisted SKU received = %d, want 0", got)
+	}
+}
