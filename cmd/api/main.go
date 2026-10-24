@@ -20,6 +20,7 @@
 //	PRODUCT_CONSUMER_GROUP        stable group of the product consumer (REQUIRED)
 //	DOCK_DOOR_MODE                kafka (default kafka): known inbound doors; permissive/off are boot errors
 //	DOCK_DOOR_CONSUMER_GROUP      stable group of the dock-door consumer (REQUIRED)
+//	PACKAGING_CONSUMER_GROUP      stable group of the packaging consumer feeding the PackagingView (REQUIRED)
 //	OTEL_EXPORTER_OTLP_ENDPOINT   OTLP/gRPC collector (default localhost:4317)
 //	SHUTDOWN_DRAIN_DELAY          wait after flipping /readyz before closing (default 5s)
 //	LOG_LEVEL, SERVICE_VERSION, ENVIRONMENT, CORS_ALLOWED_ORIGINS
@@ -134,9 +135,10 @@ func run(ctx context.Context) error {
 
 // config is the validated, env-derived part of the wiring.
 type config struct {
-	productGroup string
-	doorGroup    string
-	kafkaBrokers []string
+	productGroup   string
+	doorGroup      string
+	packagingGroup string
+	kafkaBrokers   []string
 }
 
 // Boot errors for the variables the context cannot run without. Each message
@@ -173,6 +175,9 @@ func loadConfig(env func(string) string) (config, error) {
 	}
 	if cfg.doorGroup = env("DOCK_DOOR_CONSUMER_GROUP"); cfg.doorGroup == "" {
 		return config{}, errors.New("DOCK_DOOR_CONSUMER_GROUP is required: the dock-door consumer always runs on real Kafka")
+	}
+	if cfg.packagingGroup = env("PACKAGING_CONSUMER_GROUP"); cfg.packagingGroup == "" {
+		return config{}, errors.New("PACKAGING_CONSUMER_GROUP is required: the packaging consumer (PackagingView) always runs on real Kafka")
 	}
 	return cfg, nil
 }
@@ -225,6 +230,13 @@ type doorCopy interface {
 	ports.DockDoorStore
 }
 
+// packagingView is the PackagingView read by the receiving use cases and
+// written by the packaging consumer (the same adapter serves both).
+type packagingView interface {
+	ports.PackagingDirectory
+	ports.PackagingStore
+}
+
 // adapters is the set of outbound adapters the composition root wires.
 type adapters struct {
 	asns         ports.AsnRepository
@@ -235,6 +247,7 @@ type adapters struct {
 	processed    ports.ProcessedEvents
 	skus         skuCopy
 	doors        doorCopy
+	packaging    packagingView
 	idempotency  ports.IdempotencyStore
 	uow          ports.UnitOfWork
 	// sweeper is the housekeeping job (ADR 0010).
@@ -257,6 +270,7 @@ func buildServer(ad adapters, readiness *inboundhttp.Readiness, metrics http.Han
 		RegisterAsn:        &usecases.RegisterAsn{Writer: w, SkuMode: usecases.ModeKafka, Skus: ad.skus},
 		CancelAsn:          &usecases.CancelAsn{Writer: w},
 		GetAsn:             &usecases.GetAsn{Asns: ad.asns},
+		GetAsnCartons:      &usecases.GetAsnCartons{Asns: ad.asns, Receipts: ad.receipts},
 		ListAsns:           &usecases.ListAsns{Asns: ad.asns},
 		BookAppointment:    &usecases.BookAppointment{Writer: w, DoorMode: usecases.ModeKafka, Doors: ad.doors},
 		CheckInAppointment: &usecases.CheckInAppointment{Writer: w},
@@ -265,6 +279,7 @@ func buildServer(ad adapters, readiness *inboundhttp.Readiness, metrics http.Han
 		ListAppointments:   &usecases.ListAppointments{Appointments: ad.appointments},
 		OpenReceipt:        &usecases.OpenReceipt{Writer: w},
 		ReceiveLine:        (&usecases.ReceiveLine{Writer: w}).WithMetrics(receiptMetrics),
+		ReceiveScan:        (&usecases.ReceiveScan{Writer: w, Packaging: ad.packaging}).WithMetrics(receiptMetrics),
 		CloseReceipt:       &usecases.CloseReceipt{Writer: w},
 		GetReceipt:         &usecases.GetReceipt{Receipts: ad.receipts},
 		ListReceipts:       &usecases.ListReceipts{Receipts: ad.receipts},
@@ -305,7 +320,7 @@ func buildAdapters(ctx context.Context, databaseURL string, logger *slog.Logger)
 	return adapters{
 		asns: postgres.NewAsnRepo(pool), appointments: postgres.NewAppointmentRepo(pool), receipts: postgres.NewReceiptRepo(pool),
 		outbox: ob, outboxStore: ob, processed: postgres.NewProcessedEventRepo(pool),
-		skus: postgres.NewKnownSkus(pool), doors: postgres.NewDockDoors(pool),
+		skus: postgres.NewKnownSkus(pool), doors: postgres.NewDockDoors(pool), packaging: postgres.NewPackagingView(pool),
 		idempotency: postgres.NewIdempotencyStore(pool), uow: postgres.NewUnitOfWork(pool),
 		sweeper: newSweeper(pool, os.Getenv, logger), pool: pool,
 	}, pool.Close, nil
@@ -371,7 +386,7 @@ func startWorker(logger *slog.Logger, name string, run func(ctx context.Context)
 	return w
 }
 
-// startConsumers starts both local-copy consumers; they are always on. A
+// startConsumers starts the three local-copy consumers; they are always on. A
 // reader dials lazily inside Run, so a broker outage never blocks boot.
 func startConsumers(ad adapters, cfg config, logger *slog.Logger) []*worker {
 	apply := &usecases.ApplyProductRegistered{UoW: ad.uow, ProcessedEvents: ad.processed, Skus: ad.skus}
@@ -383,9 +398,15 @@ func startConsumers(ad adapters, cfg config, logger *slog.Logger) []*worker {
 	dc := inboundkafka.NewDockDoorConsumer(cfg.kafkaBrokers, cfg.doorGroup, reg, dec, logger)
 	logger.Info("dock door consumer running", "topic", inboundkafka.FacilityTopic, "group_id", cfg.doorGroup, "brokers", cfg.kafkaBrokers)
 
+	declared := &usecases.ApplyPackLevelDeclared{UoW: ad.uow, ProcessedEvents: ad.processed, Packaging: ad.packaging}
+	retired := &usecases.ApplyPackLevelRetired{UoW: ad.uow, ProcessedEvents: ad.processed, Packaging: ad.packaging}
+	pk := inboundkafka.NewPackagingConsumer(cfg.kafkaBrokers, cfg.packagingGroup, declared, retired, logger)
+	logger.Info("packaging consumer running", "topic", inboundkafka.ProductTopic, "group_id", cfg.packagingGroup, "brokers", cfg.kafkaBrokers)
+
 	return []*worker{
 		startWorker(logger, "product-consumer", pc.Run, func() { _ = pc.Close() }),
 		startWorker(logger, "dock-door-consumer", dc.Run, func() { _ = dc.Close() }),
+		startWorker(logger, "packaging-consumer", pk.Run, func() { _ = pk.Close() }),
 	}
 }
 

@@ -143,6 +143,9 @@ from its committed offsets.
 {{- if not .Values.config.dockDoorConsumerGroup -}}
 {{- fail "config.dockDoorConsumerGroup is required (DOCK_DOOR_CONSUMER_GROUP): the dock-door consumer always runs on real Kafka and cmd/api exits at boot without a group. Use a STABLE id (ADR 0011)." -}}
 {{- end -}}
+{{- if not .Values.config.packagingConsumerGroup -}}
+{{- fail "config.packagingConsumerGroup is required (PACKAGING_CONSUMER_GROUP): the packaging consumer always runs on real Kafka and cmd/api exits at boot without a group. Use a STABLE id (ADR 0012)." -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

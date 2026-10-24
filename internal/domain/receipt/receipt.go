@@ -162,10 +162,12 @@ type Discrepancy struct {
 type Persisted struct {
 	ID            string
 	AsnNumber     string
+	OwnerRef      string
 	AppointmentID string
 	DoorCode      string
 	State         State
 	Lines         []LineState
+	Cartons       []CartonState
 	OpenedAt      time.Time
 	ClosedAt      time.Time
 	Version       int64
@@ -183,10 +185,12 @@ type Persisted struct {
 type Receipt struct {
 	id            ID
 	asnNumber     asn.Number
+	ownerRef      shared.OwnerRef
 	appointmentID appointment.ID
 	doorCode      appointment.DoorCode
 	state         State
 	lines         []Line
+	cartons       []Carton
 	openedAt      time.Time
 	closedAt      time.Time
 	version       int64
@@ -206,10 +210,12 @@ func Open(id string, snapshot asn.Snapshot, appointmentID, doorCode string, now 
 	r, err := build(Persisted{
 		ID:            id,
 		AsnNumber:     string(snapshot.Number),
+		OwnerRef:      string(snapshot.OwnerRef),
 		AppointmentID: appointmentID,
 		DoorCode:      doorCode,
 		State:         StateOpen,
 		Lines:         lines,
+		Cartons:       manifestStates(snapshot.Cartons),
 		OpenedAt:      now,
 		Version:       1,
 	})
@@ -247,17 +253,27 @@ func build(p Persisted) (*Receipt, error) {
 	if err := validateTimestamps(p); err != nil {
 		return nil, err
 	}
+	owner, err := shared.NewOwnerRef(p.OwnerRef)
+	if err != nil {
+		return nil, err
+	}
 	lines, err := buildLines(p.Lines)
+	if err != nil {
+		return nil, err
+	}
+	cartons, err := buildCartons(p.Cartons, lines)
 	if err != nil {
 		return nil, err
 	}
 	return &Receipt{
 		id:            id,
 		asnNumber:     number,
+		ownerRef:      owner,
 		appointmentID: appointmentID,
 		doorCode:      doorCode,
 		state:         p.State,
 		lines:         lines,
+		cartons:       cartons,
 		openedAt:      p.OpenedAt.UTC(),
 		closedAt:      p.ClosedAt.UTC(),
 		version:       p.Version,
@@ -397,6 +413,7 @@ func (r *Receipt) ReceiveLine(lineNo int, qty int64, condition Condition, at tim
 		SKU:       line.sku,
 		Quantity:  qty,
 		Condition: condition,
+		OwnerRef:  r.ownerRef,
 	}
 	return []Event{received}, nil
 }
@@ -411,8 +428,11 @@ func (r *Receipt) Close(at time.Time) ([]Event, error) {
 	r.state = StateClosed
 	r.closedAt = at.UTC()
 	r.version++
+	// Manifest cartons never accepted are raised first (MissingCarton), so
+	// ReceiptClosed is the last event of the receipt's life. ReceiptClosed
+	// itself keeps its three line-level kinds.
 	closed := ReceiptClosed{Header: r.header(at), Discrepancies: r.Discrepancies()}
-	return []Event{closed}, nil
+	return append(r.missingCartonEvents(at), closed), nil
 }
 
 // Discrepancies computes the differences between announced and received

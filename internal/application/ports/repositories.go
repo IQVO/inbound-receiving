@@ -11,6 +11,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
+	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
 )
 
 // AsnRepository persists Asn aggregates by ASN number. Inside a UnitOfWork it
@@ -27,6 +28,9 @@ type AsnRepository interface {
 	// List returns up to limit ASNs with number > after (byte order),
 	// ascending by number, narrowed by filter.
 	List(ctx context.Context, filter repository.AsnFilter, after asn.Number, limit int) ([]*asn.Asn, error)
+	// ExistingSsccs returns the given SSCCs (carton and pallet) that already
+	// appear on an ASN that is not Cancelled, so an SSCC stays unique per site.
+	ExistingSsccs(ctx context.Context, ssccs []gs1.SSCC) ([]gs1.SSCC, error)
 }
 
 // AppointmentRepository persists DockAppointment aggregates by id.
@@ -60,4 +64,7 @@ type ReceiptRepository interface {
 	// OpenByAsn returns the ASN's open receipt, or
 	// repository.ErrReceiptNotFound when it has none.
 	OpenByAsn(ctx context.Context, number asn.Number) (*receipt.Receipt, error)
+	// ReceivedSsccs returns the given SSCCs that were already accepted on any
+	// receipt of the site (ADR 0012's DuplicateSscc).
+	ReceivedSsccs(ctx context.Context, ssccs []gs1.SSCC) ([]gs1.SSCC, error)
 }

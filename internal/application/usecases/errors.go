@@ -3,6 +3,8 @@ package usecases
 import (
 	"errors"
 	"fmt"
+
+	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 )
 
 var (
@@ -39,6 +41,18 @@ var (
 	ErrInvalidEvent = errors.New("invalid event")
 	// ErrInvalidMode is returned by ParseMode for an unknown mode value.
 	ErrInvalidMode = errors.New("mode must be kafka or permissive")
+	// ErrInvalidScanKind is returned for a scan kind other than SSCC,
+	// CASE_GTIN or EACH_GTIN.
+	ErrInvalidScanKind = errors.New("scan kind must be SSCC, CASE_GTIN or EACH_GTIN")
+	// ErrInvalidScan is returned for a raw scan that is not a GS1 scan, or a
+	// scan request that gives both a raw scan and a kind and id.
+	ErrInvalidScan = errors.New("scan is not valid")
+	// ErrScanKindMismatch is returned when a scan resolves to another kind than
+	// the screen expects (for example the each EAN printed on a case).
+	ErrScanKindMismatch = errors.New("scan kind does not match the expected kind")
+	// ErrUnsupportedPackLevel is returned when a scanned GTIN identifies an
+	// INNER or PALLET level: receiving implements EACH and CASE only (G6).
+	ErrUnsupportedPackLevel = errors.New("receiving by scan supports EACH and CASE pack levels only")
 )
 
 // detailed is an error with a caller-facing message that still matches its
@@ -61,6 +75,10 @@ func unknownDoor(door string) error {
 
 func unknownAsn(number string) error {
 	return &detailed{sentinel: ErrUnknownAsn, msg: fmt.Sprintf("asn %s does not exist", number)}
+}
+
+func duplicateSscc(sscc string) error {
+	return &detailed{sentinel: asn.ErrDuplicateSscc, msg: fmt.Sprintf("sscc %s is already on another asn of this site", sscc)}
 }
 
 func unknownAppointment(id string) error {

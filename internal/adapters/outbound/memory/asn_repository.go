@@ -7,6 +7,7 @@ import (
 
 	"github.com/claudioed/inbound-receiving/internal/application/repository"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
+	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
 )
 
 // AsnRepo is an in-memory, mutex-guarded ports.AsnRepository. It stores
@@ -106,10 +107,30 @@ func (r *AsnRepo) Snapshot() func() {
 	}
 }
 
-func copyAsn(a *asn.Asn) (*asn.Asn, error) {
-	lines := make([]asn.LineInput, 0, len(a.Lines()))
-	for _, l := range a.Lines() {
-		lines = append(lines, asn.LineInput{LineNo: l.LineNo(), SKU: string(l.SKU()), ExpectedQty: l.ExpectedQty()})
+func copyAsn(a *asn.Asn) (*asn.Asn, error) { return asn.RehydrateDraft(a.Persisted()) }
+
+// ExistingSsccs implements ports.AsnRepository: the given SSCCs found as a
+// carton or pallet SSCC on an ASN that is not cancelled.
+func (r *AsnRepo) ExistingSsccs(_ context.Context, ssccs []gs1.SSCC) ([]gs1.SSCC, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	taken := map[gs1.SSCC]struct{}{}
+	for _, a := range r.items {
+		if a.State() == asn.Cancelled {
+			continue
+		}
+		for _, c := range a.Cartons() {
+			taken[c.SSCC()] = struct{}{}
+			if !c.ParentSSCC().IsZero() {
+				taken[c.ParentSSCC()] = struct{}{}
+			}
+		}
 	}
-	return asn.Rehydrate(string(a.Number()), a.SupplierRef(), a.ExpectedArrival(), lines, a.State(), a.Version())
+	var out []gs1.SSCC
+	for _, s := range ssccs {
+		if _, ok := taken[s]; ok {
+			out = append(out, s)
+		}
+	}
+	return out, nil
 }

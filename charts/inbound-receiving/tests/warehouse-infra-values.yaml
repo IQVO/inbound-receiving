@@ -16,6 +16,7 @@ config:
   productConsumerGroup: "inbound-receiving-product"
   dockDoorMode: "kafka"
   dockDoorConsumerGroup: "inbound-receiving-dock-doors"
+  packagingConsumerGroup: "inbound-receiving-packaging"
 
 kafka:
   enabled: true
