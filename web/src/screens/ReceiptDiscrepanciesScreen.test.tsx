@@ -43,11 +43,11 @@ describe("ReceiptDiscrepanciesScreen", () => {
   it("shows MissingCarton for announced cartons the ASN reports Missing", async () => {
     mockApi({ [`GET /receipts/${RCPT_ID}`]: json(closedReceipt()), "GET /asns/ASN-1001/cartons": json(asnCartons()) });
     mount();
-    await screen.findByText("340123450000000037");
+    await screen.findByText("340123450000000031");
     const table = screen.getAllByRole("table")[0];
     const row = within(table).getAllByRole("row")[1];
     expect(within(row).getByText("MissingCarton")).toBeInTheDocument();
-    expect(within(row).getByText("340123450000000037")).toBeInTheDocument();
+    expect(within(row).getByText("340123450000000031")).toBeInTheDocument();
     // a closed receipt takes no more scans
     expect(screen.queryByRole("button", { name: "Scan" })).not.toBeInTheDocument();
   });

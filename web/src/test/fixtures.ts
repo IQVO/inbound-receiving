@@ -82,9 +82,9 @@ export function docks(mode: DockList["mode"] = "kafka"): DockList {
 
 /* ---- cartons ---- */
 
-export const SSCC_1 = "340123450000000013";
-export const SSCC_2 = "340123450000000020";
-export const PALLET = "340123450000000099";
+export const SSCC_1 = "340123450000000017";
+export const SSCC_2 = "340123450000000024";
+export const PALLET = "340123450000000093";
 
 export function cartonStatus(over: Partial<AsnCartonStatus> = {}): AsnCartonStatus {
   return {
@@ -111,7 +111,7 @@ export function asnCartons(over: Partial<AsnCartons> = {}): AsnCartons {
         ],
         status: "Accepted",
       }),
-      cartonStatus({ sscc: "340123450000000037", parentSscc: undefined, status: "Missing" }),
+      cartonStatus({ sscc: "340123450000000031", parentSscc: undefined, status: "Missing" }),
     ],
     ...over,
   };

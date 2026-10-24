@@ -19,7 +19,7 @@ import {
 
 function carton(over: Partial<AsnCartonStatus> = {}): AsnCartonStatus {
   return {
-    sscc: "340123450000000013",
+    sscc: "340123450000000017",
     kind: "HOMOGENEOUS_CASE",
     contents: [{ lineNo: 1, sku: "SKU-1", gtin: "00000000000000", qty: 24 }],
     status: "Expected",
@@ -113,7 +113,7 @@ describe("code128", () => {
     expect(code128Values("A")).toEqual([104, 33, 34, 106]);
   });
   it("encodes an 18-digit SSCC as GS1-128 (start C, FNC1, AI 00, digit pairs)", () => {
-    const v = code128Values("340123450000000013");
+    const v = code128Values("340123450000000017");
     expect(v?.slice(0, 4)).toEqual([105, 102, 0, 34]);
     expect(v).toHaveLength(2 + 10 + 2);
     expect(v?.at(-1)).toBe(106);
