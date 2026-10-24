@@ -120,6 +120,12 @@ const sidebar: SidebarsConfig = {
         },
         {
           type: "doc",
+          id: "api-reference/rest/get-carton-label",
+          label: "Get the label data of an accepted carton",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
           id: "api-reference/rest/receive-scan",
           label: "Receive by scan",
           className: "api-method post",

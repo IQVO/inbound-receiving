@@ -19,6 +19,8 @@ data:
   PRODUCT_CONSUMER_GROUP: {{ .Values.config.productConsumerGroup | quote }}
   DOCK_DOOR_CONSUMER_GROUP: {{ .Values.config.dockDoorConsumerGroup | quote }}
   PACKAGING_CONSUMER_GROUP: {{ .Values.config.packagingConsumerGroup | quote }}
+  CARTON_MAX_GROSS_WEIGHT_G: {{ .Values.config.cartonMaxGrossWeightG | int64 | quote }}
+  CARTON_MAX_LONGEST_SIDE_MM: {{ .Values.config.cartonMaxLongestSideMm | int64 | quote }}
   {{- with .Values.config.outboxRelayInterval }}
   OUTBOX_RELAY_INTERVAL: {{ . | quote }}
   {{- end }}

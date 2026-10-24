@@ -50,6 +50,23 @@ grep -A1 'name: OUTBOX_MAX_ATTEMPTS' <<<"$api_deployment" | grep -q 'value: "20"
 unlimited="$(helm template "$release" "$chart_dir" "${base[@]}" --set config.outboxMaxAttempts=0 --show-only templates/configmap.yaml)"
 grep -q 'OUTBOX_MAX_ATTEMPTS: "0"' <<<"$unlimited" || fail "config.outboxMaxAttempts=0 is not rendered"
 
+# ADR 0014: the CartonOverLimit limits default to 0 (unchecked), reach the api
+# Deployment and the ConfigMap when tuned, and a negative value is refused.
+grep -q 'CARTON_MAX_GROSS_WEIGHT_G: "0"' <<<"$configmap" || fail "CARTON_MAX_GROSS_WEIGHT_G must default to 0 in the ConfigMap"
+grep -q 'CARTON_MAX_LONGEST_SIDE_MM: "0"' <<<"$configmap" || fail "CARTON_MAX_LONGEST_SIDE_MM must default to 0 in the ConfigMap"
+grep -A1 'name: CARTON_MAX_GROSS_WEIGHT_G' <<<"$api_deployment" | grep -q 'value: "0"' \
+  || fail "api Deployment does not set CARTON_MAX_GROSS_WEIGHT_G"
+grep -A1 'name: CARTON_MAX_LONGEST_SIDE_MM' <<<"$api_deployment" | grep -q 'value: "0"' \
+  || fail "api Deployment does not set CARTON_MAX_LONGEST_SIDE_MM"
+carton_tuned="$(helm template "$release" "$chart_dir" "${base[@]}" --set config.cartonMaxGrossWeightG=20000 --set config.cartonMaxLongestSideMm=1200)"
+grep -q 'CARTON_MAX_GROSS_WEIGHT_G: "20000"' <<<"$carton_tuned" || fail "config.cartonMaxGrossWeightG is not rendered into the ConfigMap"
+grep -q 'CARTON_MAX_LONGEST_SIDE_MM: "1200"' <<<"$carton_tuned" || fail "config.cartonMaxLongestSideMm is not rendered into the ConfigMap"
+grep -A1 'name: CARTON_MAX_GROSS_WEIGHT_G' <<<"$carton_tuned" | grep -q 'value: "20000"' || fail "api Deployment does not render the tuned CARTON_MAX_GROSS_WEIGHT_G"
+grep -A1 'name: CARTON_MAX_LONGEST_SIDE_MM' <<<"$carton_tuned" | grep -q 'value: "1200"' || fail "api Deployment does not render the tuned CARTON_MAX_LONGEST_SIDE_MM"
+if helm template "$release" "$chart_dir" "${base[@]}" --set config.cartonMaxGrossWeightG=-1 >/dev/null 2>&1; then
+  fail "a negative config.cartonMaxGrossWeightG must be refused"
+fi
+
 # D24 / ADR 0010: the housekeeping knobs reach the api (ConfigMap, envFrom)
 # and the projector (explicit env), with the fleet defaults.
 for kv in 'HOUSEKEEPING_INTERVAL: "1h"' 'IDEMPOTENCY_KEY_TTL: "24h"' 'OUTBOX_RETENTION: "168h"' 'PROCESSED_EVENTS_RETENTION: "720h"'; do

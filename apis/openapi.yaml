@@ -46,7 +46,8 @@ info:
     `asn-not-on-appointment`, `line-not-on-asn`, `invalid-owner-ref`,
     `invalid-carton-kind`, `invalid-carton`, `invalid-sscc`, `invalid-gtin`,
     `unsupported-gtin`, `invalid-scan-kind`, `invalid-scan`, `invalid-cases`,
-    `duplicate-sscc`, `homogeneous-carton-mixed`, `carton-contents-mismatch`,
+    `invalid-counted-contents`, `counted-contents-not-mixed`,
+    `counted-sku-unknown`, `carton-not-found`, `duplicate-sscc`, `homogeneous-carton-mixed`, `carton-contents-mismatch`,
     `scan-kind-mismatch`, `unsupported-pack-level`, `version-mismatch`,
     `concurrent-modification`, `resource-not-found` (a NUL character in the
     request path), `dependency-unavailable` (`/readyz` while Postgres or Kafka
@@ -672,6 +673,48 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /receipts/{receiptId}/cartons/{lpn}/label:
+    parameters:
+      - $ref: "#/components/parameters/ReceiptId"
+      - name: lpn
+        in: path
+        required: true
+        description: The carton's license plate - its SSCC, or the internal `LPN-<ulid>` of a carton received without one.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+        example: LPN-01K8Z3Q5R7T9V1W2X4Y6A8B0CD
+    get:
+      operationId: getCartonLabel
+      summary: Get the label data of an accepted carton
+      description: |
+        Returns the DATA of a license plate label (symbology, human readable
+        text, SKU and units); the service has no printer driver, the floor
+        client renders and prints it. A carton the receipt has not accepted
+        (or never heard of) is 404 `carton-not-found`.
+      tags: [Receipts]
+      responses:
+        "200":
+          description: The label data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartonLabel"
+              example:
+                lpn: LPN-01K8Z3Q5R7T9V1W2X4Y6A8B0CD
+                symbology: CODE128
+                humanReadable: LPN-01K8Z3Q5R7T9V1W2X4Y6A8B0CD
+                sku: SKU-1
+                units: 20
+                receivedAt: "2026-10-09T08:10:00Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /receipts/{receiptId}/scans:
     parameters:
       - $ref: "#/components/parameters/ReceiptId"
@@ -1119,7 +1162,7 @@ components:
         parameter (`invalid-query`), a missing `Idempotency-Key`
         (`idempotency-key-required`), or a value that breaks a domain rule
         (the `invalid-*`, `*-requires-*`, `duplicate-*`, `window-in-past` and
-        `invalid-condition`, `invalid-carton*`, `invalid-scan*`, `invalid-cases`,
+        `invalid-condition`, `invalid-carton*`, `invalid-scan*`, `invalid-counted-contents`, `invalid-cases`,
         `invalid-gtin`, `invalid-sscc` and `invalid-owner-ref` slugs).
       content:
         application/problem+json:
@@ -1161,7 +1204,7 @@ components:
     NotFound:
       description: |
         The resource in the path does not exist: `asn-not-found`,
-        `appointment-not-found` or `receipt-not-found`.
+        `appointment-not-found`, `receipt-not-found` or `carton-not-found`.
       content:
         application/problem+json:
           schema:
@@ -1271,7 +1314,8 @@ components:
         (`DOCK_DOOR_MODE=kafka` only), `unknown-asn`, `unknown-appointment`,
         `asn-not-on-appointment`, `line-not-on-asn`, `invalid-sscc`,
         `duplicate-sscc`, `homogeneous-carton-mixed`, `carton-contents-mismatch`,
-        `scan-kind-mismatch`, `unsupported-pack-level`, or an `Idempotency-Key`
+        `scan-kind-mismatch`, `unsupported-pack-level`,
+        `counted-contents-not-mixed`, `counted-sku-unknown`, or an `Idempotency-Key`
         reused with a different body (`idempotency-key-reused`).
       content:
         application/problem+json:
@@ -1474,6 +1518,45 @@ components:
         condition: { $ref: "#/components/schemas/Condition" }
         lot: { type: string, maxLength: 20 }
         expiry: { type: string, description: "`YYYY-MM-DD`." }
+        countedContents:
+          type: array
+          maxItems: 200
+          description: |
+            Optional audit count of a MIXED carton, only with an SSCC scan
+            (a count on a homogeneous carton is 422 `counted-contents-not-mixed`).
+            The quantity RECEIVED is the counted one, never the label's; every
+            SKU whose count differs from the manifest raises
+            `MixedCartonContentMismatch`. A manifest SKU absent from the count
+            counts as zero; a SKU the manifest does not list needs an each GTIN
+            in the PackagingView (else 422 `counted-sku-unknown`).
+          items:
+            type: object
+            additionalProperties: false
+            required: [sku, qty]
+            properties:
+              sku: { type: string, minLength: 1, maxLength: 64 }
+              qty: { type: integer, format: int64, minimum: 0, description: Eaches counted; 0 = looked for and found none. }
+    CartonLabel:
+      type: object
+      required: [lpn, symbology, humanReadable, units, receivedAt]
+      properties:
+        lpn: { type: string }
+        symbology: { type: string, enum: [CODE128] }
+        humanReadable: { type: string, description: "The text printed under the barcode: `(00)<sscc>` for an SSCC carton, the LPN otherwise." }
+        sku: { type: string, description: Omitted when the carton holds more than one SKU. }
+        units: { type: integer, format: int64, description: Eaches in the carton. }
+        receivedAt: { type: string, format: date-time }
+    ReceiptCartonContent:
+      type: object
+      required: [lineNo, sku, gtin, qty, condition]
+      properties:
+        lineNo: { type: integer, format: int32, minimum: 1 }
+        sku: { type: string }
+        gtin: { type: string }
+        qty: { type: integer, format: int64, description: Eaches. }
+        lot: { type: string }
+        expiry: { type: string }
+        condition: { $ref: "#/components/schemas/Condition" }
     ReceiptCarton:
       type: object
       required: [lpn, kind, status, sealed, contents]
@@ -1486,12 +1569,7 @@ components:
         sealed: { type: boolean }
         contents:
           type: array
-          items:
-            allOf:
-              - $ref: "#/components/schemas/CartonContent"
-              - type: object
-                properties:
-                  condition: { $ref: "#/components/schemas/Condition" }
+          items: { $ref: "#/components/schemas/ReceiptCartonContent" }
         receivedAt: { type: string, format: date-time }
     CartonDiscrepancyKind:
       type: string
@@ -1504,8 +1582,16 @@ components:
         the active CASE units per pack or the label count;
         `MixedCaseDeclaredAsCasePack` = the label's content contradicts the
         manifest SKU; `UnlabelledCarton` = a case with no SSCC against a carton
-        ASN.
-      enum: [UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton]
+        ASN (it gets an internal LPN, see the label endpoint);
+        `CartonOverLimit` = the carton's DECLARED `grossWeightG` or longest
+        `dims` side is above `CARTON_MAX_GROSS_WEIGHT_G` /
+        `CARTON_MAX_LONGEST_SIDE_MM` (the carton is still ACCEPTED;
+        `expected` holds the breached limits and `actual` the declared values,
+        as `grossWeightG:<n>` / `longestSideMm:<n>` joined by commas);
+        `MixedCartonContentMismatch` = the `countedContents` of a MIXED carton
+        differ from its manifest for a SKU (`expected` and `actual` are
+        `<sku>:<qty>`, one finding per SKU).
+      enum: [UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch]
     CartonDiscrepancy:
       type: object
       required: [kind]

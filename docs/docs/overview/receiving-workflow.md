@@ -61,3 +61,30 @@ Omits: cancel paths and the read endpoints.
   `/receipts/{id}/lines`) require `Idempotency-Key`; the action `POST`s
   (`cancel`, `check-in`, `close`) accept it but do not require it, since the
   state machine already refuses a repeat with `409`.
+
+## Receiving cartons by scan and carton discrepancies
+
+A carton ASN announces SSCC-labelled cartons. `POST /receipts/{receiptId}/scans` receives one
+scan: an SSCC accepts the carton's whole manifest, a case GTIN books `qty` cases (the service
+multiplies by the active CASE units per pack), an each GTIN books `qty` eaches. Quantities and events are
+always eaches; `ReceiptLineReceived` is the only quantity authority and `ReceiptCartonReceived` is identity
+only. A refused scan books nothing, answers `200` with `accepted=false` and raises
+`CartonDiscrepancyRaised`; `ReceiptClosed` keeps its three v1 kinds. See
+[ADR 0012](/docs/adr/0012-hierarchical-asn-with-sscc-cartons-and-carton-aware-receiving),
+[0013](/docs/adr/0013-carton-receiving-amendments-no-site-case-scan-cases-packaging-view) and
+[0014](/docs/adr/0014-carton-discrepancies-over-limit-mixed-count-and-label-data).
+
+| Kind | Raised when | Carton accepted? |
+| --- | --- | --- |
+| `UnexpectedCarton` | a valid SSCC that is not on the manifest is scanned | no |
+| `MissingCarton` | at close, a manifest carton was never accepted | n/a |
+| `DuplicateSscc` | the SSCC was scanned twice, or already received | no |
+| `UnknownGtin` | a scanned GTIN is not in the PackagingView | no |
+| `CaseQtyMismatch` | manifest quantity differs from the CASE units per pack or the label count | no |
+| `MixedCaseDeclaredAsCasePack` | a homogeneous carton's label names another SKU | no |
+| `UnlabelledCarton` | a case with no SSCC arrives against a carton ASN; it gets an internal `LPN-<ulid>` | yes |
+| `CartonOverLimit` | declared weight or longest side is above `CARTON_MAX_GROSS_WEIGHT_G` / `CARTON_MAX_LONGEST_SIDE_MM` | yes |
+| `MixedCartonContentMismatch` | `countedContents` of a MIXED carton differ from its manifest per SKU; the counted quantity is received | yes |
+
+The label data of an accepted carton (`lpn`, `CODE128`, human readable text, SKU, units) is
+`GET /receipts/{receiptId}/cartons/{lpn}/label`; the floor client renders and prints it.

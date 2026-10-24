@@ -1214,9 +1214,9 @@ components:
                 sscc: { type: string, description: Omitted when the finding has no SSCC. }
                 kind:
                   type: string
-                  enum: [UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton]
-                expected: { type: string }
-                actual: { type: string }
+                  enum: [UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch]
+                expected: { type: string, description: "A count, a SKU, or `sku:qty` / `grossWeightG:<n>` pairs (CartonOverLimit: the breached limits; MixedCartonContentMismatch: the manifest)." }
+                actual: { type: string, description: The counterpart of `expected`. }
                 at: { type: string, format: date-time }
 
     ReceiptClosedEvent:
