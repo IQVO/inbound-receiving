@@ -5,6 +5,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -151,5 +152,36 @@ func TestCartonDiscrepanciesFollowTheReceiptTransaction(t *testing.T) {
 	f := final.CartonDiscrepancies()
 	if len(f) != 2 || f[0].Actual != eachGTIN || f[1].Actual != caseGTIN {
 		t.Fatalf("findings = %+v", f)
+	}
+}
+
+// The finding, the receipt and the outbox rows commit or roll back together:
+// when the outbox write fails after the receipt was saved, no finding row and
+// no version bump survive.
+func TestCartonDiscrepanciesRollBackWithAFailedOutboxWrite(t *testing.T) {
+	ctx := context.Background()
+	cw := newCartonWorld(t)
+	cw.register(t, cartonAsn("ASN-R", ssccA))
+	id := cw.open(t, "ASN-R")
+
+	broken := cw.w
+	broken.Outbox = failingOutbox{inner: broken.Outbox, err: errors.New("outbox is down")}
+	scan := &usecases.ReceiveScan{Writer: broken, Packaging: cw.view}
+	_, err := scan.Handle(ctx, usecases.ReceiveScanCommand{ReceiptID: id, Kind: "SSCC", ID: "003456789012345717"})
+	if err == nil {
+		t.Fatal("the scan must fail when its events cannot be enqueued")
+	}
+	if got := rowsOf(t, cw, id); got != 0 {
+		t.Fatalf("finding rows = %d after a rolled-back scan, want 0", got)
+	}
+	r, err := postgres.NewReceiptRepo(cw.pool).Get(ctx, receipt.ID(id))
+	if err != nil || r.Version() != 1 || len(r.CartonDiscrepancies()) != 0 {
+		t.Fatalf("receipt = version %v, %d findings, err %v: want the untouched version 1", r.Version(), len(r.CartonDiscrepancies()), err)
+	}
+
+	// The same scan through the healthy writer stores exactly one.
+	cw.scanSSCC(t, id, "003456789012345717")
+	if got := rowsOf(t, cw, id); got != 1 {
+		t.Fatal(fmt.Sprintf("finding rows = %d, want 1", got))
 	}
 }

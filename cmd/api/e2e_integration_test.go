@@ -586,6 +586,22 @@ func phaseCartons(t *testing.T, s *service, w *world) {
 	if !strings.Contains(list, `"status":"missing"`) {
 		t.Fatalf("GET cartons after close = %s", list)
 	}
+	// ADR 0015: GET /receipts/{id} lists the findings the scans and the close raised.
+	got := s.call(http.MethodGet, "/receipts/"+opened.ReceiptID, "", "", http.StatusOK)
+	var read struct {
+		CartonDiscrepancies []struct {
+			Kind, SSCC, Expected, At string
+		} `json:"cartonDiscrepancies"`
+	}
+	if err := json.Unmarshal([]byte(got), &read); err != nil {
+		t.Fatalf("GET receipt: %v (%s)", err, got)
+	}
+	if len(read.CartonDiscrepancies) != 2 ||
+		read.CartonDiscrepancies[0].Kind != "DuplicateSscc" || read.CartonDiscrepancies[0].SSCC != ssccA ||
+		read.CartonDiscrepancies[1].Kind != "MissingCarton" || read.CartonDiscrepancies[1].Expected != ssccB ||
+		read.CartonDiscrepancies[0].At == "" || read.CartonDiscrepancies[1].At == "" {
+		t.Fatalf("GET receipt cartonDiscrepancies = %s", got)
+	}
 	w.cartonReceipt = opened.ReceiptID
 	w.expected = append(w.expected,
 		expectedEvent{"asn", "ASNRegistered", "ASN-C", "ASN-C"},
@@ -627,7 +643,7 @@ func phaseNUL(t *testing.T, s *service, w *world) {
 func phaseRows(t *testing.T, w *world) {
 	t.Helper()
 	db := w.db
-	for table, want := range map[string]int{"asns": 3, "appointments": 1, "receipts": 2, "receipt_lines": 2, "asn_cartons": 2, "receipt_cartons": 2, "pack_levels": 2} {
+	for table, want := range map[string]int{"asns": 3, "appointments": 1, "receipts": 2, "receipt_lines": 2, "asn_cartons": 2, "receipt_cartons": 2, "receipt_carton_discrepancies": 2, "pack_levels": 2} {
 		if n := db.count("SELECT count(*) FROM " + table); n != want {
 			t.Fatalf("%s rows = %d, want %d", table, n, want)
 		}
