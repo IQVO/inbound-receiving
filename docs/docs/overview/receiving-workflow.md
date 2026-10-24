@@ -88,3 +88,19 @@ only. A refused scan books nothing, answers `200` with `accepted=false` and rais
 
 The label data of an accepted carton (`lpn`, `CODE128`, human readable text, SKU, units) is
 `GET /receipts/{receiptId}/cartons/{lpn}/label`; the floor client renders and prints it.
+
+## Carton screens in the console
+
+The `inbound_mfe` remote (`web/`) has three screens for carton receiving. Quantities are always
+eaches; a homogeneous case reads "Case of N eaches".
+
+| Screen | Route under `/inbound-receiving` | Data |
+| --- | --- | --- |
+| ASN carton tree | `asns/:asnNumber/cartons` | `GET /asns/{asnNumber}/cartons`: pallet SSCC → carton SSCC → contents per SKU, status `Expected` / `Accepted` / `Missing` |
+| Carton discrepancies | `receipts/:receiptId/discrepancies` | `POST /receipts/{receiptId}/scans` (a scan form) and the `Missing` cartons of the ASN; explains all nine kinds with what to do |
+| Carton label | `receipts/:receiptId/cartons/:lpn/label` | `GET /receipts/{receiptId}/cartons/{lpn}/label`; Code 128 drawn as inline SVG (GS1-128 for an SSCC), printed with `window.print()` and a print stylesheet |
+
+The API has no endpoint that lists a receipt's carton discrepancies after the fact (they travel on the
+scan result and on `CartonDiscrepancyRaised`), so the discrepancies screen shows the findings of the scans
+made in the current browser session plus `MissingCarton` derived from the ASN's `Missing` cartons. Errors
+are keyed by problem code (`carton-not-found`, `scan-kind-mismatch`, ...) with what happened and what to do.

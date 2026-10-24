@@ -104,7 +104,8 @@ asset base `/mfes/inbound-receiving/`; standalone dev server on `:5193`
 (`cd web && npm ci && npm run dev`; it calls `http://localhost:8080`, so start
 `cmd/api` with `CORS_ALLOWED_ORIGINS=http://localhost:5193`). It needs a sibling
 `warehouse-ui-kit` checkout (`file:../../warehouse-ui-kit`). CI job `web`:
-lint, `tsc -b`, vitest, build.
+lint, `tsc -b`, vitest, build. Carton screens (ASN carton tree, receipt carton discrepancies, printable
+carton label) are described in `docs/docs/overview/receiving-workflow.md`.
 
 ## MCP server (read-only)
 
