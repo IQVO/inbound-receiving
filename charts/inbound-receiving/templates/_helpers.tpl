@@ -42,7 +42,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 
 {{/*
 Selector labels. Shared by every pod this release creates, so every
-Deployment and Service ALSO pins app.kubernetes.io/component (api, mcp):
+Deployment and Service ALSO pins app.kubernetes.io/component (api, mcp, a2a):
 a Service selecting on these two alone would select every component.
 */}}
 {{- define "inbound-receiving.selectorLabels" -}}
@@ -81,7 +81,14 @@ Fully qualified name of the MCP server deployment/service.
 {{- end }}
 
 {{/*
-Image reference shared by every Deployment (api, mcp, analytics-projector, analytics-reports).
+Fully qualified name of the A2A agent Deployment/Service (<release>-a2a, docs/adr/0016).
+*/}}
+{{- define "inbound-receiving.a2aFullname" -}}
+{{- include "inbound-receiving.fullname" . }}-a2a
+{{- end }}
+
+{{/*
+Image reference shared by every Deployment (api, mcp, a2a, analytics-projector, analytics-reports).
 */}}
 {{- define "inbound-receiving.image" -}}
 {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}

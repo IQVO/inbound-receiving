@@ -295,6 +295,54 @@ mcp:
       cpu: 100m
       memory: 128Mi
 
+# --- A2A agent (docs/adr/0016) ---
+# The Agent2Agent agent (cmd/a2a, JSON-RPC over HTTP, READ-ONLY skills
+# asn_receiving_status and dock_schedule): the third driving adapter over the
+# SAME read use cases as the REST and MCP surfaces. A2A carries delegation of
+# a goal only; facts between contexts still travel as CloudEvents on Kafka.
+# DISABLED by default. Enabling it renders its own Deployment + Service
+# (component=a2a) over the same OLTP database, served at "/" and "/a2a" with
+# the Agent Card at /.well-known/agent-card.json and GET /healthz probes,
+# command /app/a2a. Env names in templates/a2a-deployment.yaml match
+# cmd/a2a/main.go. Like the MCP server it is read-only: it writes no outbox
+# row, starts no outbox relay and dials no Kafka. No auth / API key: A2A
+# endpoints are unauthenticated fleet-wide.
+a2a:
+  enabled: false
+  replicaCount: 1
+  # A2A_ADDR the binary listens on; keep in sync with service.targetPort.
+  # (8090 is the MCP server, 8091 the projector admin and 8092 the reports
+  # API, so 8093.)
+  httpAddr: ":8093"
+  # Absolute URL advertised on the Agent Card (A2A_AGENT_URL, mandatory for the
+  # binary). Empty defaults to this release's in-cluster Service DNS
+  # (http://<release>-a2a.<ns>.svc.cluster.local:8093/); warehouse-infra can
+  # override it with the Kong path when the agent must be reachable off-cluster.
+  agentUrl: ""
+  service:
+    type: ClusterIP
+    port: 8093
+    targetPort: 8093
+  # Kong exposure of the A2A agent (a2a-route.yaml): host path
+  # /api/a2a/<context> rewritten to / (the JSON-RPC root; the well-known agent
+  # card stays reachable under the same prefix). Off by default; warehouse-infra
+  # turns it on with the real parentRefs and path.
+  route:
+    enabled: false
+    path: "/api/a2a/inbound-receiving"
+    parentRefs:
+      - name: ""
+        namespace: ""
+        sectionName: "http"
+  extraEnv: []
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
 # --- Analytics read side (docs/adr/0006) ---
 # The receiving performance and accuracy data product: cmd/inbound-projector
 # consumes warehouse.inbound-receiving.analytics (written by the SAME outbox
