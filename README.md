@@ -8,7 +8,7 @@ Postgres, REST, Kafka (CloudEvents 1.0).
 
 This repository holds the contracts, the domain model, the service (REST,
 Postgres, transactional outbox, local-copy consumers), its packaging (image and
-Helm chart), a read-only MCP server, the analytics read side (projector and
+Helm chart), a read-only MCP server, a read-only A2A agent, the analytics read side (projector and
 reports, [ADR 0006](docs/adr/0006-analytics-read-side.md)) and the
 `warehouse-console` micro-frontend remote `inbound_mfe` (`web/`). Go 1.27.2
 (`go.mod`). Docs site: `docs/` (Docusaurus; ADR index in
@@ -25,6 +25,8 @@ reports, [ADR 0006](docs/adr/0006-analytics-read-side.md)) and the
   [ADR 0005](docs/adr/0005-mcp-server-adoption.md)
 - Analytics read side (analytics stream, projector, reports):
   [ADR 0006](docs/adr/0006-analytics-read-side.md)
+- A2A agent (read-only, unauthenticated, additive):
+  [ADR 0016](docs/adr/0016-a2a-inbound-adapter.md)
 - Contracts: [`apis/openapi.yaml`](apis/openapi.yaml) (REST),
   [`apis/asyncapi.yaml`](apis/asyncapi.yaml) (events on
   `warehouse.inbound-receiving.events` and the consumed channels)
@@ -46,6 +48,7 @@ Published site: <https://iqvo.github.io/inbound-receiving/> (built from
 | Troubleshooting | [`docs/docs/operations/troubleshooting.md`](docs/docs/operations/troubleshooting.md) |
 | Testing | [`docs/docs/development/testing.md`](docs/docs/development/testing.md) |
 | MCP tools | [`docs/docs/mcp/tools.md`](docs/docs/mcp/tools.md) |
+| A2A skills (read-only agent) | [ADR 0016](docs/adr/0016-a2a-inbound-adapter.md) |
 | Integration: upstream / downstream | [`docs/docs/ecosystem/upstream-contracts.md`](docs/docs/ecosystem/upstream-contracts.md), [`docs/docs/ecosystem/downstream-consumers.md`](docs/docs/ecosystem/downstream-consumers.md) |
 | Use cases | [`docs/docs/ddd/use-cases.md`](docs/docs/ddd/use-cases.md) |
 | Subdomain classification | [`docs/docs/ddd/subdomain-classification.md`](docs/docs/ddd/subdomain-classification.md) |
@@ -132,10 +135,38 @@ write-verb tool name. Details: [`.claude/rules/mcp.md`](.claude/rules/mcp.md).
 DATABASE_URL='postgres://...' go run ./cmd/mcp   # same Postgres as cmd/api; DATABASE_URL is required
 ```
 
+## A2A agent (read-only)
+
+`cmd/a2a` is a third deployable (official A2A Go SDK `a2aproject/a2a-go/v2`,
+JSON-RPC over HTTP, `:8093`, served at `/` and `/a2a`, the Agent Card at
+`/.well-known/agent-card.json`, `GET /healthz`) over the same read use cases
+and database as the REST API ([ADR 0016](docs/adr/0016-a2a-inbound-adapter.md)).
+It is **read-only**, exactly like the MCP server: it writes no outbox row,
+starts no relay or consumer, never dials Kafka, calls no other context, has no
+outbound A2A client and no auth (fleet-wide). `A2A_AGENT_URL`, the absolute
+URL advertised on the card, is mandatory. Two curated skills, called as a
+`SendMessage` data part `{"skill": "<id>", "arguments": {...}}` and answered in
+one message (a data part with the envelope, a text part with a one-line summary):
+
+| Skill | Arguments | Answers |
+|---|---|---|
+| `asn_receiving_status` | `asnNumber` | the ASN (state, lines) with its receipts and their Short / Over / Damaged discrepancies |
+| `dock_schedule` | optional `door`, `state`, `from`, `to` (RFC 3339), `limit` (1..100) | dock appointments in window order, `truncated` when more exist |
+
+Domain rejections come back in-band as an RFC 7807 `problem` with the REST
+adapter's type namespace and statuses (`asn-not-found` 404, `invalid-asn-number`
+and `invalid-query` 400, ...); unknown arguments are refused. A2A carries
+delegation only: registering, booking, receiving and closing stay on REST and
+leave as CloudEvents on Kafka.
+
+```bash
+DATABASE_URL='postgres://...' A2A_AGENT_URL='http://localhost:8093/' go run ./cmd/a2a   # same Postgres as cmd/api
+```
+
 ## Packaging
 
 ```bash
-docker build -t inbound-receiving:local .     # /app/api (default entrypoint), /app/mcp, /app/inbound-projector, /app/inbound-reports
+docker build -t inbound-receiving:local .     # /app/api (default entrypoint), /app/mcp, /app/a2a, /app/inbound-projector, /app/inbound-reports
 (cd web && docker build --build-context uikit=../../warehouse-ui-kit -t warehouse/inbound-receiving-frontend:local .)   # the inbound_mfe remote (nginx)
 helm lint charts/inbound-receiving -f charts/inbound-receiving/ci/all-components-values.yaml
 python3 charts/inbound-receiving/tests/test_service_selectors.py
@@ -146,7 +177,9 @@ The image carries every `cmd/*` binary and runs as uid 1000. The chart
 `api`; `database.url` or `database.existingSecret`, `kafka.brokers` and both consumer groups are required, a direct
 `MIGRATIONS_DATABASE_URL` is read from `database.migrationsExistingSecretKey`),
 an optional HPA and Gateway API `HTTPRoute`/Ingress, the MCP Deployment +
-Service (component `mcp`, `mcp.enabled`, default off), the analytics
+Service (component `mcp`, `mcp.enabled`, default off), the A2A agent
+Deployment + Service (component `a2a`, `a2a.enabled`, default off; the Agent
+Card URL is `a2a.agentUrl`, default the in-cluster Service DNS), the analytics
 projector and reports (components `analytics-projector` / `analytics-reports`,
 `analytics.enabled`, default off) and the web remote (component `frontend`,
 `frontend.enabled`, default off). Every env var of
@@ -198,6 +231,7 @@ pre-push (`lefthook install` once per clone).
 | `internal/adapters/inbound/http/rest_api_integration_test.go` | the real chi router over real use cases and Postgres: ASN lifecycle and validation (RFC 7807), Idempotency-Key replay and reuse, receipt flow |
 | `internal/adapters/inbound/mcp/streamable_http_integration_test.go` | MCP over the real Streamable HTTP transport with the SDK client: `tools/list` contract, `tools/call` round trips, domain and input errors as tool errors |
 | `cmd/mcp/main_integration_test.go` | the `cmd/mcp` wiring reads what the API wrote and never writes |
+| `cmd/a2a/main_integration_test.go` | the `cmd/a2a` wiring, driven by the SDK client through the real router, answers what the API wrote and never writes |
 | `analytics_e2e_integration_test.go` | the whole ADR 0006 path: OLTP writes, relay to Kafka (with a lost ack republished under the same id), projector into a separate analytical Postgres, reports endpoints answering from it |
 
 `make check` / `check-all` deliberately exclude `integration` and `mutation`.
