@@ -69,6 +69,7 @@ gate (enforced by the fitness tests below).
 | `internal/adapters/inbound/http/rest_api_integration_test.go` | REST over Postgres |
 | `internal/adapters/inbound/mcp/streamable_http_integration_test.go` | MCP over Streamable HTTP |
 | `cmd/mcp/main_integration_test.go` | the MCP binary's wiring |
+| `cmd/a2a/main_integration_test.go` | the A2A binary's wiring: skills over the real router and Postgres, outbox unchanged |
 | `internal/application/usecases/usecases_wiring_integration_test.go` | use-case wiring |
 | `analytics_e2e_integration_test.go` | api → outbox → Kafka → projector → reports, end to end |
 
@@ -82,6 +83,7 @@ covered.
 |---|---|
 | `TestHexagonalArchitecture` | arch-go rules: domain imports nothing internal but itself; layers only point inwards; adapters never import each other |
 | `TestMCPAdapterDependencyRule` | the MCP adapter depends only on the application and domain layers, and nothing but `cmd/mcp` imports it |
+| `TestA2AAdapterDependencyRule`, `TestA2AAdapterIsReadOnlyAndHasNoOutboundClient`, `TestA2AReadOnlyBinaryWiresNoWriteUseCase`, `TestA2AReadOnlySensorBites` | the A2A adapter depends only on the application and domain layers, nothing imports it but `cmd/a2a`, and neither it nor the binary names a use case beyond the three reads, an outbox, a unit of work or an outbound A2A client ([ADR 0016](/docs/adr/0016-a2a-inbound-adapter)) |
 | `TestNoAuthMiddlewareReintroduced` | no auth middleware on REST or MCP (fleet rule) |
 | `TestKafkaConsumerGroupNeverHardcodedInline` | consumer group ids come from env, never literals |
 | `TestReplayConsumersSetCommitInterval` | a full-replay cache consumer (a per-process unique group) must set `CommitInterval`; this repo has none, so the rule is dormant |
