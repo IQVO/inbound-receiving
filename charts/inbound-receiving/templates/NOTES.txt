@@ -18,6 +18,12 @@ To reach it locally:
   curl http://localhost:8080/healthz
 {{- end }}
 
+{{- if .Values.a2a.enabled }}
+
+A2A agent (read-only skills, JSON-RPC over HTTP, Agent Card at /.well-known/agent-card.json, no auth):
+  http://{{ include "inbound-receiving.a2aFullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.a2a.service.port }}/
+{{- end }}
+
 {{- if .Values.mcp.enabled }}
 
 MCP server (read-only tools, Streamable HTTP, no auth):

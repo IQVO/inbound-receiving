@@ -28,6 +28,8 @@ autoscaling:
     enabled: true
 mcp:
   enabled: true
+a2a:
+  enabled: true
 analytics:
   enabled: true
   database:

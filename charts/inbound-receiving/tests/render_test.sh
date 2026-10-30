@@ -80,8 +80,8 @@ grep -A1 'name: PROCESSED_EVENTS_RETENTION' <<<"$projector_deployment" | grep -q
 
 # The other workloads read their own explicit env and must NOT inherit the
 # api's ConfigMap (reports and projector would bind the api's HTTP_ADDR).
-for template in reports-deployment.yaml projector-deployment.yaml mcp-deployment.yaml; do
-  if helm template "$release" "$chart_dir" "${base[@]}" "${analytics[@]}" --set mcp.enabled=true --show-only "templates/$template" | grep -q 'configMapRef:'; then
+for template in reports-deployment.yaml projector-deployment.yaml mcp-deployment.yaml a2a-deployment.yaml; do
+  if helm template "$release" "$chart_dir" "${base[@]}" "${analytics[@]}" --set mcp.enabled=true --set a2a.enabled=true --show-only "templates/$template" | grep -q 'configMapRef:'; then
     fail "$template must not mount the api ConfigMap"
   fi
 done
@@ -89,8 +89,8 @@ done
 # D21: every backend Deployment that sets up telemetry gets ENVIRONMENT
 # (deployment.environment.name) and SERVICE_VERSION; the projector also gets
 # the OTLP endpoint now that it calls telemetry.Setup.
-for template in deployment.yaml mcp-deployment.yaml projector-deployment.yaml reports-deployment.yaml; do
-  rendered="$(helm template "$release" "$chart_dir" "${base[@]}" "${analytics[@]}" --set mcp.enabled=true --set environment=staging --show-only "templates/$template")"
+for template in deployment.yaml mcp-deployment.yaml a2a-deployment.yaml projector-deployment.yaml reports-deployment.yaml; do
+  rendered="$(helm template "$release" "$chart_dir" "${base[@]}" "${analytics[@]}" --set mcp.enabled=true --set a2a.enabled=true --set environment=staging --show-only "templates/$template")"
   grep -A1 'name: ENVIRONMENT' <<<"$rendered" | grep -q 'value: "staging"' || fail "$template does not set ENVIRONMENT from .Values.environment"
   grep -q 'name: SERVICE_VERSION' <<<"$rendered" || fail "$template does not set SERVICE_VERSION"
   grep -q 'name: OTEL_EXPORTER_OTLP_ENDPOINT' <<<"$rendered" || fail "$template does not set OTEL_EXPORTER_OTLP_ENDPOINT with otel.enabled"
@@ -109,7 +109,7 @@ for kv in 'EVENT_PUBLISHER=kafka' 'PRODUCT_MODE=kafka' 'DOCK_DOOR_MODE=kafka' \
 done
 grep -A4 'name: DATABASE_URL$' <<<"$api_deployment" | grep -q 'secretKeyRef:' || fail "DATABASE_URL must come from a Secret (secretKeyRef)"
 if grep -qE '^  (MIGRATIONS_)?DATABASE_URL:' <<<"$configmap"; then fail "a DSN must never land in the ConfigMap"; fi
-render_all="$(helm template "$release" "$chart_dir" "${base[@]}" "${analytics[@]}" --set mcp.enabled=true --set frontend.enabled=true)"
+render_all="$(helm template "$release" "$chart_dir" "${base[@]}" "${analytics[@]}" --set mcp.enabled=true --set a2a.enabled=true --set frontend.enabled=true)"
 if grep -qiE 'value: "?(permissive|log|off)"?$' <<<"$render_all"; then fail "the render carries permissive/log/off, which the binaries reject at boot"; fi
 if grep -qiE 'in-memory|silently runs|permissive' <<<"$render_all"$'\n'"$(cat "$chart_dir/templates/NOTES.txt")"; then
   fail "the render or NOTES.txt mentions an in-memory / permissive mode"
@@ -117,6 +117,24 @@ fi
 mcp_dep="$(helm template "$release" "$chart_dir" "${base[@]}" --set mcp.enabled=true --show-only templates/mcp-deployment.yaml)"
 grep -A4 'name: DATABASE_URL$' <<<"$mcp_dep" | grep -q 'secretKeyRef:' || fail "the mcp DATABASE_URL must come from a Secret"
 [[ "$(env_value "$mcp_dep" DOCK_DOOR_MODE)" == "kafka" ]] || fail "the mcp Deployment must report DOCK_DOOR_MODE=kafka"
+# --- the A2A agent (docs/adr/0016): read-only, same Postgres, port 8093 --------------
+a2a_dep="$(helm template "$release" "$chart_dir" "${base[@]}" --set a2a.enabled=true --show-only templates/a2a-deployment.yaml)"
+grep -A4 'name: DATABASE_URL$' <<<"$a2a_dep" | grep -q 'secretKeyRef:' || fail "the a2a DATABASE_URL must come from a Secret"
+[[ "$(env_value "$a2a_dep" A2A_ADDR || true)" == ":8093" ]] || fail "the a2a agent must listen on :8093 (8090 is mcp, 8091 the projector admin, 8092 the reports API)"
+grep -q 'command: \["/app/a2a"\]' <<<"$a2a_dep" || fail "the a2a Deployment must run /app/a2a"
+# Read-only like mcp: no Kafka, publisher, relay, consumer or dock-door mode env.
+for stray in KAFKA_BROKERS EVENT_PUBLISHER PRODUCT_MODE DOCK_DOOR_MODE PRODUCT_CONSUMER_GROUP DOCK_DOOR_CONSUMER_GROUP PACKAGING_CONSUMER_GROUP; do
+  if grep -q "name: $stray\$" <<<"$a2a_dep"; then fail "the read-only a2a Deployment must not render $stray"; fi
+done
+# The Agent Card must advertise a dialable absolute URL: it defaults to the
+# release's in-cluster Service DNS (namespace-derived, so pattern-match) and
+# stays overridable.
+a2a_url="$(env_value "$a2a_dep" A2A_AGENT_URL || true)" # a missing var must reach the fail message below, not abort under set -e
+[[ "$a2a_url" =~ ^http://[a-z0-9.-]+-a2a\.[a-z0-9-]+\.svc\.cluster\.local:8093/$ ]] || fail "A2A_AGENT_URL default is not the in-cluster Service DNS: $a2a_url"
+a2a_override="$(helm template "$release" "$chart_dir" "${base[@]}" --set a2a.enabled=true --set a2a.agentUrl=http://gw.example/api/a2a/inbound-receiving/ --show-only templates/a2a-deployment.yaml)"
+[[ "$(env_value "$a2a_override" A2A_AGENT_URL || true)" == "http://gw.example/api/a2a/inbound-receiving/" ]] || fail "a2a.agentUrl does not override A2A_AGENT_URL"
+# A2A is off by default: no a2a resource renders unless asked for.
+if helm template "$release" "$chart_dir" "${base[@]}" | grep -q -- '-a2a'; then fail "an a2a resource rendered with default values"; fi
 proj="$(helm template "$release" "$chart_dir" "${base[@]}" "${analytics[@]}" --show-only templates/projector-deployment.yaml)"
 [[ "$(env_value "$proj" KAFKA_BROKERS)" == "kafka.example.invalid:9092" ]] || fail "the projector KAFKA_BROKERS is not rendered from kafka.brokers"
 [[ "$(env_value "$proj" ANALYTICS_CONSUMER_GROUP)" == "inbound-receiving-analytics" ]] || fail "ANALYTICS_CONSUMER_GROUP must default to inbound-receiving-analytics"
@@ -126,14 +144,16 @@ proj="$(helm template "$release" "$chart_dir" "${base[@]}" "${analytics[@]}" --s
 # chart carries X for that binary.
 repo_dir="$(cd "$chart_dir/../.." && pwd)"
 reports="$(helm template "$release" "$chart_dir" "${base[@]}" "${analytics[@]}" --show-only templates/reports-deployment.yaml)"
-for bin in api mcp inbound-projector inbound-reports; do
+for bin in api mcp a2a inbound-projector inbound-reports; do
   case "$bin" in
     api) rendered="$api_deployment" ;;
     mcp) rendered="$mcp_dep" ;;
+    a2a) rendered="$a2a_dep" ;;
     inbound-projector) rendered="$proj" ;;
     *) rendered="$reports" ;;
   esac
-  vars="$(grep -ho 'errors.New("[A-Z_]* is required' "$repo_dir"/cmd/"$bin"/main.go | sed -E 's/errors.New\("//; s/ is required//' | sort -u)"
+  # The regex allows digits: A2A_AGENT_URL would otherwise be read as A_AGENT_URL.
+  vars="$(grep -hoE 'errors.New\("[A-Z][A-Z0-9_]+ is required' "$repo_dir"/cmd/"$bin"/main.go | sed -E 's/errors.New\("//; s/ is required//' | sort -u)"
   [[ -n "$vars" ]] || fail "found no mandatory variables in cmd/$bin; the scan is looking in the wrong place"
   for var in $vars; do
     grep -q "name: $var\$" <<<"$rendered" || fail "the $bin Deployment does not render $var, which cmd/$bin requires"
@@ -166,6 +186,8 @@ expect_refusal "the log publisher through extraEnv" "EVENT_PUBLISHER" "${base[@]
 expect_refusal "a *_MODE through extraEnv" "_MODE" "${base[@]}" --set 'extraEnv[0].name=PRODUCT_MODE' --set 'extraEnv[0].value=permissive'
 expect_refusal "analytics without a DSN source" "analytics.database.projectorUrl" "${base[@]}" --set analytics.enabled=true
 expect_refusal "mcp with a permissive dock-door mode" "config.dockDoorMode" "${base[@]}" --set mcp.enabled=true --set config.dockDoorMode=permissive
+expect_refusal "a2a without a database source" "database.url or database.existingSecret" --set a2a.enabled=true --set kafka.brokers=k:9092 \
+  --set config.productConsumerGroup=g1 --set config.dockDoorConsumerGroup=g2 --set config.packagingConsumerGroup=g3
 
 # --- what warehouse-infra sets keeps working -----------------------------------------
 # tests/warehouse-infra-platform-values.yaml + tests/warehouse-infra-values.yaml
@@ -185,8 +207,12 @@ infra_api="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only tem
 grep -q 'inbound-receiving-db' <<<"$infra_api" || fail "infra values: DATABASE_URL must come from the inbound-receiving-db secret"
 infra_proj="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/projector-deployment.yaml)"
 [[ "$(env_value "$infra_proj" ANALYTICS_CONSUMER_GROUP)" == "inbound-receiving-analytics" ]] || fail "infra values: ANALYTICS_CONSUMER_GROUP"
-for component in api mcp analytics-projector analytics-reports frontend; do
+for component in api mcp a2a analytics-projector analytics-reports frontend; do
   grep -q "app.kubernetes.io/component: $component" <<<"$infra_all" || fail "infra values: component $component not rendered"
 done
+helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/a2a-deployment.yaml >/dev/null || fail "infra values: a2a"
+infra_a2a_route="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/a2a-route.yaml)"
+grep -q 'replacePrefixMatch: /$' <<<"$infra_a2a_route" || fail "infra values: the a2a route must rewrite to /"
+grep -q 'value: /api/a2a/inbound-receiving' <<<"$infra_a2a_route" || fail "infra values: the a2a route must be served at /api/a2a/inbound-receiving"
 
 echo "PASS: inbound-receiving chart render assertions"
