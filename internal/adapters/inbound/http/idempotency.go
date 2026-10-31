@@ -80,7 +80,7 @@ func serveIdempotent(w http.ResponseWriter, r *http.Request, store ports.Idempot
 		}
 	})
 	if err != nil {
-		slog.ErrorContext(r.Context(), "idempotency store failed", "error", err, "method", r.Method, "path", r.URL.Path)
+		slog.ErrorContext(r.Context(), "idempotency store failed", "error", err, "method", r.Method, "path", sanitizeLog(r.URL.Path))
 		writeError(w, r, err)
 		return
 	}
