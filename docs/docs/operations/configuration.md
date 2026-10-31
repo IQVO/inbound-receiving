@@ -15,6 +15,7 @@ the "Source" column names the file that reads the variable.
 |---|---|---|
 | `cmd/api` | REST API, local-copy Kafka consumers, outbox relay | `:8080` (`HTTP_ADDR`) |
 | `cmd/mcp` | Read-only MCP server (Streamable HTTP) | `:8090` (`MCP_ADDR`) |
+| `cmd/a2a` | Read-only A2A agent (JSON-RPC over HTTP) | `:8093` (`A2A_ADDR`) |
 | `cmd/inbound-projector` | Analytics writer: consumes the analytics topic, projects into the analytical database | `:8091` admin port (`ADMIN_ADDR`) |
 | `cmd/inbound-reports` | Read-only analytics reports over HTTP | `:8092` (`HTTP_ADDR`) |
 
@@ -39,6 +40,8 @@ the chart and warehouse-infra set them, but their only legal value is `kafka`.
 | `KAFKA_BROKERS` | unset | **yes** | Comma-separated broker list used by the relay sink, by the two local-copy consumers and by the `/readyz` Kafka check. Missing = boot error (`KAFKA_BROKERS is required`). Locally the fleet broker is `localhost:9092` (`docker compose up -d --wait`). | `cmd/api/main.go` |
 | `OUTBOX_RELAY_INTERVAL` | `1s` | no | Relay poll interval. Accepts a Go duration (`500ms`, `2s`) or plain seconds (`2`, `0.5`). Malformed or non-positive values log a warning and fall back to `1s`. | `cmd/api/main.go`, `internal/adapters/outbound/outbox/relay.go` |
 | `OUTBOX_MAX_ATTEMPTS` | `20` | no | Relay attempt cap ([ADR 0007](/docs/adr/0007-outbox-relay-attempt-cap)): a row that failed this many times is no longer claimed and is logged once at ERROR; it stays in `outbox_events` until re-armed (`UPDATE outbox_events SET attempts = 0 WHERE id = ...`, see the runbook). `0` = unlimited. Negative or unparsable values log a warning and use `20`. Chart: `config.outboxMaxAttempts`. | `cmd/api/main.go`, `internal/adapters/outbound/outbox/relay.go` |
+| `CARTON_MAX_GROSS_WEIGHT_G` | `0` | no | `CartonOverLimit` weight limit in grams ([ADR 0014](/docs/adr/0014-carton-discrepancies-over-limit-mixed-count-and-label-data)): a carton whose DECLARED `grossWeightG` is above it is still accepted and raises `CartonDiscrepancyRaised`. `0` or unset = unchecked; negative or unparsable values log a warning and are unchecked. Chart: `config.cartonMaxGrossWeightG` (a negative value is refused at render). | `cmd/api/main.go`, `internal/domain/receipt/carton.go` |
+| `CARTON_MAX_LONGEST_SIDE_MM` | `0` | no | `CartonOverLimit` size limit in millimetres, compared with the longest side of the declared `dims`; same semantics as `CARTON_MAX_GROSS_WEIGHT_G`. Chart: `config.cartonMaxLongestSideMm`. | `cmd/api/main.go`, `internal/domain/receipt/carton.go` |
 | `HOUSEKEEPING_INTERVAL` | `1h` | no | Housekeeping sweeper interval ([ADR 0010](/docs/adr/0010-housekeeping-sweeper)); it sweeps once at start, then every interval. `0` disables the sweeper. Go duration or plain seconds; negative or malformed values log a warning and use the default. Chart: `config.housekeepingInterval` (via the ConfigMap). | `cmd/api/main.go`, `internal/adapters/outbound/postgres/sweeper.go` |
 | `IDEMPOTENCY_KEY_TTL` | `24h` | no | `idempotency_keys` rows older than this are deleted: a retry after the TTL runs the handler again. `0` keeps keys forever. Chart: `config.idempotencyKeyTTL`. | `internal/adapters/outbound/postgres/sweeper.go` |
 | `OUTBOX_RETENTION` | `168h` | no | PUBLISHED `outbox_events` rows older than this are deleted. Unpublished rows (including rows excluded at the attempt cap) are never swept. `0` keeps them forever. Chart: `config.outboxRetention`. | `internal/adapters/outbound/postgres/sweeper.go` |
@@ -98,6 +101,26 @@ mandatory here too.
 | `ENVIRONMENT` | `local` | no | `deployment.environment.name` resource attribute. | `internal/adapters/outbound/telemetry/telemetry.go` |
 | `LOG_LEVEL` | `info` | no | `debug`, `info`, `warn`/`warning`, `error`. | `cmd/mcp/main.go` |
 
+## `cmd/a2a`
+
+The A2A binary ([ADR 0016](/docs/adr/0016-a2a-inbound-adapter)) is read-only
+like `cmd/mcp`: it never starts the outbox relay or the consumers, writes no
+outbox row and never reads `EVENT_PUBLISHER`, `KAFKA_BROKERS`, the consumer
+group variables or `DOCK_DOOR_MODE`. It reads the same Postgres as `cmd/api`.
+A missing mandatory variable is a boot error naming it, raised before
+telemetry, any connection and the listener.
+
+| Variable | Default | Required? | Meaning | Source |
+|---|---|---|---|---|
+| `A2A_ADDR` | `:8093` | no | Listen address. The JSON-RPC endpoint is mounted at `/` and `/a2a`, the Agent Card at `/.well-known/agent-card.json`; `GET /healthz` is the probe target. | `cmd/a2a/main.go` |
+| `A2A_AGENT_URL` | unset | **yes** | Absolute `http(s)` URL of the JSON-RPC endpoint, advertised on the Agent Card. Unset or not absolute = boot error (`A2A_AGENT_URL is required`). The chart defaults it to `http://<release>-a2a.<ns>.svc.cluster.local:8093/` (`a2a.agentUrl` overrides). | `cmd/a2a/main.go` |
+| `DATABASE_URL` | unset | **yes** | OLTP Postgres DSN, the same database as `cmd/api`. Missing = boot error (`DATABASE_URL is required`); there is no in-memory mode. The embedded migrations run first. | `cmd/a2a/main.go` |
+| `MIGRATIONS_DATABASE_URL` | value of `DATABASE_URL` | no | Direct DSN for the boot migrations only (same PgBouncer reason as `cmd/api`). | `cmd/a2a/main.go` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | no | OTLP/gRPC collector endpoint. | `cmd/a2a/main.go` |
+| `SERVICE_VERSION` | `dev` | no | `service.version` resource attribute (service name `inbound-receiving-a2a`) and the Agent Card version. | `cmd/a2a/main.go` |
+| `ENVIRONMENT` | `local` | no | `deployment.environment.name` resource attribute. | `internal/adapters/outbound/telemetry/telemetry.go` |
+| `LOG_LEVEL` | `info` | no | `debug`, `info`, `warn`/`warning`, `error`. | `cmd/a2a/main.go` |
+
 ## `cmd/inbound-projector`
 
 The projector is the only writer of the **analytical** database (ADR 0006).
@@ -151,8 +174,9 @@ The chart `charts/inbound-receiving` renders these variables per Deployment:
 
 | Deployment template | Variables set |
 |---|---|
-| `deployment.yaml` (`cmd/api`; the chart refuses to render without `database.url`/`database.existingSecret`, `kafka.brokers`, both consumer groups, and with any mode or publisher other than `kafka`) | `HTTP_ADDR`, `LOG_LEVEL`, `EVENT_PUBLISHER`, `OUTBOX_RELAY_INTERVAL`, `OUTBOX_MAX_ATTEMPTS`, the housekeeping knobs (through the ConfigMap only), `PRODUCT_MODE`, `PRODUCT_CONSUMER_GROUP`, `DOCK_DOOR_MODE`, `DOCK_DOOR_CONSUMER_GROUP`, `SHUTDOWN_DRAIN_DELAY`, `CORS_ALLOWED_ORIGINS`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `DATABASE_URL`, `MIGRATIONS_DATABASE_URL`, `KAFKA_BROKERS` |
+| `deployment.yaml` (`cmd/api`; the chart refuses to render without `database.url`/`database.existingSecret`, `kafka.brokers`, both consumer groups, and with any mode or publisher other than `kafka`) | `HTTP_ADDR`, `LOG_LEVEL`, `EVENT_PUBLISHER`, `OUTBOX_RELAY_INTERVAL`, `OUTBOX_MAX_ATTEMPTS`, the housekeeping knobs (through the ConfigMap only), `PRODUCT_MODE`, `PRODUCT_CONSUMER_GROUP`, `DOCK_DOOR_MODE`, `DOCK_DOOR_CONSUMER_GROUP`, `CARTON_MAX_GROSS_WEIGHT_G`, `CARTON_MAX_LONGEST_SIDE_MM`, `SHUTDOWN_DRAIN_DELAY`, `CORS_ALLOWED_ORIGINS`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `DATABASE_URL`, `MIGRATIONS_DATABASE_URL`, `KAFKA_BROKERS` |
 | `mcp-deployment.yaml` | `MCP_ADDR`, `LOG_LEVEL`, `DOCK_DOOR_MODE`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `DATABASE_URL`, `MIGRATIONS_DATABASE_URL` |
+| `a2a-deployment.yaml` | `A2A_ADDR`, `A2A_AGENT_URL`, `LOG_LEVEL`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `DATABASE_URL`, `MIGRATIONS_DATABASE_URL` |
 | `projector-deployment.yaml` | `ADMIN_ADDR`, `KAFKA_BROKERS`, `ANALYTICS_CONSUMER_GROUP`, `LOG_LEVEL`, `HOUSEKEEPING_INTERVAL`, `PROCESSED_EVENTS_RETENTION`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `ANALYTICS_DATABASE_URL` |
 | `reports-deployment.yaml` | `HTTP_ADDR`, `LOG_LEVEL`, `ENVIRONMENT`, `SERVICE_VERSION`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `ANALYTICS_DATABASE_URL` |
 
@@ -165,7 +189,7 @@ housekeeping knobs `HOUSEKEEPING_INTERVAL`, `IDEMPOTENCY_KEY_TTL`,
 `OTEL_EXPORTER_OTLP_ENDPOINT`, `KAFKA_BROKERS`). The api Deployment mounts it
 with `envFrom` (gap fix D14), so every `config.*` value really reaches the
 process; its explicit `env` entries carry the same values and win for the same
-key. Only the api Deployment mounts it: the MCP, projector and reports
+key. Only the api Deployment mounts it: the MCP, A2A, projector and reports
 Deployments read their own explicit env (the ConfigMap's `HTTP_ADDR` would
 otherwise move the reports listener). `charts/inbound-receiving/tests/render_test.sh`
 (CI job `chart-tests`) asserts the mount.

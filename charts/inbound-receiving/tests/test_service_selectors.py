@@ -2,7 +2,7 @@
 """Assert this chart's Service selectors isolate each component.
 
 Why this exists (fleet-wide): `app.kubernetes.io/name` + `instance` are identical
-on every pod a release creates (api, mcp). A Service that selects on those two
+on every pod a release creates (api, mcp, a2a). A Service that selects on those two
 alone selects ALL of them -- verified live in other fleet charts, where a Kong
 request for an api /healthz was answered by the wrong pod. Every Deployment here
 carries `app.kubernetes.io/component` in selector.matchLabels and its pod
@@ -11,7 +11,7 @@ Deployment. This test fails if that ever stops being true.
 
 It mirrors product-master's charts/.../tests/test_service_selectors.py (and
 warehouse-infra's scripts/check-chart-selectors.py), restricted to the
-components this chart has: api (always), mcp (optional, default off), frontend (optional, default off) and the
+components this chart has: api (always), mcp and a2a (optional, default off), frontend (optional, default off) and the
 analytics read side (ADR 0006: analytics-projector, analytics-reports; optional, default off). The frontend is the
 nginx pod serving the inbound_mfe remote: its own workload, component=frontend, a ClusterIP Service,
 never routed by this chart (warehouse-infra's Nginx web gateway owns /mfes/inbound-receiving/).
@@ -36,10 +36,12 @@ KAFKA = ["--set", "kafka.brokers=kafka.example.invalid:9092"]
 GROUPS = [
     "--set", "config.productConsumerGroup=inbound-receiving-product",
     "--set", "config.dockDoorConsumerGroup=inbound-receiving-dock-door",
+    "--set", "config.packagingConsumerGroup=inbound-receiving-packaging",
 ]
 BASE = DB + KAFKA + GROUPS
 ENABLE_EVERYTHING = BASE + [
     "--set", "mcp.enabled=true",
+    "--set", "a2a.enabled=true",
     "--set", "frontend.enabled=true",
     "--set", "autoscaling.api.enabled=true",
     "--set", "gatewayApi.enabled=true",
@@ -85,6 +87,31 @@ def env_names(dep: dict) -> list[str]:
     return [e["name"] for e in dep["spec"]["template"]["spec"]["containers"][0].get("env", [])]
 
 
+def check_a2a(services: dict, deployments: dict, failures: list[str]) -> None:
+    """The A2A agent (docs/adr/0016): its own component, read-only like mcp."""
+    a2a = f"{RELEASE}-a2a"
+    if a2a not in services:
+        failures.append("the A2A Service was not rendered with a2a.enabled=true")
+    elif selector_of(services[a2a]).get("app.kubernetes.io/component") != "a2a":
+        failures.append("the A2A Service selector must pin component=a2a")
+    if a2a not in deployments:
+        failures.append("the A2A Deployment was not rendered with a2a.enabled=true")
+        return
+    container = deployments[a2a]["spec"]["template"]["spec"]["containers"][0]
+    if container.get("command") != ["/app/a2a"]:
+        failures.append("the A2A Deployment must run /app/a2a")
+    env = set(env_names(deployments[a2a]))
+    stray = {
+        "KAFKA_BROKERS", "EVENT_PUBLISHER", "OUTBOX_RELAY_INTERVAL", "PRODUCT_MODE", "DOCK_DOOR_MODE",
+        "PRODUCT_CONSUMER_GROUP", "DOCK_DOOR_CONSUMER_GROUP", "PACKAGING_CONSUMER_GROUP", "MCP_ADDR",
+    } & env
+    if stray:
+        failures.append(f"the A2A Deployment is read-only and must not get Kafka/relay/consumer/mcp env: {sorted(stray)}")
+    for want in ("DATABASE_URL", "MIGRATIONS_DATABASE_URL", "A2A_ADDR", "A2A_AGENT_URL"):
+        if want not in env:
+            failures.append(f"the A2A Deployment does not render {want}")
+
+
 def check_components(docs: list[dict], failures: list[str]) -> None:
     services = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "Service"}
     deployments = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "Deployment"}
@@ -108,7 +135,7 @@ def check_components(docs: list[dict], failures: list[str]) -> None:
         mcp_env = set(env_names(deployments[mcp]))
         stray = {
             "KAFKA_BROKERS", "EVENT_PUBLISHER", "OUTBOX_RELAY_INTERVAL", "PRODUCT_MODE", "PRODUCT_CONSUMER_GROUP",
-            "DOCK_DOOR_CONSUMER_GROUP",
+            "DOCK_DOOR_CONSUMER_GROUP", "PACKAGING_CONSUMER_GROUP",
         } & mcp_env
         if stray:
             failures.append(f"the MCP Deployment must not get Kafka/relay/consumer env (it never dials Kafka): {sorted(stray)}")
@@ -116,6 +143,8 @@ def check_components(docs: list[dict], failures: list[str]) -> None:
         for want in ("DATABASE_URL", "MIGRATIONS_DATABASE_URL", "MCP_ADDR", "DOCK_DOOR_MODE"):
             if want not in mcp_env:
                 failures.append(f"the MCP Deployment does not render {want}")
+
+    check_a2a(services, deployments, failures)
 
     frontend = f"{RELEASE}-frontend"
     if frontend not in services:
@@ -162,6 +191,7 @@ def check_components(docs: list[dict], failures: list[str]) -> None:
     for want in (
         "EVENT_PUBLISHER", "KAFKA_BROKERS", "DATABASE_URL", "MIGRATIONS_DATABASE_URL",
         "PRODUCT_MODE", "PRODUCT_CONSUMER_GROUP", "DOCK_DOOR_MODE", "DOCK_DOOR_CONSUMER_GROUP",
+        "PACKAGING_CONSUMER_GROUP",
     ):
         if want not in api_env:
             failures.append(f"the api Deployment does not render {want} from its dedicated value")
@@ -218,6 +248,7 @@ def check_refusals(failures: list[str]) -> None:
         ("an unknown PRODUCT_MODE", BASE + ["--set", "config.productMode=strict"], "the only mode is"),
         ("without a product consumer group", DB + KAFKA + GROUPS[2:], "config.productConsumerGroup is required"),
         ("without a dock-door consumer group", DB + KAFKA + GROUPS[:2], "config.dockDoorConsumerGroup is required"),
+        ("without a packaging consumer group", DB + KAFKA + GROUPS[:4], "config.packagingConsumerGroup is required"),
         ("EVENT_PUBLISHER=log through extraEnv",
          BASE + ["--set", "extraEnv[0].name=EVENT_PUBLISHER", "--set", "extraEnv[0].value=log"], "extraEnv sets EVENT_PUBLISHER"),
         ("a *_MODE through extraEnv",
@@ -234,10 +265,10 @@ def main() -> int:
 
     check_components(render(ENABLE_EVERYTHING), failures)
 
-    # Default values must not deploy the MCP component, an HPA or a route.
+    # Default values must not deploy the MCP or A2A component, an HPA or a route.
     defaults = render(BASE)
     stray = [d["metadata"]["name"] for d in defaults
-             if d["metadata"]["name"].endswith(("-mcp", "-frontend", "-projector", "-reports", "-analytics"))]
+             if d["metadata"]["name"].endswith(("-mcp", "-a2a", "-frontend", "-projector", "-reports", "-analytics"))]
     stray += [d["kind"] for d in defaults if d.get("kind") in {"HorizontalPodAutoscaler", "Ingress", "HTTPRoute"}]
     if stray:
         failures.append(f"optional components rendered with default values: {stray}")
@@ -254,7 +285,7 @@ def main() -> int:
             print(f"FAIL: {f}")
         return 1
 
-    print("PASS: every Service selects exactly one Deployment (api, mcp, frontend, analytics-reports); mcp, frontend, analytics, HPA and routes are off by "
+    print("PASS: every Service selects exactly one Deployment (api, mcp, a2a, frontend, analytics-reports); mcp, a2a, frontend, analytics, HPA and routes are off by "
           "default; the chart refuses to render without a database source, without Kafka brokers, without a "
           "consumer group, with kafka switched off, with the log publisher or a permissive/off mode (values or "
           "extraEnv), or with analytics but no analytical DSN")

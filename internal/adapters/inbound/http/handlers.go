@@ -80,7 +80,7 @@ func (s *Server) handleRegisterAsn(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	cmd := usecases.RegisterAsnCommand{AsnNumber: req.AsnNumber, SupplierRef: req.SupplierRef}
+	cmd := usecases.RegisterAsnCommand{AsnNumber: req.AsnNumber, SupplierRef: req.SupplierRef, OwnerRef: req.OwnerRef, Cartons: req.cartonInputs()}
 	if req.ExpectedArrival != nil {
 		cmd.ExpectedArrival = *req.ExpectedArrival
 	}
@@ -108,6 +108,21 @@ func (s *Server) handleGetAsn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeVersioned(w, http.StatusOK, a.Version(), toAsn(a))
+}
+
+// handleGetAsnCartons backs GET /asns/{asnNumber}/cartons.
+func (s *Server) handleGetAsnCartons(w http.ResponseWriter, r *http.Request) {
+	number, err := pathParam(r, "asnNumber")
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	v, err := s.GetAsnCartons.Handle(r.Context(), number)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeVersioned(w, http.StatusOK, v.Asn.Version(), toAsnCartons(v))
 }
 
 // handleListAsns backs GET /asns?limit=&cursor=&state=.
@@ -378,4 +393,58 @@ func (s *Server) handleListDocks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toDockList(docks))
+}
+
+// handleReceiveScan backs POST /receipts/{receiptId}/scans: 201 when the scan
+// was accepted, 200 when it was refused with findings (nothing booked).
+func (s *Server) handleReceiveScan(w http.ResponseWriter, r *http.Request) {
+	id, err := pathParam(r, "receiptId")
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	var req receiveScanRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	version, err := expectedVersion(r)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	out, err := s.ReceiveScan.Handle(r.Context(), usecases.ReceiveScanCommand{
+		ReceiptID: id, Scan: req.Scan, Kind: req.Kind, ID: req.ID, Qty: req.Qty, ExpectedKind: req.ExpectedKind,
+		Condition: req.Condition, Lot: req.Lot, Expiry: req.Expiry, CountedContents: req.counted(), ExpectedVersion: version,
+	})
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	status := http.StatusOK
+	if out.Result.Accepted {
+		status = http.StatusCreated
+	}
+	writeVersioned(w, status, out.Receipt.Version(), toScan(out))
+}
+
+// handleGetCartonLabel backs GET /receipts/{receiptId}/cartons/{lpn}/label:
+// the DATA of a license plate label (R11); the floor client prints it.
+func (s *Server) handleGetCartonLabel(w http.ResponseWriter, r *http.Request) {
+	id, err := pathParam(r, "receiptId")
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	lpn, err := pathParam(r, "lpn")
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	label, err := s.GetCartonLabel.Handle(r.Context(), id, lpn)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toCartonLabel(label))
 }

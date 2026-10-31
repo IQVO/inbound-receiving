@@ -44,6 +44,8 @@ catalogue of every type inbound-receiving publishes or consumes;
 | `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCompleted` | appointment_id | appointment_id | the receipt opened from the appointment closes |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptOpened` | receipt_id | asn_number | receiving of an ASN starts |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived` | receipt_id | asn_number | a quantity is received against a line |
+| `com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived` | receipt_id | asn_number | a carton (or one case) is received: identity only, never quantity (ADR 0012) |
+| `com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised` | receipt_id | asn_number | a finding about a physical carton, one of the kinds of ADR 0012 and ADR 0014 |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptClosed` | receipt_id | asn_number | receiving ends |
 
 The receipt events are keyed by `asn_number`, so everything that happens while
@@ -63,6 +65,8 @@ guaranteed; consumers must not depend on it.
 | `dockappointment.DockAppointmentCompleted` | `appointment_id`, `door_code`, `completed_at` |
 | `receipt.ReceiptOpened` | `receipt_id`, `asn_number`, `appointment_id?`, `door_code?`, `opened_at` |
 | `receipt.ReceiptLineReceived` | `receipt_id`, `asn_number`, `line_no`, `sku`, `quantity`, `condition` (`Good` or `Damaged`), `received_at` |
+| `receipt.ReceiptCartonReceived` | `receipt_id`, `asn_number`, `sscc`?, `parent_sscc`?, `sealed`, `lpn`, `contents[]` (`line_no`, `sku`, `gtin`, `qty`, `condition`), `received_at` |
+| `receipt.CartonDiscrepancyRaised` | `receipt_id`, `sscc`?, `kind`, `expected`?, `actual`?, `at` |
 | `receipt.ReceiptClosed` | `receipt_id`, `asn_number`, `closed_at`, `discrepancies[]` = `{line_no, sku, kind, expected_qty, received_qty, damaged_qty}`, `kind` in `Short`, `Over`, `Damaged` |
 
 Payload rules:

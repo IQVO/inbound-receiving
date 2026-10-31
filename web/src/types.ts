@@ -86,6 +86,12 @@ export interface Receipt {
   /** Present once the receipt is Closed. */
   closedAt?: string;
   discrepancies: Discrepancy[];
+  /**
+   * The carton findings raised on the receipt (scans and the close), in raise
+   * order (ADR 0015). The API always sends it; optional here only so a service
+   * older than ADR 0015 reads as "none".
+   */
+  cartonDiscrepancies?: ReceiptCartonDiscrepancy[];
   version: number;
 }
 
@@ -157,4 +163,120 @@ export interface ReceiveLineInput {
 
 export interface ReasonInput {
   reason?: string;
+}
+
+/* ---- Cartons (ADR 0012-0014): hierarchical ASN, scan receiving, labels ---- */
+
+export const CARTON_KINDS = ["HOMOGENEOUS_CASE", "MIXED"] as const;
+export type CartonKind = (typeof CARTON_KINDS)[number];
+
+/** What the ASN's receipt has done with an announced carton. */
+export type CartonStatus = "Expected" | "Accepted" | "Missing";
+
+export interface CartonContent {
+  lineNo: number;
+  sku: string;
+  gtin: string;
+  /** Eaches. */
+  qty: number;
+  lot?: string;
+  expiry?: string;
+}
+
+export interface CartonDims {
+  lengthMm: number;
+  widthMm: number;
+  heightMm: number;
+}
+
+/** One announced carton with its status (GET /asns/{asnNumber}/cartons). */
+export interface AsnCartonStatus {
+  sscc: string;
+  /** The pallet SSCC, when the carton is on one. */
+  parentSscc?: string;
+  kind: CartonKind;
+  contents: CartonContent[];
+  grossWeightG?: number;
+  dims?: CartonDims;
+  status: CartonStatus;
+}
+
+export interface AsnCartons {
+  asnNumber: string;
+  ownerRef?: string;
+  cartons: AsnCartonStatus[];
+}
+
+export const CARTON_DISCREPANCY_KINDS = [
+  "UnexpectedCarton",
+  "MissingCarton",
+  "DuplicateSscc",
+  "UnknownGtin",
+  "CaseQtyMismatch",
+  "MixedCaseDeclaredAsCasePack",
+  "UnlabelledCarton",
+  "CartonOverLimit",
+  "MixedCartonContentMismatch",
+] as const;
+export type CartonDiscrepancyKind = (typeof CARTON_DISCREPANCY_KINDS)[number];
+
+export interface CartonDiscrepancy {
+  kind: CartonDiscrepancyKind;
+  sscc?: string;
+  expected?: string;
+  actual?: string;
+}
+
+/** A carton finding as the receipt keeps it: when it was raised, and for a MissingCarton the manifest SSCC is `expected`. */
+export interface ReceiptCartonDiscrepancy extends CartonDiscrepancy {
+  at: string;
+}
+
+export const SCAN_KINDS = ["SSCC", "CASE_GTIN", "EACH_GTIN"] as const;
+export type ScanKind = (typeof SCAN_KINDS)[number];
+
+export interface ReceiveScanInput {
+  kind: ScanKind;
+  id: string;
+  /** Cases for CASE_GTIN, eaches for EACH_GTIN; ignored for an SSCC. */
+  qty?: number;
+  condition?: Condition;
+  countedContents?: { sku: string; qty: number }[];
+}
+
+export interface ReceiptCartonContent extends CartonContent {
+  condition: Condition;
+}
+
+export interface ReceiptCarton {
+  lpn: string;
+  sscc?: string;
+  parentSscc?: string;
+  kind: CartonKind;
+  status: "Expected" | "Accepted";
+  sealed: boolean;
+  contents: ReceiptCartonContent[];
+  receivedAt?: string;
+}
+
+/** 201 = accepted, 200 = refused with findings (nothing booked). */
+export interface ScanResult {
+  kind: ScanKind;
+  accepted: boolean;
+  lines: ReceiptLine[];
+  cartons: ReceiptCarton[];
+  discrepancies: CartonDiscrepancy[];
+  version: number;
+}
+
+export interface CartonLabel {
+  lpn: string;
+  symbology: "CODE128";
+  /** The text printed under the barcode: "(00)<sscc>" or the LPN. */
+  humanReadable: string;
+  /** Omitted when the carton holds more than one SKU. */
+  sku?: string;
+  /** Eaches in the carton. */
+  units: number;
+  receivedAt: string;
 }

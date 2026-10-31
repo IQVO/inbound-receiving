@@ -8,3 +8,4 @@ kafka:
 config:
   productConsumerGroup: "inbound-receiving-product"
   dockDoorConsumerGroup: "inbound-receiving-dock-doors"
+  packagingConsumerGroup: "inbound-receiving-packaging"

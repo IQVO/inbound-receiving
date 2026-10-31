@@ -8,6 +8,7 @@ config:
   productConsumerGroup: "inbound-receiving-product"
   dockDoorMode: "kafka"
   dockDoorConsumerGroup: "inbound-receiving-dock-door"
+  packagingConsumerGroup: "inbound-receiving-packaging"
   shutdownDrainDelay: "5s"
   corsAllowedOrigins: "http://localhost:5173"
 kafka:
@@ -26,6 +27,8 @@ autoscaling:
   api:
     enabled: true
 mcp:
+  enabled: true
+a2a:
   enabled: true
 analytics:
   enabled: true

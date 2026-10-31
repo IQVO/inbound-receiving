@@ -231,6 +231,7 @@ func (e env) apply(t *testing.T) {
 	t.Setenv("PRODUCT_CONSUMER_GROUP", "inbound-receiving-product-e2e")
 	t.Setenv("DOCK_DOOR_MODE", "kafka")
 	t.Setenv("DOCK_DOOR_CONSUMER_GROUP", "inbound-receiving-dock-doors-e2e")
+	t.Setenv("PACKAGING_CONSUMER_GROUP", "inbound-receiving-packaging-e2e")
 	t.Setenv("HTTP_ADDR", e.addr)
 	t.Setenv("SHUTDOWN_DRAIN_DELAY", "0")
 	t.Setenv("OUTBOX_RELAY_INTERVAL", "200ms")
@@ -420,14 +421,15 @@ func waitReadyzStatus(t *testing.T, s *service, want int, what string) string {
 
 // world is what the phases share.
 type world struct {
-	e         env
-	pg        *tcpostgres.PostgresContainer
-	kc        *tckafka.KafkaContainer
-	db        pgView
-	brokers   []string
-	receiptID string
-	apptID    string
-	expected  []expectedEvent
+	e             env
+	pg            *tcpostgres.PostgresContainer
+	kc            *tckafka.KafkaContainer
+	db            pgView
+	brokers       []string
+	receiptID     string
+	apptID        string
+	cartonReceipt string
+	expected      []expectedEvent
 }
 
 const asnBody = `{"asnNumber":"ASN-1","supplierRef":"ACME","lines":[{"lineNo":1,"sku":"SKU-1","expectedQty":10}]}`
@@ -523,6 +525,95 @@ func phaseWorkflow(t *testing.T, s *service, w *world) {
 	}
 }
 
+const (
+	ssccA    = "003456789012345670"
+	ssccB    = "003456789012345687"
+	eachGTIN = "10001234567892"
+	caseGTIN = "20001234567851"
+)
+
+// Phase 3b: the carton flow (ADR 0012). The PackagingView is fed through Kafka
+// only (pack-level events from product-master, one delivered twice); a carton
+// ASN is registered with its cartons, received by SSCC through REST (a repeat
+// scan is a finding that books nothing) and closed with one carton missing.
+// The new events reach both output topics.
+func phaseCartons(t *testing.T, s *service, w *world) {
+	t.Helper()
+	level := func(id, lvl, gtin, child string, units int) kafkago.Message {
+		data := map[string]any{"sku": "SKU-1", "level": lvl, "gtin": gtin, "qty_of_child": units, "units_per_pack": units,
+			"effective_from": "2026-01-01T00:00:00Z", "version": 1}
+		if child != "" {
+			data["child_gtin"] = child
+		}
+		return kafkago.Message{Key: []byte("SKU-1"), Value: inputEvent(t, id, "/warehouse/product-master",
+			"com.warehouse.wms.product-master.product.ProductPackLevelDeclared", "SKU-1", data)}
+	}
+	each, cs := level("pack-1", "EACH", eachGTIN, "", 1), level("pack-2", "CASE", caseGTIN, eachGTIN, 20)
+	produce(t, w.brokers, topicProducts, each, cs, cs)
+	waitFor(t, 60*time.Second, "the PackagingView to be fed from Kafka", func() bool {
+		return w.db.count(`SELECT count(*) FROM pack_levels`) == 2
+	})
+	if n := w.db.count(`SELECT count(*) FROM processed_events WHERE consumer = 'packaging-view'`); n != 2 {
+		t.Fatalf("packaging-view claims = %d, want 2 (the duplicate was deduped by CloudEvents id)", n)
+	}
+
+	cartonBody := func(sscc string) string {
+		return fmt.Sprintf(`{"sscc":%q,"kind":"HOMOGENEOUS_CASE","contents":[{"lineNo":1,"sku":"SKU-1","gtin":%q,"qty":20}]}`, sscc, eachGTIN)
+	}
+	asnC := `{"asnNumber":"ASN-C","supplierRef":"ACME","ownerRef":"tenant-7f3a","lines":[{"lineNo":1,"sku":"SKU-1","expectedQty":40}],"cartons":[` +
+		cartonBody(ssccA) + `,` + cartonBody(ssccB) + `]}`
+	s.call(http.MethodPost, "/asns", asnC, "reg-c", http.StatusCreated)
+	assertProblem(t, s.call(http.MethodPost, "/asns", strings.Replace(asnC, "ASN-C", "ASN-C2", 1), "reg-c2", http.StatusUnprocessableEntity), "duplicate-sscc")
+	var opened struct {
+		ReceiptID string `json:"receiptId"`
+	}
+	mustDecode(t, s.call(http.MethodPost, "/receipts", `{"asnNumber":"ASN-C"}`, "open-c", http.StatusCreated), &opened)
+	scans := "/receipts/" + opened.ReceiptID + "/scans"
+	first := s.call(http.MethodPost, scans, `{"kind":"SSCC","id":"`+ssccA+`"}`, "scan-c1", http.StatusCreated)
+	if !strings.Contains(first, `"receivedGood":20`) {
+		t.Fatalf("scan response = %s", first)
+	}
+	dup := s.call(http.MethodPost, scans, `{"kind":"SSCC","id":"`+ssccA+`"}`, "scan-c2", http.StatusOK)
+	if !strings.Contains(dup, `"DuplicateSscc"`) || !strings.Contains(dup, `"receivedGood":20`) {
+		t.Fatalf("duplicate scan response = %s", dup)
+	}
+	list := s.call(http.MethodGet, "/asns/ASN-C/cartons", "", "", http.StatusOK)
+	if !strings.Contains(list, `"status":"accepted"`) || !strings.Contains(list, `"status":"expected"`) {
+		t.Fatalf("GET cartons = %s", list)
+	}
+	s.call(http.MethodPost, "/receipts/"+opened.ReceiptID+"/close", "", "", http.StatusOK)
+	list = s.call(http.MethodGet, "/asns/ASN-C/cartons", "", "", http.StatusOK)
+	if !strings.Contains(list, `"status":"missing"`) {
+		t.Fatalf("GET cartons after close = %s", list)
+	}
+	// ADR 0015: GET /receipts/{id} lists the findings the scans and the close raised.
+	got := s.call(http.MethodGet, "/receipts/"+opened.ReceiptID, "", "", http.StatusOK)
+	var read struct {
+		CartonDiscrepancies []struct {
+			Kind, SSCC, Expected, At string
+		} `json:"cartonDiscrepancies"`
+	}
+	if err := json.Unmarshal([]byte(got), &read); err != nil {
+		t.Fatalf("GET receipt: %v (%s)", err, got)
+	}
+	if len(read.CartonDiscrepancies) != 2 ||
+		read.CartonDiscrepancies[0].Kind != "DuplicateSscc" || read.CartonDiscrepancies[0].SSCC != ssccA ||
+		read.CartonDiscrepancies[1].Kind != "MissingCarton" || read.CartonDiscrepancies[1].Expected != ssccB ||
+		read.CartonDiscrepancies[0].At == "" || read.CartonDiscrepancies[1].At == "" {
+		t.Fatalf("GET receipt cartonDiscrepancies = %s", got)
+	}
+	w.cartonReceipt = opened.ReceiptID
+	w.expected = append(w.expected,
+		expectedEvent{"asn", "ASNRegistered", "ASN-C", "ASN-C"},
+		expectedEvent{"receipt", "ReceiptOpened", opened.ReceiptID, "ASN-C"},
+		expectedEvent{"receipt", "ReceiptLineReceived", opened.ReceiptID, "ASN-C"},
+		expectedEvent{"receipt", "ReceiptCartonReceived", opened.ReceiptID, "ASN-C"},
+		expectedEvent{"receipt", "CartonDiscrepancyRaised", opened.ReceiptID, "ASN-C"}, // DuplicateSscc
+		expectedEvent{"receipt", "CartonDiscrepancyRaised", opened.ReceiptID, "ASN-C"}, // MissingCarton (B)
+		expectedEvent{"receipt", "ReceiptClosed", opened.ReceiptID, "ASN-C"},
+	)
+}
+
 func mustDecode(t *testing.T, raw string, dest any) {
 	t.Helper()
 	if err := json.Unmarshal([]byte(raw), dest); err != nil {
@@ -552,7 +643,7 @@ func phaseNUL(t *testing.T, s *service, w *world) {
 func phaseRows(t *testing.T, w *world) {
 	t.Helper()
 	db := w.db
-	for table, want := range map[string]int{"asns": 2, "appointments": 1, "receipts": 1, "receipt_lines": 1} {
+	for table, want := range map[string]int{"asns": 3, "appointments": 1, "receipts": 2, "receipt_lines": 2, "asn_cartons": 2, "receipt_cartons": 2, "receipt_carton_discrepancies": 2, "pack_levels": 2} {
 		if n := db.count("SELECT count(*) FROM " + table); n != want {
 			t.Fatalf("%s rows = %d, want %d", table, n, want)
 		}
@@ -612,6 +703,7 @@ func phaseTopics(t *testing.T, w *world) {
 	if line.ReceiptID != w.receiptID || line.SKU != "SKU-1" || line.Quantity != 10 || line.Condition != "Good" {
 		t.Fatalf("ReceiptLineReceived data = %+v", line)
 	}
+	assertCartonPayloads(t, ev, w)
 }
 
 // Phase 7: restart the real entry point in-process on the same database and
@@ -630,8 +722,8 @@ func phaseRestart(t *testing.T, w *world, s *service) *service {
 	// Give the restarted consumers time to (wrongly) re-apply and the relay to
 	// (wrongly) re-publish; neither may happen.
 	time.Sleep(3 * time.Second)
-	if n := w.db.count(`SELECT count(*) FROM processed_events`); n != 2 {
-		t.Fatalf("processed_events after the restart = %d, want still 2", n)
+	if n := w.db.count(`SELECT count(*) FROM processed_events`); n != 4 {
+		t.Fatalf("processed_events after the restart = %d, want still 4", n)
 	}
 	noMoreMessages(t, w.brokers, topicEvents, len(w.expected))
 	noMoreMessages(t, w.brokers, topicAnalytics, len(w.expected))
@@ -691,9 +783,93 @@ func TestRunOnRealPostgresAndKafka(t *testing.T) {
 	phaseTopicsMissing(t, s, brokers)
 	phaseLocalCopies(t, s, w)
 	phaseWorkflow(t, s, w)
+	phaseCartons(t, s, w)
 	phaseNUL(t, s, w)
 	phaseRows(t, w)
 	phaseTopics(t, w)
 	s = phaseRestart(t, w, s)
 	phaseDependenciesGoAway(t, s, w)
+}
+
+// assertCartonPayloads pins the exact payload of the carton events the
+// downstream consumers (inventory-storage) read: snake_case, owner_ref and the
+// sscc/pack_gtin/cases additions on ReceiptLineReceived, identity only on
+// ReceiptCartonReceived, and never a site_id.
+func assertCartonPayloads(t *testing.T, ev []kafkago.Message, w *world) {
+	t.Helper()
+	for _, i := range []int{5, 7, 8, 9, 10} {
+		var raw map[string]any
+		mustDecode(t, string(decodeEnvelope(t, ev[i]).Data), &raw)
+		if _, has := raw["site_id"]; has {
+			t.Fatalf("event %d carries a site_id: %v", i, raw)
+		}
+	}
+	var reg map[string]any
+	mustDecode(t, string(decodeEnvelope(t, ev[5]).Data), &reg)
+	cartons, _ := reg["cartons"].([]any)
+	if reg["owner_ref"] != "tenant-7f3a" || len(cartons) != 2 {
+		t.Fatalf("ASNRegistered of the carton ASN = %v", reg)
+	}
+	first, _ := cartons[0].(map[string]any)
+	contents, _ := first["contents"].([]any)
+	if first["sscc"] != ssccA || first["kind"] != "HOMOGENEOUS_CASE" || len(contents) != 1 {
+		t.Fatalf("ASNRegistered carton = %v", first)
+	}
+
+	var line struct {
+		ReceiptID string `json:"receipt_id"`
+		Quantity  int64  `json:"quantity"`
+		OwnerRef  string `json:"owner_ref"`
+		SSCC      string `json:"sscc"`
+		PackGTIN  string `json:"pack_gtin"`
+		Cases     int64  `json:"cases"`
+	}
+	mustDecode(t, string(decodeEnvelope(t, ev[7]).Data), &line)
+	if line.ReceiptID != w.cartonReceipt || line.Quantity != 20 || line.OwnerRef != "tenant-7f3a" || line.SSCC != ssccA || line.Cases != 1 ||
+		line.PackGTIN != caseGTIN {
+		t.Fatalf("carton ReceiptLineReceived = %+v", line)
+	}
+	var carton cartonReceivedData
+	mustDecode(t, string(decodeEnvelope(t, ev[8]).Data), &carton)
+	if carton.SSCC != ssccA || carton.LPN != ssccA || !carton.Sealed || carton.OwnerRef != "tenant-7f3a" || len(carton.Contents) != 1 ||
+		carton.Contents[0].GTIN != eachGTIN || carton.Contents[0].Qty != 20 || carton.Contents[0].Condition != "Good" {
+		t.Fatalf("ReceiptCartonReceived = %+v", carton)
+	}
+	var dup, missing cartonDiscrepancyData
+	mustDecode(t, string(decodeEnvelope(t, ev[9]).Data), &dup)
+	mustDecode(t, string(decodeEnvelope(t, ev[10]).Data), &missing)
+	if dup.Kind != "DuplicateSscc" || dup.SSCC != ssccA || missing.Kind != "MissingCarton" || missing.Expected != ssccB || missing.ReceiptID != w.cartonReceipt {
+		t.Fatalf("CartonDiscrepancyRaised = %+v / %+v", dup, missing)
+	}
+}
+
+type cartonContentData struct {
+	LineNo    int    `json:"line_no"`
+	SKU       string `json:"sku"`
+	GTIN      string `json:"gtin"`
+	Qty       int64  `json:"qty"`
+	Lot       string `json:"lot,omitempty"`
+	Expiry    string `json:"expiry,omitempty"`
+	Condition string `json:"condition"`
+}
+
+type cartonReceivedData struct {
+	ReceiptID  string              `json:"receipt_id"`
+	AsnNumber  string              `json:"asn_number"`
+	OwnerRef   string              `json:"owner_ref"`
+	SSCC       string              `json:"sscc"`
+	ParentSSCC string              `json:"parent_sscc"`
+	Sealed     bool                `json:"sealed"`
+	LPN        string              `json:"lpn"`
+	Contents   []cartonContentData `json:"contents"`
+	ReceivedAt string              `json:"received_at"`
+}
+
+type cartonDiscrepancyData struct {
+	ReceiptID string `json:"receipt_id"`
+	SSCC      string `json:"sscc"`
+	Kind      string `json:"kind"`
+	Expected  string `json:"expected"`
+	Actual    string `json:"actual"`
+	At        string `json:"at"`
 }

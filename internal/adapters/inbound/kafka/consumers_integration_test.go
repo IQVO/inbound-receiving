@@ -25,6 +25,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/postgres"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
+	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
 )
 
 // End to end against real infrastructure (testcontainers only): sibling-shaped
@@ -271,3 +272,70 @@ func TestDockDoorConsumerEndToEnd(t *testing.T) {
 // groupFor derives a per-run consumer group (never an inline literal at the
 // call site).
 func groupFor(topic string) string { return "itest-" + topic }
+
+func TestPackagingConsumerEndToEnd(t *testing.T) {
+	brokers := startKafka(t)
+	pool := startPostgresPool(t)
+	topic := fmt.Sprintf("warehouse.product-master.events.packaging-itest-%d", time.Now().UnixNano())
+	createTopic(t, brokers[0], topic)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	view := postgres.NewPackagingView(pool)
+	uow, processed := postgres.NewUnitOfWork(pool), postgres.NewProcessedEventRepo(pool)
+	consumer := inboundkafka.NewPackagingConsumerForTopic(brokers, topic, groupFor(topic),
+		&usecases.ApplyPackLevelDeclared{UoW: uow, ProcessedEvents: processed, Packaging: view},
+		&usecases.ApplyPackLevelRetired{UoW: uow, ProcessedEvents: processed, Packaging: view}, logger)
+	runInBackground(t, func(ctx context.Context) { _ = consumer.Run(ctx) })
+	t.Cleanup(func() { _ = consumer.Close() })
+
+	src := "/warehouse/product-master"
+	declared := func(id, level, gtinValue, child string, units, version int) kafkago.Message {
+		data := map[string]any{
+			"sku": "SKU-9", "level": level, "gtin": gtinValue, "qty_of_child": units, "units_per_pack": units,
+			"effective_from": "2026-10-01T00:00:00Z", "version": version,
+		}
+		if child != "" {
+			data["child_gtin"] = child
+		}
+		return kafkago.Message{Key: []byte("SKU-9"), Value: event(t, id, src, inboundkafka.TypePackLevelDeclared, "SKU-9", data)}
+	}
+	const each, caseG = "10001234567892", "20001234567851"
+	retired := kafkago.Message{Key: []byte("SKU-9"), Value: event(t, "ret-1", src, inboundkafka.TypePackLevelRetired, "SKU-9",
+		map[string]any{"sku": "SKU-9", "level": "CASE", "gtin": caseG, "effective_to": "2026-10-20T00:00:00Z", "version": 3})}
+	caseLevel := declared("dec-2", "CASE", caseG, each, 12, 2)
+	publish(t, brokers, topic,
+		kafkago.Message{Key: []byte("x"), Value: []byte(`{"event_id":"flat","event_type":"ProductPackLevelDeclared"}`)},
+		kafkago.Message{Key: []byte("SKU-9"), Value: event(t, "reg-1", src, inboundkafka.TypeProductRegistered, "SKU-9", map[string]any{"sku": "SKU-9", "description": "d", "version": 1})},
+		declared("dec-1", "EACH", each, "", 1, 1),
+		caseLevel,
+		caseLevel, // redelivered id: deduped
+		declared("dec-bad", "BOX", caseG, each, 12, 9), // invalid level: skipped
+		retired,
+	)
+
+	ctx := context.Background()
+	eventually(t, "case level retired", func() bool {
+		l, err := view.ByGTIN(ctx, gtin(t, caseG))
+		return err == nil && !l.EffectiveTo.IsZero() && l.Version == 3
+	})
+	l, err := view.ByGTIN(ctx, gtin(t, caseG))
+	if err != nil || l.SKU != "SKU-9" || l.UnitsPerPack != 12 || l.ChildGTIN != gtin(t, each) {
+		t.Fatalf("case level = %+v, %v", l, err)
+	}
+	if e, err := view.ByGTIN(ctx, gtin(t, each)); err != nil || e.Version != 1 || !e.ChildGTIN.IsZero() {
+		t.Fatalf("each level = %+v, %v", e, err)
+	}
+	var claims int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM processed_events WHERE event_id = 'dec-2' AND consumer = $1`, usecases.PackagingViewConsumer).Scan(&claims); err != nil || claims != 1 {
+		t.Fatalf("claims of dec-2 = %d (%v), want 1", claims, err)
+	}
+}
+
+func gtin(t *testing.T, s string) gs1.GTIN {
+	t.Helper()
+	g, err := gs1.ParseGTIN(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
+}

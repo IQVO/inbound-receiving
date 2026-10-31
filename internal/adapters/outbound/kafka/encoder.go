@@ -44,11 +44,37 @@ type asnLineData struct {
 	ExpectedQty int64  `json:"expected_qty"`
 }
 
+type asnCartonContentData struct {
+	LineNo int    `json:"line_no"`
+	SKU    string `json:"sku"`
+	GTIN   string `json:"gtin"`
+	Qty    int64  `json:"qty"`
+	Lot    string `json:"lot,omitempty"`
+	Expiry string `json:"expiry,omitempty"`
+}
+
+type cartonDimsData struct {
+	LengthMm int64 `json:"length_mm"`
+	WidthMm  int64 `json:"width_mm"`
+	HeightMm int64 `json:"height_mm"`
+}
+
+type asnCartonData struct {
+	SSCC         string                 `json:"sscc"`
+	ParentSSCC   string                 `json:"parent_sscc,omitempty"`
+	Kind         string                 `json:"kind"`
+	Contents     []asnCartonContentData `json:"contents"`
+	GrossWeightG int64                  `json:"gross_weight_g,omitempty"`
+	Dims         *cartonDimsData        `json:"dims,omitempty"`
+}
+
 type asnRegisteredData struct {
-	AsnNumber       string        `json:"asn_number"`
-	SupplierRef     string        `json:"supplier_ref"`
-	ExpectedArrival string        `json:"expected_arrival,omitempty"`
-	Lines           []asnLineData `json:"lines"`
+	AsnNumber       string          `json:"asn_number"`
+	SupplierRef     string          `json:"supplier_ref"`
+	OwnerRef        string          `json:"owner_ref,omitempty"`
+	ExpectedArrival string          `json:"expected_arrival,omitempty"`
+	Lines           []asnLineData   `json:"lines"`
+	Cartons         []asnCartonData `json:"cartons,omitempty"`
 }
 
 type asnCancelledData struct {
@@ -99,6 +125,43 @@ type lineReceivedData struct {
 	Quantity   int64  `json:"quantity"`
 	Condition  string `json:"condition"`
 	ReceivedAt string `json:"received_at"`
+	OwnerRef   string `json:"owner_ref,omitempty"`
+	PackGTIN   string `json:"pack_gtin,omitempty"`
+	Cases      int64  `json:"cases,omitempty"`
+	SSCC       string `json:"sscc,omitempty"`
+}
+
+type cartonContentData struct {
+	LineNo    int    `json:"line_no"`
+	SKU       string `json:"sku"`
+	GTIN      string `json:"gtin"`
+	Qty       int64  `json:"qty"`
+	Lot       string `json:"lot,omitempty"`
+	Expiry    string `json:"expiry,omitempty"`
+	Condition string `json:"condition"`
+}
+
+// cartonReceivedData is IDENTITY ONLY: it never books quantity, and it has no
+// site (contracts R6).
+type cartonReceivedData struct {
+	ReceiptID  string              `json:"receipt_id"`
+	AsnNumber  string              `json:"asn_number"`
+	OwnerRef   string              `json:"owner_ref,omitempty"`
+	SSCC       string              `json:"sscc,omitempty"`
+	ParentSSCC string              `json:"parent_sscc,omitempty"`
+	Sealed     bool                `json:"sealed"`
+	LPN        string              `json:"lpn"`
+	Contents   []cartonContentData `json:"contents"`
+	ReceivedAt string              `json:"received_at"`
+}
+
+type cartonDiscrepancyData struct {
+	ReceiptID string `json:"receipt_id"`
+	SSCC      string `json:"sscc,omitempty"`
+	Kind      string `json:"kind"`
+	Expected  string `json:"expected,omitempty"`
+	Actual    string `json:"actual,omitempty"`
+	At        string `json:"at"`
 }
 
 type discrepancyData struct {
@@ -226,7 +289,7 @@ func asnRow(ev asn.Event) (row, error) {
 		for _, l := range e.Lines {
 			lines = append(lines, asnLineData{LineNo: l.LineNo(), SKU: string(l.SKU()), ExpectedQty: l.ExpectedQty()})
 		}
-		d := asnRegisteredData{AsnNumber: number, SupplierRef: e.SupplierRef, Lines: lines}
+		d := asnRegisteredData{AsnNumber: number, SupplierRef: e.SupplierRef, OwnerRef: string(e.OwnerRef), Lines: lines, Cartons: asnCartons(e.Cartons)}
 		if !e.ExpectedArrival.IsZero() {
 			d.ExpectedArrival = ts(e.ExpectedArrival)
 		}
@@ -237,6 +300,27 @@ func asnRow(ev asn.Event) (row, error) {
 		return row{}, fmt.Errorf("kafka encoder: %s is not a published asn event", ev.EventName())
 	}
 	return r, nil
+}
+
+func asnCartons(cartons []asn.Carton) []asnCartonData {
+	var out []asnCartonData
+	for _, c := range cartons {
+		contents := make([]asnCartonContentData, 0, len(c.Contents()))
+		for _, x := range c.Contents() {
+			contents = append(contents, asnCartonContentData{
+				LineNo: x.LineNo(), SKU: string(x.SKU()), GTIN: x.GTIN().String(), Qty: x.Qty(), Lot: x.Lot(), Expiry: x.Expiry(),
+			})
+		}
+		d := asnCartonData{
+			SSCC: c.SSCC().String(), ParentSSCC: c.ParentSSCC().String(), Kind: string(c.Kind()),
+			Contents: contents, GrossWeightG: c.GrossWeightG(),
+		}
+		if dims, ok := c.Dims(); ok {
+			d.Dims = &cartonDimsData{LengthMm: dims.LengthMm(), WidthMm: dims.WidthMm(), HeightMm: dims.HeightMm()}
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 func appointmentRow(ev appointment.Event) (row, error) {
@@ -277,6 +361,22 @@ func receiptRow(ev receipt.Event) (row, error) {
 		r.data = lineReceivedData{
 			ReceiptID: id, AsnNumber: number, LineNo: e.LineNo, SKU: string(e.SKU),
 			Quantity: e.Quantity, Condition: string(e.Condition), ReceivedAt: ts(e.At),
+			OwnerRef: string(e.OwnerRef), PackGTIN: e.PackGTIN.String(), Cases: e.Cases, SSCC: e.SSCC.String(),
+		}
+	case receipt.ReceiptCartonReceived:
+		contents := make([]cartonContentData, 0, len(e.Contents))
+		for _, x := range e.Contents {
+			contents = append(contents, cartonContentData{
+				LineNo: x.LineNo, SKU: string(x.SKU), GTIN: x.GTIN.String(), Qty: x.Qty, Lot: x.Lot, Expiry: x.Expiry, Condition: string(x.Condition),
+			})
+		}
+		r.data = cartonReceivedData{
+			ReceiptID: id, AsnNumber: number, OwnerRef: string(e.OwnerRef), SSCC: e.SSCC.String(), ParentSSCC: e.ParentSSCC.String(),
+			Sealed: e.Sealed, LPN: e.LPN, Contents: contents, ReceivedAt: ts(e.At),
+		}
+	case receipt.CartonDiscrepancyRaised:
+		r.data = cartonDiscrepancyData{
+			ReceiptID: id, SSCC: e.SSCC.String(), Kind: string(e.Kind), Expected: e.Expected, Actual: e.Actual, At: ts(e.At),
 		}
 	case receipt.ReceiptClosed:
 		ds := make([]discrepancyData, 0, len(e.Discrepancies))

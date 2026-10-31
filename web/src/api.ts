@@ -1,6 +1,10 @@
 import { INBOUND_RECEIVING_API_BASE } from "./config";
 import type {
   Appointment,
+  AsnCartons,
+  CartonLabel,
+  ReceiveScanInput,
+  ScanResult,
   AppointmentPage,
   Asn,
   AsnPage,
@@ -233,4 +237,29 @@ export async function receiveLine(receiptId: string, input: ReceiveLineInput): P
 /** POST /receipts/{id}/close -> the closed receipt with its final discrepancies. */
 export async function closeReceipt(receiptId: string): Promise<Receipt> {
   return normalizeReceipt((await request<Receipt>("POST", `/receipts/${seg(receiptId)}/close`)).data);
+}
+
+/** GET /asns/{asnNumber}/cartons: the announced cartons with Expected / Accepted / Missing status (empty for a flat ASN). */
+export async function getAsnCartons(asnNumber: string): Promise<AsnCartons> {
+  const res = (await request<AsnCartons>("GET", `/asns/${seg(asnNumber)}/cartons`)).data;
+  return { ...res, cartons: res.cartons ?? [] };
+}
+
+/**
+ * POST /receipts/{id}/scans. 201 = accepted, 200 = refused with findings and
+ * nothing booked (NOT an error); the screen tells them apart by `accepted`.
+ */
+export async function receiveScan(receiptId: string, input: ReceiveScanInput): Promise<ScanResult> {
+  const res = (await request<ScanResult>("POST", `/receipts/${seg(receiptId)}/scans`, input)).data;
+  return {
+    ...res,
+    lines: res.lines ?? [],
+    cartons: res.cartons ?? [],
+    discrepancies: res.discrepancies ?? [],
+  };
+}
+
+/** GET /receipts/{id}/cartons/{lpn}/label: label DATA only (404 carton-not-found). */
+export async function getCartonLabel(receiptId: string, lpn: string): Promise<CartonLabel> {
+  return (await request<CartonLabel>("GET", `/receipts/${seg(receiptId)}/cartons/${seg(lpn)}/label`)).data;
 }

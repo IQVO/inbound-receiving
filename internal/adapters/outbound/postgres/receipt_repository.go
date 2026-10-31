@@ -14,6 +14,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/repository"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
+	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
 )
 
 // uniqueViolation is the SQLSTATE of a unique-index violation.
@@ -35,11 +36,12 @@ func NewReceiptRepo(pool *pgxpool.Pool) *ReceiptRepo { return &ReceiptRepo{pool:
 
 var _ ports.ReceiptRepository = (*ReceiptRepo)(nil)
 
-const receiptColumns = `id, asn_number, appointment_id, door_code, state, opened_at, closed_at, version`
+const receiptColumns = `id, asn_number, owner_ref, appointment_id, door_code, state, opened_at, closed_at, version`
 
 type receiptRow struct {
 	id            string
 	asnNumber     string
+	ownerRef      *string
 	appointmentID *string
 	doorCode      *string
 	state         string
@@ -49,13 +51,13 @@ type receiptRow struct {
 }
 
 func (r *receiptRow) targets() []any {
-	return []any{&r.id, &r.asnNumber, &r.appointmentID, &r.doorCode, &r.state, &r.openedAt, &r.closedAt, &r.version}
+	return []any{&r.id, &r.asnNumber, &r.ownerRef, &r.appointmentID, &r.doorCode, &r.state, &r.openedAt, &r.closedAt, &r.version}
 }
 
-func (r receiptRow) toReceipt(lines []receipt.LineState) (*receipt.Receipt, error) {
+func (r receiptRow) toReceipt(lines []receipt.LineState, cartons []receipt.CartonState, findings []receipt.CartonFindingState) (*receipt.Receipt, error) {
 	p := receipt.Persisted{
-		ID: r.id, AsnNumber: r.asnNumber, AppointmentID: deref(r.appointmentID), DoorCode: deref(r.doorCode),
-		State: receipt.State(r.state), Lines: lines, OpenedAt: r.openedAt.UTC(), Version: r.version,
+		ID: r.id, AsnNumber: r.asnNumber, OwnerRef: deref(r.ownerRef), AppointmentID: deref(r.appointmentID), DoorCode: deref(r.doorCode),
+		State: receipt.State(r.state), Lines: lines, Cartons: cartons, CartonDiscrepancies: findings, OpenedAt: r.openedAt.UTC(), Version: r.version,
 	}
 	if r.closedAt != nil {
 		p.ClosedAt = r.closedAt.UTC()
@@ -110,11 +112,41 @@ func (r *ReceiptRepo) OpenByAsn(ctx context.Context, number asn.Number) (*receip
 }
 
 func (r *ReceiptRepo) withLines(ctx context.Context, q querier, row receiptRow) (*receipt.Receipt, error) {
-	lines, err := loadReceiptLines(ctx, q, []string{row.id})
+	out, err := rehydrateReceipts(ctx, q, []receiptRow{row})
 	if err != nil {
 		return nil, err
 	}
-	return row.toReceipt(lines[row.id])
+	return out[0], nil
+}
+
+// rehydrateReceipts loads the lines and the carton ledger of the given rows
+// and rebuilds the receipts.
+func rehydrateReceipts(ctx context.Context, q querier, rows []receiptRow) ([]*receipt.Receipt, error) {
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.id)
+	}
+	lines, err := loadReceiptLines(ctx, q, ids)
+	if err != nil {
+		return nil, err
+	}
+	cartons, err := loadReceiptCartons(ctx, q, ids)
+	if err != nil {
+		return nil, err
+	}
+	findings, err := loadReceiptFindings(ctx, q, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*receipt.Receipt, 0, len(rows))
+	for _, row := range rows {
+		x, err := row.toReceipt(lines[row.id], cartons[row.id], findings[row.id])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, nil
 }
 
 func loadReceiptLines(ctx context.Context, q querier, ids []string) (map[string][]receipt.LineState, error) {
@@ -161,7 +193,10 @@ func (r *ReceiptRepo) Save(ctx context.Context, x *receipt.Receipt, loadedVersio
 				return fmt.Errorf("update receipt line %d of %s: %w", l.LineNo(), x.ID(), err)
 			}
 		}
-		return nil
+		if err := upsertReceiptCartons(ctx, q, x); err != nil {
+			return err
+		}
+		return insertReceiptFindings(ctx, q, x)
 	})
 }
 
@@ -186,9 +221,9 @@ func insertReceipt(ctx context.Context, q querier, x *receipt.Receipt) (err erro
 	}
 	defer func() { _ = sp.Rollback(context.WithoutCancel(ctx)) }()
 
-	tag, err := sp.Exec(ctx, `INSERT INTO receipts (`+receiptColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	tag, err := sp.Exec(ctx, `INSERT INTO receipts (`+receiptColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (id) DO NOTHING`,
-		string(x.ID()), string(x.AsnNumber()), optString(string(x.AppointmentID())), optString(string(x.DoorCode())),
+		string(x.ID()), string(x.AsnNumber()), optString(string(x.OwnerRef())), optString(string(x.AppointmentID())), optString(string(x.DoorCode())),
 		string(x.State()), x.OpenedAt(), closedAt(x), x.Version())
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == oneOpenPerAsnIndex {
@@ -206,6 +241,12 @@ func insertReceipt(ctx context.Context, q querier, x *receipt.Receipt) (err erro
 			return fmt.Errorf("insert receipt line %d of %s: %w", l.LineNo(), x.ID(), err)
 		}
 	}
+	if err := upsertReceiptCartons(ctx, sp, x); err != nil {
+		return err
+	}
+	if err := insertReceiptFindings(ctx, sp, x); err != nil {
+		return err
+	}
 	return sp.Commit(ctx)
 }
 
@@ -221,30 +262,32 @@ func (r *ReceiptRepo) List(ctx context.Context, filter repository.ReceiptFilter,
 	}
 	defer rows.Close()
 	var page []receiptRow
-	ids := make([]string, 0, limit)
 	for rows.Next() {
 		var row receiptRow
 		if err := rows.Scan(row.targets()...); err != nil {
 			return nil, fmt.Errorf("scan receipt: %w", err)
 		}
 		page = append(page, row)
-		ids = append(ids, row.id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list receipts: %w", err)
 	}
 	rows.Close()
-	lines, err := loadReceiptLines(ctx, q, ids)
+	return rehydrateReceipts(ctx, q, page)
+}
+
+// ReceivedSsccs implements ports.ReceiptRepository: the given SSCCs already
+// accepted on any receipt.
+func (r *ReceiptRepo) ReceivedSsccs(ctx context.Context, ssccs []gs1.SSCC) ([]gs1.SSCC, error) {
+	raw := make([]string, 0, len(ssccs))
+	for _, s := range ssccs {
+		raw = append(raw, s.String())
+	}
+	rows, err := queryFor(ctx, r.pool).Query(ctx, `SELECT sscc FROM receipt_cartons
+		WHERE status = 'Accepted' AND sscc = ANY($1) ORDER BY sscc`, raw)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("received ssccs: %w", err)
 	}
-	out := make([]*receipt.Receipt, 0, len(page))
-	for _, row := range page {
-		x, err := row.toReceipt(lines[row.id])
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, x)
-	}
-	return out, nil
+	defer rows.Close()
+	return scanSsccs(rows)
 }

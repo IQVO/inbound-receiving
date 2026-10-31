@@ -1,6 +1,13 @@
 import type { ReactNode } from "react";
 import { StatusPill } from "@warehouse/ui-kit";
-import type { AppointmentState, AsnState, DiscrepancyKind, ReceiptState } from "../types";
+import type {
+  AppointmentState,
+  AsnState,
+  CartonDiscrepancyKind,
+  CartonStatus,
+  DiscrepancyKind,
+  ReceiptState,
+} from "../types";
 
 export function PageHeader({ title, subtitle }: { title: string; subtitle: ReactNode }) {
   return (
@@ -67,4 +74,19 @@ const KIND_TONE: Record<DiscrepancyKind, Tone> = {
 
 export function DiscrepancyPill({ kind }: { kind: DiscrepancyKind }) {
   return <StatusPill status={kind} tone={KIND_TONE[kind]} size="sm" />;
+}
+
+const CARTON_STATUS_TONE: Record<CartonStatus, Tone> = {
+  Expected: "neutral",
+  Accepted: "success",
+  Missing: "danger",
+};
+
+export function CartonStatusPill({ status }: { status: CartonStatus }) {
+  return <StatusPill status={status} tone={CARTON_STATUS_TONE[status]} size="sm" />;
+}
+
+/** Informational findings (UnlabelledCarton, CartonOverLimit) are warnings; the rest block and are danger. */
+export function CartonDiscrepancyPill({ kind, blocking }: { kind: CartonDiscrepancyKind; blocking: boolean }) {
+  return <StatusPill status={kind} tone={blocking ? "danger" : "warning"} size="sm" />;
 }

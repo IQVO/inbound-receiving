@@ -42,7 +42,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 
 {{/*
 Selector labels. Shared by every pod this release creates, so every
-Deployment and Service ALSO pins app.kubernetes.io/component (api, mcp):
+Deployment and Service ALSO pins app.kubernetes.io/component (api, mcp, a2a):
 a Service selecting on these two alone would select every component.
 */}}
 {{- define "inbound-receiving.selectorLabels" -}}
@@ -81,7 +81,14 @@ Fully qualified name of the MCP server deployment/service.
 {{- end }}
 
 {{/*
-Image reference shared by every Deployment (api, mcp, analytics-projector, analytics-reports).
+Fully qualified name of the A2A agent Deployment/Service (<release>-a2a, docs/adr/0016).
+*/}}
+{{- define "inbound-receiving.a2aFullname" -}}
+{{- include "inbound-receiving.fullname" . }}-a2a
+{{- end }}
+
+{{/*
+Image reference shared by every Deployment (api, mcp, a2a, analytics-projector, analytics-reports).
 */}}
 {{- define "inbound-receiving.image" -}}
 {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
@@ -136,12 +143,24 @@ come from values (cmd/api exits at boot without PRODUCT_CONSUMER_GROUP /
 DOCK_DOOR_CONSUMER_GROUP). A stable id is what lets a rescheduled pod resume
 from its committed offsets.
 */}}
+{{- define "inbound-receiving.requireCartonLimits" -}}
+{{- range $key := list "cartonMaxGrossWeightG" "cartonMaxLongestSideMm" -}}
+{{- $v := int64 (index $.Values.config $key) -}}
+{{- if lt $v 0 -}}
+{{- fail (printf "config.%s is %d — a carton limit is a non-negative number (0 = unchecked, ADR 0014)." $key $v) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "inbound-receiving.requireConsumerGroups" -}}
 {{- if not .Values.config.productConsumerGroup -}}
 {{- fail "config.productConsumerGroup is required (PRODUCT_CONSUMER_GROUP): the product consumer always runs on real Kafka and cmd/api exits at boot without a group. Use a STABLE id (ADR 0011)." -}}
 {{- end -}}
 {{- if not .Values.config.dockDoorConsumerGroup -}}
 {{- fail "config.dockDoorConsumerGroup is required (DOCK_DOOR_CONSUMER_GROUP): the dock-door consumer always runs on real Kafka and cmd/api exits at boot without a group. Use a STABLE id (ADR 0011)." -}}
+{{- end -}}
+{{- if not .Values.config.packagingConsumerGroup -}}
+{{- fail "config.packagingConsumerGroup is required (PACKAGING_CONSUMER_GROUP): the packaging consumer always runs on real Kafka and cmd/api exits at boot without a group. Use a STABLE id (ADR 0012)." -}}
 {{- end -}}
 {{- end -}}
 
@@ -173,6 +192,7 @@ Deployment (always rendered) includes it, so a mis-set release fails
 {{- include "inbound-receiving.requireKafka" . -}}
 {{- include "inbound-receiving.requireConsumerModes" . -}}
 {{- include "inbound-receiving.requireConsumerGroups" . -}}
+{{- include "inbound-receiving.requireCartonLimits" . -}}
 {{- include "inbound-receiving.requireNoInMemoryEnv" . -}}
 {{- end -}}
 

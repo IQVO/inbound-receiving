@@ -37,7 +37,7 @@ about where received goods go; Good lines are handed to inventory-storage
 as events (ADR 0003) and stow stays an RF action there.
 
 Every resource-creating `POST` (`/asns`, `/appointments`, `/receipts`,
-`/receipts/{id}/lines`) requires an `Idempotency-Key` header: a missing key
+`/receipts/{id}/lines`, `/receipts/{id}/scans`) requires an `Idempotency-Key` header: a missing key
 is a 400 `idempotency-key-required`, a replay with the same key and body
 returns the original response, the same key with a different body is a 422
 `idempotency-key-reused`. The action `POST`s (`cancel`, `check-in`,
@@ -69,7 +69,12 @@ The slug catalogue: `malformed-request`, `invalid-query`,
 `appointment-not-checked-in`, `outside-check-in-window`,
 `door-window-overlap`, `receipt-already-open`, `receipt-closed`,
 `unknown-sku`, `unknown-dock-door`, `unknown-asn`, `unknown-appointment`,
-`asn-not-on-appointment`, `line-not-on-asn`, `version-mismatch`,
+`asn-not-on-appointment`, `line-not-on-asn`, `invalid-owner-ref`,
+`invalid-carton-kind`, `invalid-carton`, `invalid-sscc`, `invalid-gtin`,
+`unsupported-gtin`, `invalid-scan-kind`, `invalid-scan`, `invalid-cases`,
+`invalid-counted-contents`, `counted-contents-not-mixed`,
+`counted-sku-unknown`, `carton-not-found`, `duplicate-sscc`, `homogeneous-carton-mixed`, `carton-contents-mismatch`,
+`scan-kind-mismatch`, `unsupported-pack-level`, `version-mismatch`,
 `concurrent-modification`, `resource-not-found` (a NUL character in the
 request path), `dependency-unavailable` (`/readyz` while Postgres or Kafka
 is unreachable), `internal-error`. A NUL (U+0000) in a JSON body is a 400

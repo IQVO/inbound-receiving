@@ -8,6 +8,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
 	"github.com/claudioed/inbound-receiving/internal/application/repository"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
+	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
 )
 
 // AsnLineInput is one requested ASN line.
@@ -18,12 +19,15 @@ type AsnLineInput struct {
 }
 
 // RegisterAsnCommand is the input of RegisterAsn. A zero ExpectedArrival
-// means the supplier gave none.
+// means the supplier gave none. OwnerRef and Cartons are optional: a flat ASN
+// has neither.
 type RegisterAsnCommand struct {
 	AsnNumber       string
 	SupplierRef     string
+	OwnerRef        string
 	ExpectedArrival time.Time
 	Lines           []AsnLineInput
+	Cartons         []asn.CartonInput
 }
 
 // RegisterAsn registers an advance ship notice. With SkuMode kafka every
@@ -40,7 +44,10 @@ func (uc *RegisterAsn) Handle(ctx context.Context, cmd RegisterAsnCommand) (*asn
 	for _, l := range cmd.Lines {
 		lines = append(lines, asn.LineInput{LineNo: l.LineNo, SKU: l.SKU, ExpectedQty: l.ExpectedQty})
 	}
-	a, events, err := asn.Register(cmd.AsnNumber, cmd.SupplierRef, cmd.ExpectedArrival, lines, uc.now())
+	a, events, err := asn.RegisterDraft(asn.Draft{
+		Number: cmd.AsnNumber, SupplierRef: cmd.SupplierRef, OwnerRef: cmd.OwnerRef,
+		ExpectedArrival: cmd.ExpectedArrival, Lines: lines, Cartons: cmd.Cartons,
+	}, uc.now())
 	if err != nil {
 		return nil, err
 	}
@@ -48,6 +55,9 @@ func (uc *RegisterAsn) Handle(ctx context.Context, cmd RegisterAsnCommand) (*asn
 		return nil, err
 	}
 	err = uc.UoW.Do(ctx, func(ctx context.Context) error {
+		if err := uc.checkSsccs(ctx, a); err != nil {
+			return err
+		}
 		_, err := uc.Asns.Get(ctx, a.Number())
 		if err == nil {
 			return ErrAsnAlreadyExists
@@ -67,6 +77,30 @@ func (uc *RegisterAsn) Handle(ctx context.Context, cmd RegisterAsnCommand) (*asn
 		return nil, err
 	}
 	return a, nil
+}
+
+// checkSsccs refuses a carton or pallet SSCC that already sits on another
+// ASN of the site that is not cancelled (ErrDuplicateSscc).
+func (uc *RegisterAsn) checkSsccs(ctx context.Context, a *asn.Asn) error {
+	cartons := a.Cartons()
+	if len(cartons) == 0 {
+		return nil
+	}
+	ssccs := make([]gs1.SSCC, 0, 2*len(cartons))
+	for _, c := range cartons {
+		ssccs = append(ssccs, c.SSCC())
+		if !c.ParentSSCC().IsZero() {
+			ssccs = append(ssccs, c.ParentSSCC())
+		}
+	}
+	existing, err := uc.Asns.ExistingSsccs(ctx, ssccs)
+	if err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		return duplicateSscc(existing[0].String())
+	}
+	return nil
 }
 
 func (uc *RegisterAsn) checkSkus(ctx context.Context, a *asn.Asn) error {

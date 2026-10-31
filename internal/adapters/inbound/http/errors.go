@@ -10,6 +10,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 	"github.com/claudioed/inbound-receiving/internal/domain/shared"
+	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
 )
 
 // problemBaseURI is the namespace of this service's RFC 7807 `type` URIs.
@@ -71,10 +72,23 @@ var problemCatalogue = []struct {
 	{appointment.ErrNoAsns, bad("appointment-requires-asns", "An appointment requires at least one ASN")},
 	{appointment.ErrDuplicateAsn, bad("duplicate-asn-number", "An appointment may list an ASN only once")},
 	{receipt.ErrInvalidCondition, bad("invalid-condition", "Condition must be Good or Damaged")},
+	{shared.ErrInvalidOwnerRef, bad("invalid-owner-ref", "Owner reference is invalid")},
+	{asn.ErrInvalidCartonKind, bad("invalid-carton-kind", "Carton kind must be HOMOGENEOUS_CASE or MIXED")},
+	{asn.ErrInvalidCarton, bad("invalid-carton", "Carton is invalid")},
+	// asn.ErrInvalidSscc wraps gs1.ErrInvalidSSCC: it must match first so a
+	// register-time SSCC is a 422 and a scanned one (below) a 400.
+	{asn.ErrInvalidSscc, unprocessable("invalid-sscc", "SSCC is invalid")},
+	{usecases.ErrInvalidScanKind, bad("invalid-scan-kind", "Scan kind must be SSCC, CASE_GTIN or EACH_GTIN")},
+	{usecases.ErrInvalidScan, bad("invalid-scan", "Scan is not a valid GS1 scan")},
+	{receipt.ErrInvalidCases, bad("invalid-cases", "Cases must be between 1 and 1000 per scan")},
+	{gs1.ErrVariableMeasure, bad("unsupported-gtin", "Variable measure GTINs are not supported")},
+	{gs1.ErrInvalidGTIN, bad("invalid-gtin", "GTIN is invalid")},
+	{gs1.ErrInvalidSSCC, bad("invalid-sscc", "SSCC is invalid")},
 
 	{repository.ErrAsnNotFound, notFound("asn-not-found", "ASN not found")},
 	{repository.ErrAppointmentNotFound, notFound("appointment-not-found", "Appointment not found")},
 	{repository.ErrReceiptNotFound, notFound("receipt-not-found", "Receipt not found")},
+	{usecases.ErrCartonNotFound, notFound("carton-not-found", "Carton not found on the receipt")},
 
 	{usecases.ErrAsnAlreadyExists, conflict("asn-already-exists", "ASN already exists")},
 	{asn.ErrAsnInProgress, conflict("asn-in-progress", "ASN is being received")},
@@ -96,6 +110,14 @@ var problemCatalogue = []struct {
 	{usecases.ErrUnknownAppointment, unprocessable("unknown-appointment", "Appointment does not exist")},
 	{usecases.ErrAsnNotOnAppointment, unprocessable("asn-not-on-appointment", "ASN is not covered by the appointment")},
 	{receipt.ErrLineNotOnAsn, unprocessable("line-not-on-asn", "Line is not on the ASN")},
+	{asn.ErrDuplicateSscc, unprocessable("duplicate-sscc", "An SSCC may appear once per site")},
+	{asn.ErrHomogeneousCartonMixed, unprocessable("homogeneous-carton-mixed", "A homogeneous case carton may hold one SKU only")},
+	{asn.ErrCartonContentsMismatch, unprocessable("carton-contents-mismatch", "Carton contents must add up to every line")},
+	{receipt.ErrCountedContentsNotMixed, unprocessable("counted-contents-not-mixed", "Counted contents apply to a mixed carton only")},
+	{receipt.ErrInvalidCount, bad("invalid-counted-contents", "Counted contents need a unique SKU and a quantity of zero or more")},
+	{usecases.ErrCountedSkuUnknown, unprocessable("counted-sku-unknown", "A counted SKU has no each GTIN in the packaging view")},
+	{usecases.ErrScanKindMismatch, unprocessable("scan-kind-mismatch", "The scan is not of the kind the screen expects")},
+	{usecases.ErrUnsupportedPackLevel, unprocessable("unsupported-pack-level", "Only EACH and CASE pack levels can be received by scan")},
 
 	{usecases.ErrVersionMismatch, problem{http.StatusPreconditionFailed, "version-mismatch", "The If-Match version is stale"}},
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/repository"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
+	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
 )
 
 // ReceiptRepo is an in-memory, mutex-guarded ports.ReceiptRepository,
@@ -128,16 +129,27 @@ func (r *ReceiptRepo) Snapshot() func() {
 }
 
 func copyReceipt(x *receipt.Receipt) (*receipt.Receipt, error) {
-	lines := make([]receipt.LineState, 0, len(x.Lines()))
-	for _, l := range x.Lines() {
-		lines = append(lines, receipt.LineState{
-			LineNo: l.LineNo(), SKU: string(l.SKU()), ExpectedQty: l.ExpectedQty(),
-			ReceivedGood: l.ReceivedGood(), ReceivedDamaged: l.ReceivedDamaged(),
-		})
+	return receipt.Rehydrate(x.Persisted())
+}
+
+// ReceivedSsccs implements ports.ReceiptRepository: the given SSCCs already
+// accepted on any receipt.
+func (r *ReceiptRepo) ReceivedSsccs(_ context.Context, ssccs []gs1.SSCC) ([]gs1.SSCC, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	accepted := map[gs1.SSCC]struct{}{}
+	for _, x := range r.items {
+		for _, c := range x.Cartons() {
+			if c.Status() == receipt.CartonAccepted && !c.SSCC().IsZero() {
+				accepted[c.SSCC()] = struct{}{}
+			}
+		}
 	}
-	return receipt.Rehydrate(receipt.Persisted{
-		ID: string(x.ID()), AsnNumber: string(x.AsnNumber()), AppointmentID: string(x.AppointmentID()),
-		DoorCode: string(x.DoorCode()), State: x.State(), Lines: lines,
-		OpenedAt: x.OpenedAt(), ClosedAt: x.ClosedAt(), Version: x.Version(),
-	})
+	var out []gs1.SSCC
+	for _, s := range ssccs {
+		if _, ok := accepted[s]; ok {
+			out = append(out, s)
+		}
+	}
+	return out, nil
 }
