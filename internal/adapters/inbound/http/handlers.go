@@ -144,7 +144,7 @@ func (s *Server) handleListAsns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleCancelAsn backs POST /asns/{asnNumber}/cancel (200).
+// handleCancelAsn backs POST /asns/{asnNumber}/cancellations (200).
 func (s *Server) handleCancelAsn(w http.ResponseWriter, r *http.Request) {
 	number, err := pathParam(r, "asnNumber")
 	if err != nil {

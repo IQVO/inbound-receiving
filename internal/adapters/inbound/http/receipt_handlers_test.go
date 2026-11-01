@@ -37,7 +37,7 @@ func TestOpenReceiptFromACheckedInAppointment(t *testing.T) {
 	f.seedAsn(t, "ASN-1")
 	appt := f.seedAppointment(t, "DOOR-1", 1, "ASN-1")
 	f.clock.set(startOfDay.Add(time.Hour))
-	f.mustPost(t, "/appointments/"+appt+"/check-in", "", http.StatusOK)
+	f.mustPost(t, "/appointments/"+appt+"/check-ins", "", http.StatusOK)
 	r := f.post(t, "/receipts", `{"asnNumber":"ASN-1","appointmentId":"`+appt+`"}`)
 	expectStatus(t, r, http.StatusCreated)
 	if str(r, "appointmentId") != appt || str(r, "doorCode") != "DOOR-1" {
@@ -77,7 +77,7 @@ func TestOneOpenReceiptPerAsnAndNotReceivable(t *testing.T) {
 	expectProblem(t, f.post(t, "/receipts", `{"asnNumber":"ASN-1"}`), http.StatusConflict, "receipt-already-open")
 
 	f.seedAsn(t, "ASN-2")
-	f.mustPost(t, "/asns/ASN-2/cancel", "", http.StatusOK)
+	f.mustPost(t, "/asns/ASN-2/cancellations", "", http.StatusOK)
 	expectProblem(t, f.post(t, "/receipts", `{"asnNumber":"ASN-2"}`), http.StatusConflict, "asn-not-receivable")
 }
 
@@ -100,7 +100,7 @@ func TestReceiveLineGoodAndDamagedThenClose(t *testing.T) {
 	over := f.post(t, linePath(id), `{"lineNo":2,"quantity":7,"condition":"Good"}`)
 	expectStatus(t, over, http.StatusCreated)
 
-	closed := f.post(t, "/receipts/"+id+"/close", "")
+	closed := f.post(t, "/receipts/"+id+"/closures", "")
 	expectStatus(t, closed, http.StatusOK)
 	disc, _ := closed.body["discrepancies"].([]any)
 	if str(closed, "state") != "Closed" || str(closed, "closedAt") == "" || len(disc) != 3 || closed.header.Get("ETag") != `"5"` {
@@ -113,7 +113,7 @@ func TestReceiveLineGoodAndDamagedThenClose(t *testing.T) {
 	if strings.Join(kinds, ",") != "Short,Damaged,Over" {
 		t.Fatalf("kinds = %v", kinds)
 	}
-	expectProblem(t, f.post(t, "/receipts/"+id+"/close", ""), http.StatusConflict, "receipt-closed")
+	expectProblem(t, f.post(t, "/receipts/"+id+"/closures", ""), http.StatusConflict, "receipt-closed")
 	expectProblem(t, f.post(t, linePath(id), `{"lineNo":1,"quantity":1,"condition":"Good"}`), http.StatusConflict, "receipt-closed")
 	if asn := f.get(t, "/asns/ASN-1"); str(asn, "state") != "Closed" {
 		t.Fatalf("asn = %s", asn.raw)
@@ -173,18 +173,18 @@ func TestReceiveLineReplayNeverCountsTwice(t *testing.T) {
 	if lines[0].(map[string]any)["receivedGood"] != float64(40) {
 		t.Fatalf("units were counted twice: %s", got.raw)
 	}
-	expectProblem(t, f.request(t, http.MethodPost, linePath(id), `{"lineNo":1,"quantity":41,"condition":"Good"}`, headers), http.StatusUnprocessableEntity, "idempotency-key-reused")
+	expectProblem(t, f.request(t, http.MethodPost, linePath(id), `{"lineNo":1,"quantity":41,"condition":"Good"}`, headers), http.StatusConflict, "idempotency-key-reused")
 }
 
 func TestCloseReceiptRefusals(t *testing.T) {
 	f := newFixture(t)
 	id := f.seedReceipt(t, "ASN-1")
-	expectProblem(t, f.post(t, "/receipts/nope/close", ""), http.StatusBadRequest, "invalid-receipt-id")
-	expectProblem(t, f.post(t, "/receipts/"+missingReceipt+"/close", ""), http.StatusNotFound, "receipt-not-found")
-	expectProblem(t, f.postWith(t, "/receipts/"+id+"/close", "", map[string]string{"If-Match": `"9"`}), http.StatusPreconditionFailed, "version-mismatch")
-	expectProblem(t, f.postWith(t, "/receipts/"+id+"/close", "", map[string]string{"If-Match": "x"}), http.StatusBadRequest, "malformed-request")
+	expectProblem(t, f.post(t, "/receipts/nope/closures", ""), http.StatusBadRequest, "invalid-receipt-id")
+	expectProblem(t, f.post(t, "/receipts/"+missingReceipt+"/closures", ""), http.StatusNotFound, "receipt-not-found")
+	expectProblem(t, f.postWith(t, "/receipts/"+id+"/closures", "", map[string]string{"If-Match": `"9"`}), http.StatusPreconditionFailed, "version-mismatch")
+	expectProblem(t, f.postWith(t, "/receipts/"+id+"/closures", "", map[string]string{"If-Match": "x"}), http.StatusBadRequest, "malformed-request")
 	f.faults.receiptSave = errDB
-	expectProblem(t, f.post(t, "/receipts/"+id+"/close", ""), http.StatusInternalServerError, "internal-error")
+	expectProblem(t, f.post(t, "/receipts/"+id+"/closures", ""), http.StatusInternalServerError, "internal-error")
 }
 
 func TestCloseReceiptCompletesTheAppointment(t *testing.T) {
@@ -192,9 +192,9 @@ func TestCloseReceiptCompletesTheAppointment(t *testing.T) {
 	f.seedAsn(t, "ASN-1")
 	appt := f.seedAppointment(t, "DOOR-1", 1, "ASN-1")
 	f.clock.set(startOfDay.Add(time.Hour))
-	f.mustPost(t, "/appointments/"+appt+"/check-in", "", http.StatusOK)
+	f.mustPost(t, "/appointments/"+appt+"/check-ins", "", http.StatusOK)
 	rcpt := str(f.mustPost(t, "/receipts", `{"asnNumber":"ASN-1","appointmentId":"`+appt+`"}`, http.StatusCreated), "receiptId")
-	f.mustPost(t, "/receipts/"+rcpt+"/close", "", http.StatusOK)
+	f.mustPost(t, "/receipts/"+rcpt+"/closures", "", http.StatusOK)
 	if got := f.get(t, "/appointments/"+appt); str(got, "state") != "Completed" {
 		t.Fatalf("appointment = %s", got.raw)
 	}
@@ -219,7 +219,7 @@ func TestListReceiptsPagesAndFilters(t *testing.T) {
 	f.seedReceipt(t, "ASN-1")
 	two := f.seedReceipt(t, "ASN-2")
 	f.seedReceipt(t, "ASN-3")
-	f.mustPost(t, "/receipts/"+two+"/close", "", http.StatusOK)
+	f.mustPost(t, "/receipts/"+two+"/closures", "", http.StatusOK)
 
 	page := f.get(t, "/receipts?limit=2")
 	items, _ := page.body["items"].([]any)

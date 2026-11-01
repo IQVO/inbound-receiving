@@ -85,7 +85,7 @@ func (s *Server) handleReceiveLine(w http.ResponseWriter, r *http.Request) {
 	writeVersioned(w, http.StatusCreated, x.Version(), toReceipt(x))
 }
 
-// handleCloseReceipt backs POST /receipts/{receiptId}/close (200).
+// handleCloseReceipt backs POST /receipts/{receiptId}/closures (200).
 func (s *Server) handleCloseReceipt(w http.ResponseWriter, r *http.Request) {
 	id, err := pathParam(r, "receiptId")
 	if err != nil {
