@@ -1,5 +1,7 @@
 # inbound-receiving
 
+[![CI](https://github.com/IQVO/inbound-receiving/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/IQVO/inbound-receiving/actions/workflows/ci.yml?query=branch%3Adevelop) [![coverage gate](https://img.shields.io/badge/coverage%20gate-90%25-brightgreen)](https://github.com/IQVO/inbound-receiving/blob/develop/Makefile) [![Go](https://img.shields.io/badge/go-1.27.3-00ADD8?logo=go&logoColor=white)](https://github.com/IQVO/inbound-receiving/blob/develop/go.mod) [![release](https://img.shields.io/github/v/release/IQVO/inbound-receiving?sort=semver)](https://github.com/IQVO/inbound-receiving/releases) [![docs](https://img.shields.io/badge/docs-iqvo.github.io-blue)](https://iqvo.github.io/inbound-receiving/) [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/IQVO/inbound-receiving/blob/develop/LICENSE)
+
 Inbound Receiving is the WMS-tier bounded context of the warehouse-systems
 fleet that owns the inbound dock workflow: the supplier's advance ship notice
 (ASN), the carrier's dock appointment and the counted receipt, with the
