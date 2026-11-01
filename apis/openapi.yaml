@@ -10,16 +10,18 @@ info:
     about where received goods go; Good lines are handed to inventory-storage
     as events (ADR 0003) and stow stays an RF action there.
 
-    Every resource-creating `POST` (`/asns`, `/appointments`, `/receipts`,
-    `/receipts/{id}/lines`, `/receipts/{id}/scans`) requires an `Idempotency-Key` header: a missing key
-    is a 400 `idempotency-key-required`, a replay with the same key and body
-    returns the original response, the same key with a different body is a 422
-    `idempotency-key-reused`. The action `POST`s (`cancel`, `check-in`,
-    `close`) accept the header but do not require it: repeating them is
-    refused by the state machine (409).
+    Every `POST` requires an `Idempotency-Key` header (fleet REST API
+    guideline): a missing key is a 400 `idempotency-key-required`, a retry with
+    the same key and request (method, path, body) replays the original response
+    with `Idempotency-Replayed: true`, the same key with a different request is
+    a 409 `idempotency-key-reused`. Lifecycle transitions are transition
+    resources: `POST /asns/{asnNumber}/cancellations`,
+    `/appointments/{appointmentId}/check-ins`,
+    `/appointments/{appointmentId}/cancellations` and
+    `/receipts/{receiptId}/closures`.
 
     Mutable resources carry a `version` (starts at 1, +1 per accepted change)
-    and a matching strong `ETag: "<version>"` header. An action `POST` may send
+    and a matching strong `ETag: "<version>"` header. A transition `POST` may send
     `If-Match`; a stale value is a 412 `version-mismatch`, and a write that
     loses a race at the database is a 409 `concurrent-modification`.
 
@@ -31,7 +33,9 @@ info:
     Errors are RFC 7807 problem documents (`application/problem+json`) with
     `type = https://errors.inbound-receiving.warehouse-systems.dev/<slug>`.
     The slug catalogue: `malformed-request`, `invalid-query`,
-    `idempotency-key-required`, `idempotency-key-reused`, `invalid-asn-number`,
+    `idempotency-key-required`, `idempotency-key-invalid`,
+    `idempotency-key-reused`, `invalid-limit`, `invalid-cursor`,
+    `unknown-query-parameter`, `invalid-asn-number`,
     `invalid-supplier-ref`, `asn-requires-lines`, `invalid-line-no`,
     `duplicate-sku`, `invalid-sku`, `invalid-quantity`, `invalid-reason`,
     `invalid-appointment-id`, `invalid-receipt-id`, `invalid-door-code`,
@@ -102,7 +106,7 @@ paths:
         `unknown-sku`. Publishes `ASNRegistered`.
       tags: [ASNs]
       parameters:
-        - $ref: "#/components/parameters/IdempotencyKeyRequired"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -120,6 +124,8 @@ paths:
         "201":
           description: The ASN was registered.
           headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
             ETag:
               $ref: "#/components/headers/ETag"
             Location:
@@ -214,6 +220,7 @@ paths:
     get:
       operationId: getAsnCartons
       summary: List the announced cartons of an ASN
+      x-pagination-exempt: view
       description: |
         The cartons the supplier announced (`cartons` is empty for a flat ASN)
         with the status of each against the ASN's receipt: `Expected` (no
@@ -238,7 +245,7 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /asns/{asnNumber}/cancel:
+  /asns/{asnNumber}/cancellations:
     parameters:
       - $ref: "#/components/parameters/AsnNumber"
     post:
@@ -251,7 +258,7 @@ paths:
         optional.
       tags: [ASNs]
       parameters:
-        - $ref: "#/components/parameters/IdempotencyKeyOptional"
+        - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/IfMatch"
       requestBody:
         required: false
@@ -265,6 +272,8 @@ paths:
         "200":
           description: The ASN after the cancellation.
           headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
             ETag:
               $ref: "#/components/headers/ETag"
           content:
@@ -298,7 +307,7 @@ paths:
         `DockAppointmentBooked`.
       tags: [Appointments]
       parameters:
-        - $ref: "#/components/parameters/IdempotencyKeyRequired"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -315,6 +324,8 @@ paths:
         "201":
           description: The appointment was booked.
           headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
             ETag:
               $ref: "#/components/headers/ETag"
             Location:
@@ -422,7 +433,7 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /appointments/{appointmentId}/check-in:
+  /appointments/{appointmentId}/check-ins:
     parameters:
       - $ref: "#/components/parameters/AppointmentId"
     post:
@@ -435,12 +446,14 @@ paths:
         `windowStart` until `windowEnd` (409 `outside-check-in-window`).
       tags: [Appointments]
       parameters:
-        - $ref: "#/components/parameters/IdempotencyKeyOptional"
+        - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/IfMatch"
       responses:
         "200":
           description: The appointment after the check-in.
           headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
             ETag:
               $ref: "#/components/headers/ETag"
           content:
@@ -458,7 +471,7 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /appointments/{appointmentId}/cancel:
+  /appointments/{appointmentId}/cancellations:
     parameters:
       - $ref: "#/components/parameters/AppointmentId"
     post:
@@ -470,7 +483,7 @@ paths:
         `reason` are optional.
       tags: [Appointments]
       parameters:
-        - $ref: "#/components/parameters/IdempotencyKeyOptional"
+        - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/IfMatch"
       requestBody:
         required: false
@@ -484,6 +497,8 @@ paths:
         "200":
           description: The appointment after the cancellation.
           headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
             ETag:
               $ref: "#/components/headers/ETag"
           content:
@@ -517,7 +532,7 @@ paths:
         ASN or appointment is 422 `unknown-asn` / `unknown-appointment`.
       tags: [Receipts]
       parameters:
-        - $ref: "#/components/parameters/IdempotencyKeyRequired"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -531,6 +546,8 @@ paths:
         "201":
           description: The receipt was opened.
           headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
             ETag:
               $ref: "#/components/headers/ETag"
             Location:
@@ -683,7 +700,7 @@ paths:
         `line-not-on-asn`.
       tags: [Receipts]
       parameters:
-        - $ref: "#/components/parameters/IdempotencyKeyRequired"
+        - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/IfMatch"
       requestBody:
         required: true
@@ -699,6 +716,8 @@ paths:
         "201":
           description: The quantity was recorded; the body is the receipt after the change.
           headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
             ETag:
               $ref: "#/components/headers/ETag"
           content:
@@ -788,7 +807,7 @@ paths:
         `Idempotency-Key` is required.
       tags: [Receipts]
       parameters:
-        - $ref: "#/components/parameters/IdempotencyKeyRequired"
+        - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/IfMatch"
       requestBody:
         required: true
@@ -812,6 +831,8 @@ paths:
         "200":
           description: The scan was refused with findings; nothing was booked.
           headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
             ETag:
               $ref: "#/components/headers/ETag"
           content:
@@ -829,6 +850,8 @@ paths:
         "201":
           description: The scan was accepted.
           headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
             ETag:
               $ref: "#/components/headers/ETag"
           content:
@@ -848,7 +871,7 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /receipts/{receiptId}/close:
+  /receipts/{receiptId}/closures:
     parameters:
       - $ref: "#/components/parameters/ReceiptId"
     post:
@@ -863,12 +886,14 @@ paths:
         for is `Short`.
       tags: [Receipts]
       parameters:
-        - $ref: "#/components/parameters/IdempotencyKeyOptional"
+        - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/IfMatch"
       responses:
         "200":
           description: The closed receipt with its final discrepancies.
           headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
             ETag:
               $ref: "#/components/headers/ETag"
           content:
@@ -911,12 +936,15 @@ paths:
         The inbound dock doors this service knows from facility-layout events
         (ADR 0003): doors registered with `role=Dock` and `dockFlow` of
         `Inbound` or `Both`, minus decommissioned ones, in ascending door-code
-        order. `mode` is the current `DOCK_DOOR_MODE`; in `permissive` the list
-        is informational and any door code can be booked.
+        order, a page at a time. `mode` is the current `DOCK_DOOR_MODE`; in
+        `permissive` the list is informational and any door code can be booked.
       tags: [Docks]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: The known inbound dock doors.
+          description: One page of the known inbound dock doors.
           content:
             application/json:
               schema:
@@ -926,6 +954,8 @@ paths:
                 items:
                   - { doorCode: WH1-DOCK-IN-01, dockFlow: Inbound }
                   - { doorCode: WH1-DOCK-IO-02, dockFlow: Both }
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1083,6 +1113,11 @@ paths:
 
 components:
   headers:
+    IdempotencyReplayed:
+      description: Present, with the value `true`, only when this response is the replay of a stored answer for the same `Idempotency-Key`.
+      schema:
+        type: string
+        enum: ["true"]
     ETag:
       description: 'Strong entity tag of the resource: the quoted `version`, for example `"3"`.'
       schema:
@@ -1108,31 +1143,24 @@ components:
         type: string
         format: date-time
       example: "2026-10-07T00:00:00Z"
-    IdempotencyKeyRequired:
+    IdempotencyKey:
       name: Idempotency-Key
       in: header
       required: true
       description: |
-        Caller-supplied key for this resource-creating request, unique per
-        logical action (a UUID minted per submit). A retry with the same key
-        and body replays the original response; the same key with a different
-        body is 422 `idempotency-key-reused`; a missing or empty key is 400
-        `idempotency-key-required`.
+        Caller-supplied key, unique per logical submit (a UUID minted per user
+        action and reused on every retry of it). Required on every POST. A
+        retry with the same key and the same request (method, path and body)
+        replays the stored response with `Idempotency-Replayed: true`; the same
+        key with a different request is 409 `idempotency-key-reused`; a missing
+        key is 400 `idempotency-key-required` and one longer than 128
+        characters or with non-printable characters is 400
+        `idempotency-key-invalid`.
       schema:
         type: string
         minLength: 1
-        maxLength: 255
+        maxLength: 128
       example: 0b6b1f1e-4a5c-4c1e-9f2a-7d3c8e5f9a01
-    IdempotencyKeyOptional:
-      name: Idempotency-Key
-      in: header
-      required: false
-      description: Optional on action requests; honoured like the required key when present.
-      schema:
-        type: string
-        minLength: 1
-        maxLength: 255
-      example: 5d2f7a64-1c3b-4e8d-9a07-b6c1e0f4d312
     IfMatch:
       name: If-Match
       in: header
@@ -1205,8 +1233,9 @@ components:
     BadRequest:
       description: |
         Malformed JSON or an unknown field (`malformed-request`), a bad query
-        parameter (`invalid-query`), a missing `Idempotency-Key`
-        (`idempotency-key-required`), or a value that breaks a domain rule
+        parameter (`invalid-query`, `invalid-limit`, `invalid-cursor`,
+        `unknown-query-parameter`), a missing or malformed `Idempotency-Key`
+        (`idempotency-key-required`, `idempotency-key-invalid`), or a value that breaks a domain rule
         (the `invalid-*`, `*-requires-*`, `duplicate-*`, `window-in-past` and
         `invalid-condition`, `invalid-carton*`, `invalid-scan*`, `invalid-counted-contents`, `invalid-cases`,
         `invalid-gtin`, `invalid-sscc` and `invalid-owner-ref` slugs).
@@ -1229,7 +1258,7 @@ components:
                 type: https://errors.inbound-receiving.warehouse-systems.dev/idempotency-key-required
                 title: Idempotency-Key header is required
                 status: 400
-                detail: resource-creating requests must send a non-empty Idempotency-Key
+                detail: every POST must send a non-empty Idempotency-Key
                 instance: /asns
             invalidSku:
               summary: Invalid SKU on a line
@@ -1278,8 +1307,9 @@ components:
         `asn-in-progress`, `asn-terminal`, `asn-not-receivable`,
         `appointment-not-booked`, `appointment-not-checked-in`,
         `outside-check-in-window`, `door-window-overlap`,
-        `receipt-already-open`, `receipt-closed`, or a write that lost a race
-        (`concurrent-modification`).
+        `receipt-already-open`, `receipt-closed`, a write that lost a race
+        (`concurrent-modification`), or an `Idempotency-Key` already used with
+        a different request (`idempotency-key-reused`).
       content:
         application/problem+json:
           schema:
@@ -1300,7 +1330,7 @@ components:
                 title: ASN is being received
                 status: 409
                 detail: asn is being received and cannot be cancelled
-                instance: /asns/ASN-1001/cancel
+                instance: /asns/ASN-1001/cancellations
             doorWindowOverlap:
               summary: Door already booked in an overlapping window
               value:
@@ -1316,7 +1346,7 @@ components:
                 title: Check-in is outside the allowed window
                 status: 409
                 detail: check-in is only allowed from 30 minutes before the window until it ends
-                instance: /appointments/appt-123e4567-e89b-12d3-a456-426614174000/check-in
+                instance: /appointments/appt-123e4567-e89b-12d3-a456-426614174000/check-ins
             receiptAlreadyOpen:
               summary: The ASN already has an open receipt
               value:
@@ -1340,7 +1370,15 @@ components:
                 title: The resource was modified by another request; re-fetch the latest version and retry
                 status: 409
                 detail: concurrent modification
-                instance: /asns/ASN-1001/cancel
+                instance: /asns/ASN-1001/cancellations
+            idempotencyKeyReused:
+              summary: Same key, different request
+              value:
+                type: https://errors.inbound-receiving.warehouse-systems.dev/idempotency-key-reused
+                title: Idempotency-Key was already used with a different request
+                status: 409
+                detail: the idempotency key was used with a different request
+                instance: /asns
     VersionMismatch:
       description: The `If-Match` value does not match the resource's current version; re-fetch and retry.
       content:
@@ -1352,7 +1390,7 @@ components:
             title: The If-Match version is stale
             status: 412
             detail: if-match does not match the current version
-            instance: /asns/ASN-1001/cancel
+            instance: /asns/ASN-1001/cancellations
     Unprocessable:
       description: |
         The request is well-formed but refers to something that does not hold:
@@ -1361,8 +1399,7 @@ components:
         `asn-not-on-appointment`, `line-not-on-asn`, `invalid-sscc`,
         `duplicate-sscc`, `homogeneous-carton-mixed`, `carton-contents-mismatch`,
         `scan-kind-mismatch`, `unsupported-pack-level`,
-        `counted-contents-not-mixed`, `counted-sku-unknown`, or an `Idempotency-Key`
-        reused with a different body (`idempotency-key-reused`).
+        `counted-contents-not-mixed` or `counted-sku-unknown`.
       content:
         application/problem+json:
           schema:
@@ -1392,14 +1429,6 @@ components:
                 status: 422
                 detail: line is not on the asn
                 instance: /receipts/rcpt-223e4567-e89b-12d3-a456-426614174000/lines
-            idempotencyKeyReused:
-              summary: Same key, different body
-              value:
-                type: https://errors.inbound-receiving.warehouse-systems.dev/idempotency-key-reused
-                title: Idempotency-Key was already used with a different request
-                status: 422
-                detail: the idempotency key was used with a different request body
-                instance: /asns
     InternalError:
       description: Unexpected server error.
       content:
@@ -1947,6 +1976,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Dock"
+        nextCursor:
+          type: string
+          description: Opaque cursor of the next page; absent on the last page.
 
     Problem:
       type: object
