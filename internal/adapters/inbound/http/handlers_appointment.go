@@ -43,7 +43,7 @@ func (s *Server) handleGetAppointment(w http.ResponseWriter, r *http.Request) {
 // handleListAppointments backs
 // GET /appointments?limit=&cursor=&door=&state=&from=&to=.
 func (s *Server) handleListAppointments(w http.ResponseWriter, r *http.Request) {
-	limit, cursor, err := listQuery(r)
+	limit, cursor, err := listQuery(r, "door", "state", "from", "to")
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -73,7 +73,7 @@ func (s *Server) handleListAppointments(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleCheckInAppointment backs POST /appointments/{appointmentId}/check-in.
+// handleCheckInAppointment backs POST /appointments/{appointmentId}/check-ins.
 func (s *Server) handleCheckInAppointment(w http.ResponseWriter, r *http.Request) {
 	s.appointmentAction(w, r, func(r *http.Request, cmd usecases.AppointmentActionCommand) (appointmentResponse, error) {
 		d, err := s.CheckInAppointment.Handle(r.Context(), cmd)
@@ -84,7 +84,7 @@ func (s *Server) handleCheckInAppointment(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// handleCancelAppointment backs POST /appointments/{appointmentId}/cancel.
+// handleCancelAppointment backs POST /appointments/{appointmentId}/cancellations.
 func (s *Server) handleCancelAppointment(w http.ResponseWriter, r *http.Request) {
 	s.appointmentAction(w, r, func(r *http.Request, cmd usecases.AppointmentActionCommand) (appointmentResponse, error) {
 		d, err := s.CancelAppointment.Handle(r.Context(), cmd)

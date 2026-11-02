@@ -97,6 +97,8 @@ type dockResponse struct {
 type dockListResponse struct {
 	Mode  string         `json:"mode"`
 	Items []dockResponse `json:"items"`
+	// NextCursor is omitted on the last page.
+	NextCursor string `json:"nextCursor,omitempty"`
 }
 
 func toDockList(l usecases.DockList) dockListResponse {
@@ -104,7 +106,7 @@ func toDockList(l usecases.DockList) dockListResponse {
 	for _, d := range l.Items {
 		items = append(items, dockResponse{DoorCode: string(d.Code), DockFlow: string(d.Flow)})
 	}
-	return dockListResponse{Mode: string(l.Mode), Items: items}
+	return dockListResponse{Mode: string(l.Mode), Items: items, NextCursor: l.NextCursor}
 }
 
 // receiptCartonResponse is a carton of the receipt's ledger: its Lpn is the

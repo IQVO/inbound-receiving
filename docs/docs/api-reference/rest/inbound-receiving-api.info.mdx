@@ -36,16 +36,18 @@ discrepancies found when the receipt closes (ADR 0002). It decides nothing
 about where received goods go; Good lines are handed to inventory-storage
 as events (ADR 0003) and stow stays an RF action there.
 
-Every resource-creating `POST` (`/asns`, `/appointments`, `/receipts`,
-`/receipts/{id}/lines`, `/receipts/{id}/scans`) requires an `Idempotency-Key` header: a missing key
-is a 400 `idempotency-key-required`, a replay with the same key and body
-returns the original response, the same key with a different body is a 422
-`idempotency-key-reused`. The action `POST`s (`cancel`, `check-in`,
-`close`) accept the header but do not require it: repeating them is
-refused by the state machine (409).
+Every `POST` requires an `Idempotency-Key` header (fleet REST API
+guideline): a missing key is a 400 `idempotency-key-required`, a retry with
+the same key and request (method, path, body) replays the original response
+with `Idempotency-Replayed: true`, the same key with a different request is
+a 409 `idempotency-key-reused`. Lifecycle transitions are transition
+resources: `POST /asns/{asnNumber}/cancellations`,
+`/appointments/{appointmentId}/check-ins`,
+`/appointments/{appointmentId}/cancellations` and
+`/receipts/{receiptId}/closures`.
 
 Mutable resources carry a `version` (starts at 1, +1 per accepted change)
-and a matching strong `ETag: "<version>"` header. An action `POST` may send
+and a matching strong `ETag: "<version>"` header. A transition `POST` may send
 `If-Match`; a stale value is a 412 `version-mismatch`, and a write that
 loses a race at the database is a 409 `concurrent-modification`.
 
@@ -57,7 +59,9 @@ this API at request time.
 Errors are RFC 7807 problem documents (`application/problem+json`) with
 `type = https://errors.inbound-receiving.warehouse-systems.dev/<slug>`.
 The slug catalogue: `malformed-request`, `invalid-query`,
-`idempotency-key-required`, `idempotency-key-reused`, `invalid-asn-number`,
+`idempotency-key-required`, `idempotency-key-invalid`,
+`idempotency-key-reused`, `invalid-limit`, `invalid-cursor`,
+`unknown-query-parameter`, `invalid-asn-number`,
 `invalid-supplier-ref`, `asn-requires-lines`, `invalid-line-no`,
 `duplicate-sku`, `invalid-sku`, `invalid-quantity`, `invalid-reason`,
 `invalid-appointment-id`, `invalid-receipt-id`, `invalid-door-code`,

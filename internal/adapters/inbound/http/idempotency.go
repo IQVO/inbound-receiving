@@ -13,48 +13,52 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
 )
 
-// IdempotencyKeyHeader is the request header a caller sends on a route
-// wrapped by RequireIdempotencyKey or HonourIdempotencyKey.
+// IdempotencyKeyHeader is the request header a caller sends on every POST.
 const IdempotencyKeyHeader = "Idempotency-Key"
 
+// IdempotencyReplayedHeader marks a response that is the replay of a stored
+// answer (fleet REST API guideline 2.3); the first execution never carries it.
+const IdempotencyReplayedHeader = "Idempotency-Replayed"
+
 // maxIdempotencyKeyLength is the documented maximum of the header value.
-const maxIdempotencyKeyLength = 255
+const maxIdempotencyKeyLength = 128
 
-// RequireIdempotencyKey wraps a resource-creating route (fleet rule
-// fleet/idempotency-and-outbox.md): a missing key is 400
-// idempotency-key-required, a retry with the same key and request replays
-// the first response, the same key with another request is 422
-// idempotency-key-reused. The store runs the handler in the same
-// transaction that records the response, so writes and response are atomic.
+// RequireIdempotencyKey wraps every POST route (fleet REST API guideline,
+// section 2): a missing key is 400 idempotency-key-required, a malformed one
+// 400 idempotency-key-invalid, a retry with the same key and request
+// (method, path, body) replays the first response with
+// Idempotency-Replayed: true, the same key with another request is 409
+// idempotency-key-reused. The key is global, not per route. The store runs
+// the handler in the same transaction that records the response, so writes,
+// outbox rows and response are atomic; a 5xx is never stored.
 func RequireIdempotencyKey(store ports.IdempotencyStore) func(http.Handler) http.Handler {
-	return idempotencyMiddleware(store, true)
-}
-
-// HonourIdempotencyKey wraps an action route (cancel, check-in, close): the
-// header is optional, and honoured exactly like the required one when sent.
-func HonourIdempotencyKey(store ports.IdempotencyStore) func(http.Handler) http.Handler {
-	return idempotencyMiddleware(store, false)
-}
-
-func idempotencyMiddleware(store ports.IdempotencyStore, required bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := r.Header.Get(IdempotencyKeyHeader)
-			if key == "" && !required {
-				next.ServeHTTP(w, r)
-				return
-			}
 			if key == "" {
 				writeError(w, r, errIdempotencyKeyRequired)
 				return
 			}
-			if len(key) > maxIdempotencyKeyLength {
-				writeError(w, r, errMalformedRequest)
+			if !validIdempotencyKey(key) {
+				writeError(w, r, errIdempotencyKeyInvalid)
 				return
 			}
 			serveIdempotent(w, r, store, key, next)
 		})
 	}
+}
+
+// validIdempotencyKey reports whether key is 1..128 printable ASCII characters.
+func validIdempotencyKey(key string) bool {
+	if len(key) > maxIdempotencyKeyLength {
+		return false
+	}
+	for i := 0; i < len(key); i++ {
+		if key[i] < 0x20 || key[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func serveIdempotent(w http.ResponseWriter, r *http.Request, store ports.IdempotencyStore, key string, next http.Handler) {
@@ -92,6 +96,9 @@ func serveIdempotent(w http.ResponseWriter, r *http.Request, store ports.Idempot
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}
+	}
+	if outcome == idempotency.Replayed {
+		w.Header().Set(IdempotencyReplayedHeader, "true")
 	}
 	w.WriteHeader(resp.Status)
 	_, _ = w.Write(resp.Body)

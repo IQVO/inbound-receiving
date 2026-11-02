@@ -20,7 +20,7 @@ Feature: Carton discrepancies (ADR 0012, ADR 0014)
 
   Scenario: MissingCarton - a manifest carton never scanned is reported at close
     Given I scanned the carton "003456789012345670"
-    When I POST "/receipts/{receipt}/close" with body ''
+    When I POST "/receipts/{receipt}/closures" with body ''
     Then the response status is 200
     And the outbox event types are "asn.ASNRegistered, receipt.ReceiptOpened, receipt.ReceiptLineReceived, receipt.ReceiptCartonReceived, receipt.CartonDiscrepancyRaised, receipt.ReceiptClosed"
     When I GET "/asns/ASN-M/cartons"

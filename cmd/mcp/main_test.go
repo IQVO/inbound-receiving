@@ -162,7 +162,7 @@ func TestLoadConfig_DockDoorMode(t *testing.T) {
 // list_docks always reports the kafka mode: the runtime has no other.
 func TestDepsOver_ReportsKafkaDockMode(t *testing.T) {
 	deps := depsOver(memory.NewAsnRepo(), memory.NewAppointmentRepo(), memory.NewReceiptRepo(), memory.NewDockDoors())
-	list, err := deps.ListDocks.Handle(context.Background())
+	list, err := deps.ListDocks.Handle(context.Background(), usecases.ListDocksQuery{})
 	if err != nil || list.Mode != usecases.ModeKafka {
 		t.Fatalf("docks = %+v, %v; want mode kafka", list, err)
 	}

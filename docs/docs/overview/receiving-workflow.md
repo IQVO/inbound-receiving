@@ -13,10 +13,10 @@ published by the relay.
 ```mermaid
 flowchart LR
   A["1. Announce<br/>POST /asns"] --> B["2. Appoint<br/>POST /appointments"]
-  B --> C["3. Check in<br/>POST /appointments/{id}/check-in"]
+  B --> C["3. Check in<br/>POST /appointments/{id}/check-ins"]
   C --> D["4. Open receipt<br/>POST /receipts"]
   D --> E["5. Receive lines<br/>POST /receipts/{id}/lines"]
-  E --> F["6. Close<br/>POST /receipts/{id}/close"]
+  E --> F["6. Close<br/>POST /receipts/{id}/closures"]
   A -. "walk-in: no appointment" .-> D
 ```
 

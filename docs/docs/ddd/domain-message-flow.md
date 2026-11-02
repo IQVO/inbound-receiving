@@ -28,14 +28,14 @@ sequenceDiagram
   IR-->>K: evt: ASNRegistered
   Plan->>IR: cmd: POST /appointments
   IR-->>K: evt: DockAppointmentBooked
-  Plan->>IR: cmd: POST /appointments/{id}/check-in
+  Plan->>IR: cmd: POST /appointments/{id}/check-ins
   IR-->>K: evt: DockAppointmentCheckedIn
   Dock->>IR: cmd: POST /receipts
   IR-->>K: evt: ReceiptOpened
   Dock->>IR: cmd: POST /receipts/{id}/lines
   IR-->>K: evt: ReceiptLineReceived
   K-->>INV: evt: ReceiptLineReceived (Good lines are booked as staged stock)
-  Dock->>IR: cmd: POST /receipts/{id}/close
+  Dock->>IR: cmd: POST /receipts/{id}/closures
   IR-->>K: evt: ReceiptClosed
   IR-->>K: evt: DockAppointmentCompleted
 ```
@@ -95,7 +95,7 @@ sequenceDiagram
   IR-->>K: evt: ReceiptLineReceived (Good, 30)
   Dock->>IR: cmd: POST /receipts/{id}/lines (line 1, 4, Damaged)
   IR-->>K: evt: ReceiptLineReceived (Damaged, 4)
-  Dock->>IR: cmd: POST /receipts/{id}/close
+  Dock->>IR: cmd: POST /receipts/{id}/closures
   IR-->>K: evt: ReceiptClosed (Short and Damaged for line 1)
   Dock->>IR: qry: GET /receipts/{id}
 ```

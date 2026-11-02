@@ -33,14 +33,15 @@ see [Observability](./observability.md) for their fields.
 |---|---|---|---|
 | `400 idempotency-key-required` | `POST /asns`, `/appointments`, `/receipts` or `/receipts/{receiptId}/lines` sent without `Idempotency-Key` | request headers | send a unique key (≤ 255 chars) per logical request |
 | `400 malformed-request` | invalid JSON, unknown field, unparsable `If-Match`, body over the limit, or a key longer than 255 chars | request body/headers | fix the request |
-| `422 idempotency-key-reused` | the same key was used earlier with a different method + path + body (SHA-256 fingerprint) | `idempotency_keys.request_hash` for that key | use a new key for a new request; a true retry must resend identical bytes |
+| `400 idempotency-key-invalid` | the key is not 1-128 printable ASCII characters | the request's `Idempotency-Key` header | send a UUID |
+| `409 idempotency-key-reused` | the same key was used earlier with a different method + path + body (SHA-256 fingerprint) | `idempotency_keys.request_hash` for that key | use a new key for a new request; a true retry must resend identical bytes |
 | Retry with the same key returns the **old** response | intended: a committed key replays its stored status, headers and body | `idempotency_keys.status_code` | none; 5xx responses are never stored, so they can be retried with the same key |
 | `500` with `idempotency key vanished while replaying; retry the request` in the log | two concurrent requests with one key and the first rolled back | log `idempotency store failed` | retry the request |
 | `409 concurrent-modification` | another request saved the same aggregate between load and save (version guard) | — | re-fetch (`GET`) and retry |
 | `412 version-mismatch` | `If-Match` carried a stale version | compare with the current `ETag` | re-fetch and resend with the new `ETag` |
 | `409 asn-already-exists` | ASN number already registered | `GET /asns/{asnNumber}` | use a new number, or treat as already done |
 | `409 asn-in-progress`, `asn-terminal`, `asn-not-receivable` | ASN state does not allow the command (cancel while receiving, act on Closed/Cancelled, open a receipt on a non-receivable ASN) | `GET /asns/{asnNumber}` `state` | follow the lifecycle in [Receiving workflow](../overview/receiving-workflow.md) |
-| `409 appointment-not-booked`, `appointment-not-checked-in`, `outside-check-in-window` | appointment state or time does not allow check-in/cancel/open | `GET /appointments/{appointmentId}` | check in inside the allowed window first |
+| `409 appointment-not-booked`, `appointment-not-checked-in`, `outside-check-in-window` | appointment state or time does not allow check-in/cancellations/open | `GET /appointments/{appointmentId}` | check in inside the allowed window first |
 | `409 door-window-overlap` | another active (Booked/CheckedIn) appointment overlaps the window on that door | `GET /appointments?door=...` | pick another window or door |
 | `409 receipt-already-open` | the ASN already has an open receipt (unique partial index `receipts_one_open_per_asn`) | `GET /receipts?asnNumber=...&state=Open` | continue the open receipt |
 | `409 receipt-closed` | line received on a closed receipt | `GET /receipts/{receiptId}` | open a new receipt only if the ASN is still receivable |

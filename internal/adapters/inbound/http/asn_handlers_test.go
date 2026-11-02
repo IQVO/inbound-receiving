@@ -108,7 +108,7 @@ func TestListAsnsPagesAndFilters(t *testing.T) {
 	for _, n := range []string{"ASN-1", "ASN-2", "ASN-3"} {
 		f.seedAsn(t, n)
 	}
-	f.mustPost(t, "/asns/ASN-3/cancel", "", http.StatusOK)
+	f.mustPost(t, "/asns/ASN-3/cancellations", "", http.StatusOK)
 
 	page := f.get(t, "/asns?limit=2")
 	expectStatus(t, page, http.StatusOK)
@@ -133,8 +133,8 @@ func TestListAsnsPagesAndFilters(t *testing.T) {
 
 func TestListAsnsInvalidQueriesAndErrors(t *testing.T) {
 	f := newFixture(t)
-	for _, q := range []string{"limit=abc", "limit=0", "limit=501", "cursor=!!", "state=Nope"} {
-		expectProblem(t, f.get(t, "/asns?"+q), http.StatusBadRequest, "invalid-query")
+	for q, slug := range map[string]string{"limit=abc": "invalid-limit", "limit=0": "invalid-limit", "limit=501": "invalid-limit", "cursor=!!": "invalid-cursor", "state=Nope": "invalid-query", "after=x": "unknown-query-parameter", "offset=1": "unknown-query-parameter", "nextToken=x": "unknown-query-parameter"} {
+		expectProblem(t, f.get(t, "/asns?"+q), http.StatusBadRequest, slug)
 	}
 	f.faults.asnList = errDB
 	expectProblem(t, f.get(t, "/asns"), http.StatusInternalServerError, "internal-error")
@@ -143,56 +143,57 @@ func TestListAsnsInvalidQueriesAndErrors(t *testing.T) {
 func TestCancelAsn(t *testing.T) {
 	f := newFixture(t)
 	f.seedAsn(t, "ASN-1")
-	r := f.post(t, "/asns/ASN-1/cancel", `{"reason":"Supplier cancelled"}`)
+	r := f.post(t, "/asns/ASN-1/cancellations", `{"reason":"Supplier cancelled"}`)
 	expectStatus(t, r, http.StatusOK)
 	if str(r, "state") != "Cancelled" || r.header.Get("ETag") != `"2"` || r.body["version"] != float64(2) {
 		t.Fatalf("response = %v %s", r.header, r.raw)
 	}
-	expectProblem(t, f.post(t, "/asns/ASN-1/cancel", ""), http.StatusConflict, "asn-terminal")
+	expectProblem(t, f.post(t, "/asns/ASN-1/cancellations", ""), http.StatusConflict, "asn-terminal")
 }
 
 func TestCancelAsnRefusals(t *testing.T) {
 	f := newFixture(t)
 	f.seedAsn(t, "ASN-1")
-	expectProblem(t, f.post(t, "/asns/ASN-404/cancel", ""), http.StatusNotFound, "asn-not-found")
-	expectProblem(t, f.post(t, "/asns/bad%20number/cancel", ""), http.StatusBadRequest, "invalid-asn-number")
-	expectProblem(t, f.post(t, "/asns/ASN-1/cancel", `{"nope":1}`), http.StatusBadRequest, "malformed-request")
-	expectProblem(t, f.post(t, "/asns/ASN-1/cancel", `{"reason":"`+strings.Repeat("x", 201)+`"}`), http.StatusBadRequest, "invalid-reason")
-	expectProblem(t, f.postWith(t, "/asns/ASN-1/cancel", "", map[string]string{"If-Match": `"7"`}), http.StatusPreconditionFailed, "version-mismatch")
-	expectProblem(t, f.postWith(t, "/asns/ASN-1/cancel", "", map[string]string{"If-Match": "abc"}), http.StatusBadRequest, "malformed-request")
+	expectProblem(t, f.post(t, "/asns/ASN-404/cancellations", ""), http.StatusNotFound, "asn-not-found")
+	expectProblem(t, f.post(t, "/asns/bad%20number/cancellations", ""), http.StatusBadRequest, "invalid-asn-number")
+	expectProblem(t, f.post(t, "/asns/ASN-1/cancellations", `{"nope":1}`), http.StatusBadRequest, "malformed-request")
+	expectProblem(t, f.post(t, "/asns/ASN-1/cancellations", `{"reason":"`+strings.Repeat("x", 201)+`"}`), http.StatusBadRequest, "invalid-reason")
+	expectProblem(t, f.postWith(t, "/asns/ASN-1/cancellations", "", map[string]string{"If-Match": `"7"`}), http.StatusPreconditionFailed, "version-mismatch")
+	expectProblem(t, f.postWith(t, "/asns/ASN-1/cancellations", "", map[string]string{"If-Match": "abc"}), http.StatusBadRequest, "malformed-request")
 	f.faults.asnSave = errDB
-	expectProblem(t, f.post(t, "/asns/ASN-1/cancel", ""), http.StatusInternalServerError, "internal-error")
+	expectProblem(t, f.post(t, "/asns/ASN-1/cancellations", ""), http.StatusInternalServerError, "internal-error")
 }
 
 func TestCancelAsnWithMatchingIfMatchAndWildcard(t *testing.T) {
 	f := newFixture(t)
 	f.seedAsn(t, "ASN-1")
 	f.seedAsn(t, "ASN-2")
-	expectStatus(t, f.postWith(t, "/asns/ASN-1/cancel", "", map[string]string{"If-Match": `"1"`}), http.StatusOK)
-	expectStatus(t, f.postWith(t, "/asns/ASN-2/cancel", "", map[string]string{"If-Match": "*"}), http.StatusOK)
+	expectStatus(t, f.postWith(t, "/asns/ASN-1/cancellations", "", map[string]string{"If-Match": `"1"`}), http.StatusOK)
+	expectStatus(t, f.postWith(t, "/asns/ASN-2/cancellations", "", map[string]string{"If-Match": "*"}), http.StatusOK)
 }
 
 func TestCancelAsnInProgressConflicts(t *testing.T) {
 	f := newFixture(t)
 	f.seedReceipt(t, "ASN-1")
-	expectProblem(t, f.post(t, "/asns/ASN-1/cancel", ""), http.StatusConflict, "asn-in-progress")
+	expectProblem(t, f.post(t, "/asns/ASN-1/cancellations", ""), http.StatusConflict, "asn-in-progress")
 }
 
-func TestCreatingPostsRequireAnIdempotencyKey(t *testing.T) {
+func TestEveryPostRequiresAnIdempotencyKey(t *testing.T) {
 	f := newFixture(t)
 	f.seedAsn(t, "ASN-1")
-	for _, path := range []string{"/asns", "/appointments", "/receipts", "/receipts/" + missingReceipt + "/lines"} {
+	appt := "/appointments/appt-123e4567-e89b-12d3-a456-426614174000"
+	for _, path := range []string{
+		"/asns", "/appointments", "/receipts", "/receipts/" + missingReceipt + "/lines", "/receipts/" + missingReceipt + "/scans",
+		"/asns/ASN-1/cancellations", appt + "/check-ins", appt + "/cancellations", "/receipts/" + missingReceipt + "/closures",
+	} {
 		r := f.request(t, http.MethodPost, path, "{}", nil)
 		expectProblem(t, r, http.StatusBadRequest, "idempotency-key-required")
 	}
-	long := strings.Repeat("k", 256)
-	expectProblem(t, f.request(t, http.MethodPost, "/asns", asnBody("ASN-2"), map[string]string{"Idempotency-Key": long}), http.StatusBadRequest, "malformed-request")
-}
-
-func TestActionPostsDoNotRequireAnIdempotencyKey(t *testing.T) {
-	f := newFixture(t)
-	f.seedAsn(t, "ASN-1")
-	expectStatus(t, f.request(t, http.MethodPost, "/asns/ASN-1/cancel", "", nil), http.StatusOK)
+	for _, bad := range []string{strings.Repeat("k", 129), "tab\tkey"} {
+		r := f.request(t, http.MethodPost, "/asns", asnBody("ASN-2"), map[string]string{"Idempotency-Key": bad})
+		expectProblem(t, r, http.StatusBadRequest, "idempotency-key-invalid")
+	}
+	expectStatus(t, f.request(t, http.MethodPost, "/asns", asnBody("ASN-3"), map[string]string{"Idempotency-Key": strings.Repeat("k", 128)}), http.StatusCreated)
 }
 
 func TestIdempotentReplayReturnsTheFirstResponse(t *testing.T) {
@@ -201,6 +202,12 @@ func TestIdempotentReplayReturnsTheFirstResponse(t *testing.T) {
 	first := f.request(t, http.MethodPost, "/asns", asnBody("ASN-1"), headers)
 	second := f.request(t, http.MethodPost, "/asns", asnBody("ASN-1"), headers)
 	expectStatus(t, first, http.StatusCreated)
+	if got := first.header.Get("Idempotency-Replayed"); got != "" {
+		t.Fatalf("first execution carries Idempotency-Replayed: %q", got)
+	}
+	if second.header.Get("Idempotency-Replayed") != "true" {
+		t.Fatalf("replay lacks Idempotency-Replayed: true: %v", second.header)
+	}
 	if second.status != http.StatusCreated || second.raw != first.raw || second.header.Get("ETag") != `"1"` || second.header.Get("Location") != "/asns/ASN-1" {
 		t.Fatalf("replay = %d %v %s", second.status, second.header, second.raw)
 	}
@@ -209,12 +216,12 @@ func TestIdempotentReplayReturnsTheFirstResponse(t *testing.T) {
 	}
 }
 
-func TestIdempotentKeyReuseWithAnotherBodyOrRouteIsUnprocessable(t *testing.T) {
+func TestIdempotentKeyReuseWithAnotherBodyOrRouteIsConflict(t *testing.T) {
 	f := newFixture(t)
 	headers := map[string]string{"Idempotency-Key": "same-key"}
 	expectStatus(t, f.request(t, http.MethodPost, "/asns", asnBody("ASN-1"), headers), http.StatusCreated)
-	expectProblem(t, f.request(t, http.MethodPost, "/asns", asnBody("ASN-2"), headers), http.StatusUnprocessableEntity, "idempotency-key-reused")
-	expectProblem(t, f.request(t, http.MethodPost, "/asns/ASN-1/cancel", asnBody("ASN-1"), headers), http.StatusUnprocessableEntity, "idempotency-key-reused")
+	expectProblem(t, f.request(t, http.MethodPost, "/asns", asnBody("ASN-2"), headers), http.StatusConflict, "idempotency-key-reused")
+	expectProblem(t, f.request(t, http.MethodPost, "/asns/ASN-1/cancellations", asnBody("ASN-1"), headers), http.StatusConflict, "idempotency-key-reused")
 }
 
 func TestIdempotentRefusalsAreReplayedToo(t *testing.T) {

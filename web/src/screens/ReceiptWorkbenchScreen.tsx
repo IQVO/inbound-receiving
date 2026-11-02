@@ -201,7 +201,7 @@ function DiscrepancyCard({ receipt }: { receipt: Receipt }) {
   );
 }
 
-/** POST /receipts/{id}/close: final. Asks first, with the discrepancy summary in view. */
+/** POST /receipts/{id}/closures: final. Asks first, with the discrepancy summary in view. */
 function CloseCard({ receipt, onChange }: { receipt: Receipt; onChange: (r: Receipt) => void }) {
   const [confirming, setConfirming] = useState(false);
   const [problem, setProblem] = useState<ApiError | null>(null);

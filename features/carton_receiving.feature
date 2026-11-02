@@ -67,7 +67,7 @@ Feature: Receive cartons by scan (ADR 0012)
 
   Scenario: A carton that never arrived is reported missing when the receipt closes
     Given I scanned the carton "003456789012345670"
-    When I POST "/receipts/{receipt}/close" with body ''
+    When I POST "/receipts/{receipt}/closures" with body ''
     Then the response status is 200
     And the outbox event types are "asn.ASNRegistered, receipt.ReceiptOpened, receipt.ReceiptLineReceived, receipt.ReceiptCartonReceived, receipt.CartonDiscrepancyRaised, receipt.ReceiptClosed"
     When I GET "/asns/ASN-C/cartons"

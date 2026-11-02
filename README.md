@@ -229,27 +229,34 @@ over 19 paths:
 | POST, GET | `/asns` | RegisterAsn, ListAsns |
 | GET | `/asns/{asnNumber}` | GetAsn |
 | GET | `/asns/{asnNumber}/cartons` | the ASN's carton tree (ADR 0012) |
-| POST | `/asns/{asnNumber}/cancel` | CancelAsn |
+| POST | `/asns/{asnNumber}/cancellations` | CancelAsn |
 | POST, GET | `/appointments` | BookAppointment, ListAppointments |
 | GET | `/appointments/{appointmentId}` | GetAppointment |
-| POST | `/appointments/{appointmentId}/check-in`, `/cancel` | CheckInAppointment, CancelAppointment |
+| POST | `/appointments/{appointmentId}/check-ins`, `/cancellations` | CheckInAppointment, CancelAppointment |
 | POST, GET | `/receipts` | OpenReceipt, ListReceipts |
 | GET | `/receipts/{receiptId}` | GetReceipt |
 | POST | `/receipts/{receiptId}/lines` | ReceiveLine |
 | GET | `/receipts/{receiptId}/cartons/{lpn}/label` | printable carton label (ADR 0014) |
 | POST | `/receipts/{receiptId}/scans` | case-level scan receiving |
-| POST | `/receipts/{receiptId}/close` | CloseReceipt |
+| POST | `/receipts/{receiptId}/closures` | CloseReceipt |
 | GET | `/docks` | ListDocks |
 | GET | `/healthz`, `/readyz` | liveness; readiness (503 while draining) |
 | GET | `/metrics` | Prometheus scrape (not in the OpenAPI spec) |
 | GET | `/reports/receiving-performance`, `/reports/freshness` | analytics — served by `cmd/inbound-reports`, not `cmd/api` |
 
-**Idempotency**: every resource-creating `POST` (`/asns`, `/appointments`,
-`/receipts`) **requires** an `Idempotency-Key` header (`400
-idempotency-key-required` when missing); a retry with the same key and body
-replays the original response, the same key with a different body is `422
-idempotency-key-reused`. Action routes (cancel, check-in, receive line,
-scans, close) *honour* the header when sent. Problem types are catalogued in
+**Idempotency**: every `POST` (creating and action routes alike) **requires** an
+`Idempotency-Key` header of 1-128 printable ASCII characters (`400
+idempotency-key-required` when missing, `400 idempotency-key-invalid` when
+malformed); a retry with the same key and request replays the original
+response with `Idempotency-Replayed: true`, the same key with a different
+request is `409 idempotency-key-reused`. The key row commits in the same
+transaction as the aggregate and its outbox rows.
+
+**Pagination**: `GET /asns`, `/appointments`, `/receipts` and `/docks` return
+`{items, nextCursor}` (keyset; `limit` 1-500 and `cursor`); an undeclared query
+parameter is `400 unknown-query-parameter`, a bad `limit` / `cursor` is `400
+invalid-limit` / `invalid-cursor`. `GET /asns/{asnNumber}/cartons` is an
+`x-pagination-exempt: view`. Problem types are catalogued in
 [Troubleshooting](docs/docs/operations/troubleshooting.md).
 
 ### Analytics data product (Receiving Performance)

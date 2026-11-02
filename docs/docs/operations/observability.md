@@ -75,7 +75,7 @@ gateway's metrics for 4xx/5xx rates. The instrumentation scope also carries
 
 | Binary | Span source | Span name |
 |---|---|---|
-| `cmd/api` | `otelchi.Middleware("inbound-receiving", WithChiRoutes)` | the chi route pattern, e.g. `/asns`, `/asns/{asnNumber}/cancel`, `/receipts/{receiptId}/lines`, `/readyz` |
+| `cmd/api` | `otelchi.Middleware("inbound-receiving", WithChiRoutes)` | the chi route pattern, e.g. `/asns`, `/asns/{asnNumber}/cancellations`, `/receipts/{receiptId}/lines`, `/readyz` |
 | `cmd/mcp` | `otelchi.Middleware("inbound-receiving-mcp")` | the mount pattern (`/mcp/*` or `/*`), one span per Streamable HTTP request; individual tool calls do not get their own span |
 | `cmd/inbound-reports` | `otelchi.Middleware("inbound-receiving-reports")` | `/reports/receiving-performance`, `/reports/freshness`, `/healthz` |
 

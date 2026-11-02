@@ -497,7 +497,7 @@ func phaseWorkflow(t *testing.T, s *service, w *world) {
 		t.Fatalf("idempotent replay = %s, want the first response %s", replay, first)
 	}
 	assertProblem(t, s.call(http.MethodPost, "/asns", `{"asnNumber":"ASN-2","supplierRef":"ACME","lines":[{"lineNo":1,"sku":"SKU-1","expectedQty":1}]}`,
-		"reg-1", http.StatusUnprocessableEntity), "idempotency-key-reused")
+		"reg-1", http.StatusConflict), "idempotency-key-reused")
 
 	start := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Hour)
 	appt := fmt.Sprintf(`{"doorCode":%q,"carrier":"ACME Freight","windowStart":%q,"windowEnd":%q,"asnNumbers":["ASN-1"]}`,
@@ -514,7 +514,7 @@ func phaseWorkflow(t *testing.T, s *service, w *world) {
 	mustDecode(t, s.call(http.MethodPost, "/receipts", `{"asnNumber":"ASN-1"}`, "open-1", http.StatusCreated), &opened)
 	w.receiptID = opened.ReceiptID
 	s.call(http.MethodPost, "/receipts/"+w.receiptID+"/lines", `{"lineNo":1,"quantity":10,"condition":"Good"}`, "line-1", http.StatusCreated)
-	s.call(http.MethodPost, "/receipts/"+w.receiptID+"/close", "", "", http.StatusOK)
+	s.call(http.MethodPost, "/receipts/"+w.receiptID+"/closures", "", "close-1", http.StatusOK)
 
 	w.expected = []expectedEvent{
 		{"asn", "ASNRegistered", "ASN-1", "ASN-1"},
@@ -581,7 +581,7 @@ func phaseCartons(t *testing.T, s *service, w *world) {
 	if !strings.Contains(list, `"status":"accepted"`) || !strings.Contains(list, `"status":"expected"`) {
 		t.Fatalf("GET cartons = %s", list)
 	}
-	s.call(http.MethodPost, "/receipts/"+opened.ReceiptID+"/close", "", "", http.StatusOK)
+	s.call(http.MethodPost, "/receipts/"+opened.ReceiptID+"/closures", "", "close-c", http.StatusOK)
 	list = s.call(http.MethodGet, "/asns/ASN-C/cartons", "", "", http.StatusOK)
 	if !strings.Contains(list, `"status":"missing"`) {
 		t.Fatalf("GET cartons after close = %s", list)

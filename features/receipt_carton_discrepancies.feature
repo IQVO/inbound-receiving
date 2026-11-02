@@ -39,7 +39,7 @@ Feature: Carton discrepancies are part of the receipt (ADR 0015)
 
   Scenario: the MissingCarton found at close is kept on the closed receipt
     Given I scanned the carton "003456789012345670"
-    When I POST "/receipts/{receipt}/close" with body ''
+    When I POST "/receipts/{receipt}/closures" with body ''
     Then the response status is 200
     And the response field "cartonDiscrepancies.0.kind" is "MissingCarton"
     When I GET "/receipts/{receipt}"

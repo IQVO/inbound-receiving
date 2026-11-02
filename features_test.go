@@ -251,7 +251,7 @@ func (w *world) asnIsRegistered(number string) error {
 }
 
 func (w *world) asnIsCancelled(number string) error {
-	return w.mustCall(http.MethodPost, "/asns/"+number+"/cancel", "")
+	return w.mustCall(http.MethodPost, "/asns/"+number+"/cancellations", "")
 }
 
 func (w *world) appointmentIsBooked(door, from, to, number string) error {
@@ -263,7 +263,7 @@ func (w *world) appointmentIsBooked(door, from, to, number string) error {
 }
 
 func (w *world) appointmentIsCheckedIn() error {
-	return w.mustCall(http.MethodPost, "/appointments/{appointment}/check-in", "")
+	return w.mustCall(http.MethodPost, "/appointments/{appointment}/check-ins", "")
 }
 
 func (w *world) walkInReceiptIsOpen(number string) error {
@@ -287,7 +287,7 @@ func (w *world) iReceive(qty, line int, condition string) error {
 }
 
 func (w *world) receiptIsClosed() error {
-	return w.mustCall(http.MethodPost, "/receipts/{receipt}/close", "")
+	return w.mustCall(http.MethodPost, "/receipts/{receipt}/closures", "")
 }
 
 func (w *world) rememberID(field string, dest *string) error {
@@ -400,6 +400,13 @@ func (w *world) theETagIs(version string) error {
 	return nil
 }
 
+func (w *world) theResponseHeaderIs(name, value string) error {
+	if got := w.header.Get(name); got != value {
+		return fmt.Errorf("header %s = %q, want %q", name, got, value)
+	}
+	return nil
+}
+
 func (w *world) theProblemTypeIs(slug string) error {
 	return w.theResponseFieldIs("type", "https://errors.inbound-receiving.warehouse-systems.dev/"+slug)
 }
@@ -488,6 +495,7 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the response field "([^"]*)" is absent$`, w.theResponseFieldIsAbsent)
 	sc.Step(`^the response field "([^"]*)" is present$`, w.theResponseFieldIsPresent)
 	sc.Step(`^the ETag is "([^"]*)"$`, w.theETagIs)
+	sc.Step(`^the response header "([^"]*)" is "([^"]*)"$`, w.theResponseHeaderIs)
 	sc.Step(`^the problem type is "([^"]*)"$`, w.theProblemTypeIs)
 	sc.Step(`^the outbox event types are "([^"]*)"$`, w.theOutboxEventTypesAre)
 	sc.Step(`^the outbox is empty$`, w.theOutboxIsEmpty)

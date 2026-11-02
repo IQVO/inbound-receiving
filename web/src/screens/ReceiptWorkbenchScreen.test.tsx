@@ -19,7 +19,7 @@ function mount() {
 }
 
 const LINES_PATH = `POST /receipts/${RCPT_ID}/lines`;
-const CLOSE_PATH = `POST /receipts/${RCPT_ID}/close`;
+const CLOSE_PATH = `POST /receipts/${RCPT_ID}/closures`;
 const GET_PATH = `GET /receipts/${RCPT_ID}`;
 
 function linesTable() {
