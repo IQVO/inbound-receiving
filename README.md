@@ -326,7 +326,15 @@ Kafka, and has no auth (fleet-wide). Tools, all read-only and snake_case:
 
 Writes (register, cancel, book, check in, open, receive, close) stay on
 REST; `internal/adapters/inbound/mcp/governance_test.go` fails the build on
-a write-verb tool name. Details: [`.claude/rules/mcp.md`](.claude/rules/mcp.md).
+a write-verb tool name. Every tool and A2A skill declares its authority
+level (all `L1`, the read-only charter; ADR 0018): `tools/list` carries it
+in `_meta` under `com.warehouse/authority`, the Agent Card as an
+`authority:L1` tag, and `internal/architecture/mcp_authority_fitness_test.go`
+fails the build if a declaration is lost. The handler is stateless (AS-4),
+and the surface is completed by the `warehouse://inbound/receipts/{receiptId}`
+resource and the `receive_inbound_shipment` SOP prompt.
+Details: [`.claude/rules/mcp.md`](.claude/rules/mcp.md),
+[ADR 0018](docs/adr/0018-agent-authority-levels-and-complete-mcp-surface.md).
 
 ### Running the A2A agent in Kubernetes
 

@@ -22,20 +22,36 @@ live `tools/list` against `cmd/mcp` built from this repository
 (go-sdk `v1.8.0`); the registry is also pinned by
 `internal/adapters/inbound/mcp/testdata/tool_registry.golden.json`.
 
+## Authority levels
+
+Every tool and every A2A skill declares an **authority level**
+([ADR 0018](/docs/adr/0018-agent-authority-levels-and-complete-mcp-surface)):
+`tools/list` returns it in `_meta` under `com.warehouse/authority`, the
+Agent Card carries it as an `authority:Ln` tag. The MCP charter is
+read-only, so every level here is **L1** — a pure read of this context's own
+state that changes nothing. (L2 is a computed recommendation, L3 a state
+change; neither can exist on this surface.) A static sensor
+(`internal/architecture/mcp_authority_fitness_test.go`) fails the build if a
+tool or skill loses its declaration.
+
+The Streamable HTTP handler is **stateless**: no `Mcp-Session-Id` is issued,
+the 2026-07-28 revision's per-request handshake (`server/discover`) is
+answered, and legacy `initialize` clients keep working.
+
 ## Tool list
 
 Every tool carries the annotations `readOnlyHint: true`,
-`idempotentHint: true`, `openWorldHint: false`.
+`idempotentHint: true`, `openWorldHint: false` and the authority `L1`.
 
-| Tool | Access | Input fields | Output fields |
-|---|---|---|---|
-| `get_asn` | read-only | `asn_number` (string, **required**, e.g. `ASN-1001`) | `asn_number`, `supplier_ref`, `expected_arrival` (omitted when none), `state` (`Registered`, `Receiving`, `Closed`, `Cancelled`), `lines` (`line_no`, `sku`, `expected_qty`), `version` |
-| `list_asns` | read-only | `limit` (integer, 1..500; omitted or 0 = 100), `cursor` (string, the previous page's `next_cursor`), `state` (string) | `items` (as `get_asn`), `next_cursor` (absent on the last page); ascending number order |
-| `get_appointment` | read-only | `appointment_id` (string, **required**, e.g. `appt-1b4e28ba-...`) | `appointment_id`, `door_code`, `carrier`, `window_start`, `window_end` (UTC), `asn_numbers`, `state` (`Booked`, `CheckedIn`, `Completed`, `Cancelled`), `version` |
-| `list_appointments` | read-only | `limit`, `cursor`, `door` (door code), `state`, `from` (RFC 3339: window ends after it), `to` (RFC 3339: window starts before it) | `items`, `next_cursor`; ascending window-start order |
-| `get_receipt` | read-only | `receipt_id` (string, **required**, e.g. `rcpt-1b4e28ba-...`) | `receipt_id`, `asn_number`, `appointment_id` and `door_code` (omitted for a walk-in), `state` (`Open`, `Closed`), `lines` (`expected_qty`, `received_good`, `received_damaged`), `opened_at`, `closed_at` (omitted while open), `discrepancies` (kind `Short`, `Over`, `Damaged`; provisional while Open), `version` |
-| `list_receipts` | read-only | `limit`, `cursor`, `asn_number`, `state` (`Open` or `Closed`) | `items`, `next_cursor`; ascending id order |
-| `list_docks` | read-only | none | `mode` (always `kafka`), `items` (`door_code`, `dock_flow` `Inbound` or `Both`); ascending code order |
+| Tool | Access | Authority | Input fields | Output fields |
+|---|---|---|---|---|
+| `get_asn` | read-only | L1 | `asn_number` (string, **required**, e.g. `ASN-1001`) | `asn_number`, `supplier_ref`, `expected_arrival` (omitted when none), `state` (`Registered`, `Receiving`, `Closed`, `Cancelled`), `lines` (`line_no`, `sku`, `expected_qty`), `version` |
+| `list_asns` | read-only | L1 | `limit` (integer, 1..500; omitted or 0 = 100), `cursor` (string, the previous page's `next_cursor`), `state` (string) | `items` (as `get_asn`), `next_cursor` (absent on the last page); ascending number order |
+| `get_appointment` | read-only | L1 | `appointment_id` (string, **required**, e.g. `appt-1b4e28ba-...`) | `appointment_id`, `door_code`, `carrier`, `window_start`, `window_end` (UTC), `asn_numbers`, `state` (`Booked`, `CheckedIn`, `Completed`, `Cancelled`), `version` |
+| `list_appointments` | read-only | L1 | `limit`, `cursor`, `door` (door code), `state`, `from` (RFC 3339: window ends after it), `to` (RFC 3339: window starts before it) | `items`, `next_cursor`; ascending window-start order |
+| `get_receipt` | read-only | L1 | `receipt_id` (string, **required**, e.g. `rcpt-1b4e28ba-...`) | `receipt_id`, `asn_number`, `appointment_id` and `door_code` (omitted for a walk-in), `state` (`Open`, `Closed`), `lines` (`expected_qty`, `received_good`, `received_damaged`), `opened_at`, `closed_at` (omitted while open), `discrepancies` (kind `Short`, `Over`, `Damaged`; provisional while Open), `version` |
+| `list_receipts` | read-only | L1 | `limit`, `cursor`, `asn_number`, `state` (`Open` or `Closed`) | `items`, `next_cursor`; ascending id order |
+| `list_docks` | read-only | L1 | none | `mode` (always `kafka`), `items` (`door_code`, `dock_flow` `Inbound` or `Both`); ascending code order |
 
 ## Errors
 
@@ -52,16 +68,46 @@ suffix (`internal/adapters/inbound/mcp/errors.go`):
 | `list_appointments` | `invalid-query` (bad `limit`, `cursor`, `state` or instant), `invalid-door-code` |
 | `list_receipts` | `invalid-query`, `invalid-asn-number` |
 
+## Resources
+
+One resource template completes the agent surface
+([ADR 0018](/docs/adr/0018-agent-authority-levels-and-complete-mcp-surface)):
+
+| URI template | Returns |
+|---|---|
+| `warehouse://inbound/receipts/{receiptId}` | exactly one receipt as JSON — the same read model and field names as `get_receipt` (`state`, per-line `expected_qty`/`received_good`/`received_damaged`, `opened_at`, `closed_at` when closed, `discrepancies`) |
+
+`resources/read` on the concrete URI (e.g.
+`warehouse://inbound/receipts/rcpt-1b4e28ba-...`) reads through the same
+`GetReceipt` use case; a URI that does not match the template is rejected and
+an unknown id surfaces the `receipt-not-found` slug. It is a scoped read
+model, never a dump of a table.
+
+## Prompts
+
+One workflow prompt, the operator SOP for this context:
+
+| Prompt | Purpose |
+|---|---|
+| `receive_inbound_shipment` | standard operating procedure for working an inbound shipment read-only: identify the ASN (`get_asn`), find the dock window (`list_appointments`), follow the receipts and their discrepancies (`list_receipts`, `get_receipt`), and escalate closure, claims and cancellations to humans |
+
+Prompts standardise agent behaviour across clients: the SOP names tools and
+interprets results but never performs a write — the surface is read-only.
+
 ## Example session
 
-Captured against a local `cmd/mcp` on an empty Postgres (`MCP_ADDR=:18090`):
+Captured against a local `cmd/mcp` on an empty Postgres (`MCP_ADDR=:18090`),
+stateless ([ADR 0018](/docs/adr/0018-agent-authority-levels-and-complete-mcp-surface)):
+no `Mcp-Session-Id` is issued or required.
 
 ```text
 POST /mcp  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",...}}
-→ 200, header Mcp-Session-Id: PA7B45A5QKL25L2MWGCXLBO2CH
-  result.capabilities = {"logging":{},"tools":{"listChanged":true}}
-POST /mcp  {"jsonrpc":"2.0","method":"notifications/initialized"}       (same Mcp-Session-Id)
-POST /mcp  {"jsonrpc":"2.0","id":2,"method":"tools/list"}                → the 7 tools above
+→ 200, no Mcp-Session-Id header
+  result.capabilities = {"logging":{},"prompts":{"listChanged":true},"resources":{"listChanged":true},"tools":{"listChanged":true}}
+POST /mcp  Mcp-Method: server/discover   (MCP-Protocol-Version: 2026-07-28)
+→ 200, result.supportedVersions = ["2026-07-28","2025-11-25","2025-06-18",...]
+POST /mcp  {"jsonrpc":"2.0","id":2,"method":"tools/list"}
+→ the 7 tools above, each carrying _meta = {"com.warehouse/authority":"L1"}
 POST /mcp  {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_docks","arguments":{}}}
 → result.structuredContent = {"items":[],"mode":"kafka"}
 ```
@@ -71,8 +117,9 @@ come back as `event: message` / `data: ...` frames.
 
 ## Operating notes
 
-- The MCP session state lives in the process, and the Service has no session
-  affinity, so the chart keeps `mcp.replicaCount: 1` and has no HPA for it.
+- The handler is stateless (ADR 0018): no session state is held between
+  calls. The chart still keeps `mcp.replicaCount: 1` and no HPA — unchanged
+  by ADR 0018 (no chart changes in that wave).
 - `DATABASE_URL` is required (there is no in-memory store); point it at the
   same database as `cmd/api`.
 - Telemetry: spans and `http.server.request.duration` under service name
