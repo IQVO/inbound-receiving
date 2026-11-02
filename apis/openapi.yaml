@@ -1169,8 +1169,10 @@ components:
       in: header
       required: false
       description: |
-        The `ETag` the caller last saw. When it no longer matches the current
-        version the request is refused with 412 `version-mismatch`.
+        The `ETag` the caller last saw (quoted or bare integer >= 1). When it no
+        longer matches the current version the request is refused with 412
+        `version-mismatch`; an empty value or `*` skips the check and any
+        other value is 400 `malformed-request`.
       schema:
         type: string
       example: '"2"'
@@ -1503,6 +1505,11 @@ components:
           minLength: 1
           maxLength: 64
           description: Non-blank supplier reference.
+        ownerRef:
+          type: string
+          maxLength: 64
+          pattern: "^[A-Za-z0-9._-]*$"
+          description: Optional opaque tenant tag; invalid is 400 `invalid-owner-ref`. Copied to the events, never interpreted.
         expectedArrival:
           type: string
           format: date-time
@@ -1512,6 +1519,11 @@ components:
           minItems: 1
           items:
             $ref: "#/components/schemas/AsnLine"
+        cartons:
+          type: array
+          description: Optional carton manifest (a flat ASN has none). Cartons can only be announced here.
+          items:
+            $ref: "#/components/schemas/AsnCarton"
     CartonKind:
       type: string
       description: |
@@ -1898,7 +1910,7 @@ components:
           format: int64
     Receipt:
       type: object
-      required: [receiptId, asnNumber, state, lines, openedAt, discrepancies, version]
+      required: [receiptId, asnNumber, state, lines, openedAt, discrepancies, cartonDiscrepancies, version]
       properties:
         receiptId:
           type: string
@@ -1986,7 +1998,7 @@ components:
     Problem:
       type: object
       description: RFC 7807 problem document used for every non-2xx response.
-      required: [type, title, status, detail]
+      required: [type, title, status, detail, instance]
       properties:
         type:
           type: string
