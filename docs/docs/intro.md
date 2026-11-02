@@ -92,3 +92,7 @@ of scope").
 - [Downstream consumers](/docs/ecosystem/downstream-consumers) and the [upstream contracts](/docs/ecosystem/upstream-contracts).
 - [API reference](/docs/api-reference): REST (generated from `apis/openapi.yaml`, including the reports endpoints), MCP tools and the event catalogue.
 - [Architecture decision records](/docs/adr): the index with each ADR's status.
+
+:::note[Disclaimer]
+This project is a domain-driven design study. It is not associated with, endorsed by or affiliated with any company, and it uses no company's code, data, logos or trademarks. All names, figures and examples are illustrative or synthetic.
+:::
