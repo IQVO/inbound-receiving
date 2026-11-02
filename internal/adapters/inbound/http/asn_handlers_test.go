@@ -133,8 +133,8 @@ func TestListAsnsPagesAndFilters(t *testing.T) {
 
 func TestListAsnsInvalidQueriesAndErrors(t *testing.T) {
 	f := newFixture(t)
-	for _, q := range []string{"limit=abc", "limit=0", "limit=501", "cursor=!!", "state=Nope"} {
-		expectProblem(t, f.get(t, "/asns?"+q), http.StatusBadRequest, "invalid-query")
+	for q, slug := range map[string]string{"limit=abc": "invalid-limit", "limit=0": "invalid-limit", "limit=501": "invalid-limit", "cursor=!!": "invalid-cursor", "state=Nope": "invalid-query", "after=x": "unknown-query-parameter", "offset=1": "unknown-query-parameter", "nextToken=x": "unknown-query-parameter"} {
+		expectProblem(t, f.get(t, "/asns?"+q), http.StatusBadRequest, slug)
 	}
 	f.faults.asnList = errDB
 	expectProblem(t, f.get(t, "/asns"), http.StatusInternalServerError, "internal-error")

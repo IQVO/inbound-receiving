@@ -92,30 +92,30 @@ describe("AppointmentBoardScreen", () => {
 
   it("checks a carrier in (POST with an Idempotency-Key) and reloads the board", async () => {
     const api = board({
-      [`POST /appointments/${APPT_ID}/check-in`]: json(appointment({ state: "CheckedIn", version: 2 })),
+      [`POST /appointments/${APPT_ID}/check-ins`]: json(appointment({ state: "CheckedIn", version: 2 })),
     });
     const user = userEvent.setup();
     mount();
     await user.click(await screen.findByRole("button", { name: /^Check in ACME Freight/ }));
     await waitFor(() => expect(api.to("GET /appointments").length).toBeGreaterThanOrEqual(2));
-    const [call] = api.to(`POST /appointments/${APPT_ID}/check-in`);
+    const [call] = api.to(`POST /appointments/${APPT_ID}/check-ins`);
     expect(call.headers["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it("cancels a Booked appointment", async () => {
     const api = board({
-      [`POST /appointments/${APPT_ID}/cancel`]: json(appointment({ state: "Cancelled", version: 2 })),
+      [`POST /appointments/${APPT_ID}/cancellations`]: json(appointment({ state: "Cancelled", version: 2 })),
     });
     const user = userEvent.setup();
     mount();
     await user.click(await screen.findByRole("button", { name: /^Cancel ACME Freight/ }));
-    await waitFor(() => expect(api.to(`POST /appointments/${APPT_ID}/cancel`)).toHaveLength(1));
+    await waitFor(() => expect(api.to(`POST /appointments/${APPT_ID}/cancellations`)).toHaveLength(1));
     await waitFor(() => expect(api.to("GET /appointments").length).toBeGreaterThanOrEqual(2));
   });
 
   it("shows the problem when a check-in is outside the allowed window", async () => {
     board({
-      [`POST /appointments/${APPT_ID}/check-in`]: problem(
+      [`POST /appointments/${APPT_ID}/check-ins`]: problem(
         409,
         "outside-check-in-window",
         "Check-in is outside the allowed window",

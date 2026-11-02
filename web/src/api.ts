@@ -97,9 +97,8 @@ export interface ApiResult<T> {
 }
 
 /**
- * Every POST (the four resource-creating ones, which REQUIRE the key, and the
- * cancel / check-in / close actions, which accept it) carries its own
- * `Idempotency-Key`, a UUID minted for that request. GETs send no custom
+ * Every POST (fleet REST API guideline: the service requires the key on all
+ * of them) carries its own `Idempotency-Key`, a UUID minted for that submit. GETs send no custom
  * header, so they stay simple CORS requests.
  */
 async function request<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<ApiResult<T>> {
@@ -146,10 +145,10 @@ export function registerAsn(input: RegisterAsnInput): Promise<ApiResult<Asn>> {
   return request<Asn>("POST", "/asns", input);
 }
 
-/** POST /asns/{asnNumber}/cancel (409 asn-in-progress / asn-terminal). */
+/** POST /asns/{asnNumber}/cancellations (409 asn-in-progress / asn-terminal). */
 export async function cancelAsn(asnNumber: string, reason?: string): Promise<Asn> {
   const body = reason ? { reason } : undefined;
-  return (await request<Asn>("POST", `/asns/${seg(asnNumber)}/cancel`, body)).data;
+  return (await request<Asn>("POST", `/asns/${seg(asnNumber)}/cancellations`, body)).data;
 }
 
 /** GET /appointments?door=&state=&from=&to=&limit=&cursor= */
@@ -188,21 +187,26 @@ export function bookAppointment(input: BookAppointmentInput): Promise<ApiResult<
   return request<Appointment>("POST", "/appointments", input);
 }
 
-/** POST /appointments/{id}/check-in (409 appointment-not-booked / outside-check-in-window). */
+/** POST /appointments/{id}/check-ins (409 appointment-not-booked / outside-check-in-window). */
 export async function checkInAppointment(appointmentId: string): Promise<Appointment> {
-  return (await request<Appointment>("POST", `/appointments/${seg(appointmentId)}/check-in`)).data;
+  return (await request<Appointment>("POST", `/appointments/${seg(appointmentId)}/check-ins`)).data;
 }
 
-/** POST /appointments/{id}/cancel (409 appointment-not-booked). */
+/** POST /appointments/{id}/cancellations (409 appointment-not-booked). */
 export async function cancelAppointment(appointmentId: string, reason?: string): Promise<Appointment> {
   const body = reason ? { reason } : undefined;
-  return (await request<Appointment>("POST", `/appointments/${seg(appointmentId)}/cancel`, body)).data;
+  return (await request<Appointment>("POST", `/appointments/${seg(appointmentId)}/cancellations`, body)).data;
 }
 
-/** GET /docks -> the inbound doors and the service's DOCK_DOOR_MODE. */
+/** GET /docks -> every inbound door (all pages, following nextCursor) and the service's DOCK_DOOR_MODE. */
 export async function listDocks(): Promise<DockList> {
-  const res = (await request<DockList>("GET", "/docks")).data;
-  return { mode: res.mode, items: res.items ?? [] };
+  let res = (await request<DockList>("GET", "/docks")).data;
+  const items = [...(res.items ?? [])];
+  while (res.nextCursor) {
+    res = (await request<DockList>("GET", `/docks?cursor=${encodeURIComponent(res.nextCursor)}`)).data;
+    items.push(...(res.items ?? []));
+  }
+  return { mode: res.mode, items };
 }
 
 /** A receipt as the UI uses it: the arrays are never undefined, even if the API leaves an empty one out. */
@@ -234,9 +238,9 @@ export async function receiveLine(receiptId: string, input: ReceiveLineInput): P
   return normalizeReceipt((await request<Receipt>("POST", `/receipts/${seg(receiptId)}/lines`, input)).data);
 }
 
-/** POST /receipts/{id}/close -> the closed receipt with its final discrepancies. */
+/** POST /receipts/{id}/closures -> the closed receipt with its final discrepancies. */
 export async function closeReceipt(receiptId: string): Promise<Receipt> {
-  return normalizeReceipt((await request<Receipt>("POST", `/receipts/${seg(receiptId)}/close`)).data);
+  return normalizeReceipt((await request<Receipt>("POST", `/receipts/${seg(receiptId)}/closures`)).data);
 }
 
 /** GET /asns/{asnNumber}/cartons: the announced cartons with Expected / Accepted / Missing status (empty for a flat ASN). */

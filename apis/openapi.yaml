@@ -222,6 +222,9 @@ paths:
       summary: List the announced cartons of an ASN
       x-pagination-exempt: view
       description: |
+        Not paged (`x-pagination-exempt: view`): a composite view of one ASN's
+        announced cartons, bounded by the ASN and returned with the ASN's
+        `ETag`, so a page boundary would split a single consistent snapshot.
         The cartons the supplier announced (`cartons` is empty for a flat ASN)
         with the status of each against the ASN's receipt: `Expected` (no
         receipt yet, or not scanned yet), `Accepted` (its SSCC was scanned) or

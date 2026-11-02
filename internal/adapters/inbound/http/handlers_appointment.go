@@ -43,7 +43,7 @@ func (s *Server) handleGetAppointment(w http.ResponseWriter, r *http.Request) {
 // handleListAppointments backs
 // GET /appointments?limit=&cursor=&door=&state=&from=&to=.
 func (s *Server) handleListAppointments(w http.ResponseWriter, r *http.Request) {
-	limit, cursor, err := listQuery(r)
+	limit, cursor, err := listQuery(r, "door", "state", "from", "to")
 	if err != nil {
 		writeError(w, r, err)
 		return

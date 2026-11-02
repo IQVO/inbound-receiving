@@ -200,21 +200,56 @@ func TestListDocks(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld()
 	uc := &usecases.ListDocks{Doors: w.doors, Mode: usecases.ModePermissive}
-	got, err := uc.Handle(ctx)
+	got, err := uc.Handle(ctx, usecases.ListDocksQuery{})
 	wantNoErr(t, err)
 	if got.Mode != usecases.ModePermissive || got.Items == nil || len(got.Items) != 0 {
 		t.Fatalf("empty docks = %+v", got)
 	}
 	w.doors.doors["B"] = repository.DockDoor{Code: "B", Flow: repository.DockFlowBoth}
 	w.doors.doors["A"] = repository.DockDoor{Code: "A", Flow: repository.DockFlowInbound}
-	got, err = uc.Handle(ctx)
+	got, err = uc.Handle(ctx, usecases.ListDocksQuery{})
 	wantNoErr(t, err)
 	if len(got.Items) != 2 || got.Items[0].Code != "A" {
 		t.Fatalf("docks = %+v", got)
 	}
 	w.doors.err = errors.New("db down")
-	_, err = uc.Handle(ctx)
+	_, err = uc.Handle(ctx, usecases.ListDocksQuery{})
 	wantErr(t, err, w.doors.err)
+}
+
+func TestListDocksPagesWalkEveryDoorOnce(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld()
+	uc := &usecases.ListDocks{Doors: w.doors, Mode: usecases.ModeKafka}
+	for _, c := range []string{"D5", "D1", "D4", "D2", "D3", "D7", "D6"} {
+		w.doors.doors[appointment.DoorCode(c)] = repository.DockDoor{Code: appointment.DoorCode(c), Flow: repository.DockFlowInbound}
+	}
+	seen := map[string]bool{}
+	var order []string
+	cursor, pages := "", 0
+	for {
+		got, err := uc.Handle(ctx, usecases.ListDocksQuery{Limit: 3, Cursor: cursor})
+		wantNoErr(t, err)
+		pages++
+		for _, d := range got.Items {
+			if seen[string(d.Code)] {
+				t.Fatalf("duplicate door %s", d.Code)
+			}
+			seen[string(d.Code)] = true
+			order = append(order, string(d.Code))
+		}
+		if got.NextCursor == "" {
+			break
+		}
+		cursor = got.NextCursor
+	}
+	if pages != 3 || len(order) != 7 || order[0] != "D1" || order[6] != "D7" {
+		t.Fatalf("pages=%d order=%v", pages, order)
+	}
+	_, err := uc.Handle(ctx, usecases.ListDocksQuery{Cursor: "!!"})
+	wantErr(t, err, usecases.ErrInvalidCursor)
+	_, err = uc.Handle(ctx, usecases.ListDocksQuery{Limit: 501})
+	wantErr(t, err, usecases.ErrInvalidLimit)
 }
 
 func TestParseMode(t *testing.T) {

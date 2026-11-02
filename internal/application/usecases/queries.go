@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,7 +25,7 @@ func listLimit(limit int) (int, error) {
 		return DefaultListLimit, nil
 	}
 	if limit < 1 || limit > MaxListLimit {
-		return 0, fmt.Errorf("%w: limit must be 1..%d", ErrInvalidListQuery, MaxListLimit)
+		return 0, fmt.Errorf("%w: %w: limit must be an integer between 1 and %d", ErrInvalidListQuery, ErrInvalidLimit, MaxListLimit)
 	}
 	return limit, nil
 }
@@ -34,7 +35,7 @@ func invalidQuery(field string, err error) error {
 }
 
 func invalidCursor() error {
-	return fmt.Errorf("%w: cursor is not a valid cursor", ErrInvalidListQuery)
+	return fmt.Errorf("%w: %w: cursor is not a valid page token", ErrInvalidListQuery, ErrInvalidCursor)
 }
 
 // GetAsn returns one ASN.
@@ -209,27 +210,58 @@ func decodeAppointmentCursor(cursor string) (repository.AppointmentCursor, error
 	return repository.AppointmentCursor{WindowStart: at.UTC(), ID: apptID}, nil
 }
 
-// DockList is the result of ListDocks.
+// ListDocksQuery is the input of ListDocks. Limit 0 means the default.
+type ListDocksQuery struct {
+	Limit  int
+	Cursor string
+}
+
+// DockList is one page of ListDocks. NextCursor is empty on the last page.
 type DockList struct {
-	Mode  Mode
-	Items []repository.DockDoor
+	Mode       Mode
+	Items      []repository.DockDoor
+	NextCursor string
 }
 
 // ListDocks returns the dock_doors local copy together with the current
-// DOCK_DOOR_MODE.
+// DOCK_DOOR_MODE, a page at a time in ascending door-code order (cursor =
+// base64url of the last door code of the previous page).
 type ListDocks struct {
 	Doors ports.DockDoorDirectory
 	Mode  Mode
 }
 
 // Handle runs the query. Items is never nil.
-func (uc *ListDocks) Handle(ctx context.Context) (DockList, error) {
-	items, err := uc.Doors.List(ctx)
+func (uc *ListDocks) Handle(ctx context.Context, q ListDocksQuery) (DockList, error) {
+	limit, err := listLimit(q.Limit)
 	if err != nil {
 		return DockList{}, err
 	}
-	if items == nil {
-		items = []repository.DockDoor{}
+	after := ""
+	if q.Cursor != "" {
+		raw, err := base64.RawURLEncoding.DecodeString(q.Cursor)
+		if err != nil || len(raw) == 0 {
+			return DockList{}, invalidCursor()
+		}
+		after = string(raw)
 	}
-	return DockList{Mode: uc.Mode, Items: items}, nil
+	all, err := uc.Doors.List(ctx)
+	if err != nil {
+		return DockList{}, err
+	}
+	sorted := append([]repository.DockDoor(nil), all...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Code < sorted[j].Code })
+	items := make([]repository.DockDoor, 0, limit)
+	next := ""
+	for _, d := range sorted {
+		if after != "" && string(d.Code) <= after {
+			continue
+		}
+		if len(items) == limit {
+			next = base64.RawURLEncoding.EncodeToString([]byte(items[limit-1].Code))
+			break
+		}
+		items = append(items, d)
+	}
+	return DockList{Mode: uc.Mode, Items: items, NextCursor: next}, nil
 }

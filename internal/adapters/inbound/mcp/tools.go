@@ -137,15 +137,23 @@ func (d Deps) listReceipts(ctx context.Context, in listReceiptsInput) (receiptPa
 }
 
 func (d Deps) listDocks(ctx context.Context, _ noInput) (dockListView, error) {
-	list, err := d.ListDocks.Handle(ctx)
-	if err != nil {
-		return dockListView{}, mapError(err)
+	// The tool returns every door: follow the use case's pages to the end.
+	out := dockListView{Items: []dockView{}}
+	cursor := ""
+	for {
+		list, err := d.ListDocks.Handle(ctx, usecases.ListDocksQuery{Limit: usecases.MaxListLimit, Cursor: cursor})
+		if err != nil {
+			return dockListView{}, mapError(err)
+		}
+		out.Mode = string(list.Mode)
+		for _, door := range list.Items {
+			out.Items = append(out.Items, dockView{DoorCode: string(door.Code), DockFlow: string(door.Flow)})
+		}
+		if list.NextCursor == "" {
+			return out, nil
+		}
+		cursor = list.NextCursor
 	}
-	out := dockListView{Mode: string(list.Mode), Items: make([]dockView, 0, len(list.Items))}
-	for _, door := range list.Items {
-		out.Items = append(out.Items, dockView{DoorCode: string(door.Code), DockFlow: string(door.Flow)})
-	}
-	return out, nil
 }
 
 // --- registry -----------------------------------------------------------------

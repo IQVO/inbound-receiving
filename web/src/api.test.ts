@@ -61,9 +61,9 @@ describe("Idempotency-Key", () => {
 
   it("the action POSTs send a key too, and a body-less POST sends no content type", async () => {
     const api = mockApi({
-      [`POST /appointments/${APPT_ID}/check-in`]: json(appointment({ state: "CheckedIn" })),
-      [`POST /appointments/${APPT_ID}/cancel`]: json(appointment({ state: "Cancelled" })),
-      [`POST /receipts/${RCPT_ID}/close`]: json(receipt({ state: "Closed" })),
+      [`POST /appointments/${APPT_ID}/check-ins`]: json(appointment({ state: "CheckedIn" })),
+      [`POST /appointments/${APPT_ID}/cancellations`]: json(appointment({ state: "Cancelled" })),
+      [`POST /receipts/${RCPT_ID}/closures`]: json(receipt({ state: "Closed" })),
     });
     await checkInAppointment(APPT_ID);
     await cancelAppointment(APPT_ID);
@@ -76,7 +76,7 @@ describe("Idempotency-Key", () => {
   });
 
   it("a cancel reason goes in the body", async () => {
-    const api = mockApi({ [`POST /appointments/${APPT_ID}/cancel`]: json(appointment({ state: "Cancelled" })) });
+    const api = mockApi({ [`POST /appointments/${APPT_ID}/cancellations`]: json(appointment({ state: "Cancelled" })) });
     await cancelAppointment(APPT_ID, "Carrier delayed");
     expect(api.calls[0].body).toEqual({ reason: "Carrier delayed" });
   });

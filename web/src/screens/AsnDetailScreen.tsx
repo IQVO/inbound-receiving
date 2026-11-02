@@ -161,7 +161,7 @@ function OpenReceiptCard({ asnNumber }: { asnNumber: string }) {
   );
 }
 
-/** POST /asns/{asnNumber}/cancel; refused (409) once the ASN is being received or terminal. */
+/** POST /asns/{asnNumber}/cancellations; refused (409) once the ASN is being received or terminal. */
 function CancelAsnCard({ asnNumber, onCancelled }: { asnNumber: string; onCancelled: () => void }) {
   const [reason, setReason] = useState("");
   const [problem, setProblem] = useState<ApiError | null>(null);

@@ -53,6 +53,9 @@ var problemCatalogue = []struct {
 	p   problem
 }{
 	{errMalformedRequest, bad("malformed-request", "Malformed request")},
+	{usecases.ErrInvalidLimit, bad("invalid-limit", "Invalid limit")},
+	{usecases.ErrInvalidCursor, bad("invalid-cursor", "Invalid cursor")},
+	{errUnknownQuery, bad("unknown-query-parameter", "Unknown query parameter")},
 	{usecases.ErrInvalidListQuery, bad("invalid-query", "Invalid query parameter")},
 	{errIdempotencyKeyRequired, bad("idempotency-key-required", "Idempotency-Key header is required")},
 	{errIdempotencyKeyInvalid, bad("idempotency-key-invalid", "Idempotency-Key header is invalid")},

@@ -109,6 +109,8 @@ export interface DockList {
   /** The service's current DOCK_DOOR_MODE; "permissive" = any door code can be booked. */
   mode: "kafka" | "permissive";
   items: Dock[];
+  /** Opaque cursor of the next page; absent on the last page. */
+  nextCursor?: string;
 }
 
 export interface ListAsnsQuery {

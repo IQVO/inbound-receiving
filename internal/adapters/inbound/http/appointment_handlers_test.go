@@ -129,8 +129,8 @@ func TestListAppointmentsPagesAndFilters(t *testing.T) {
 
 func TestListAppointmentsInvalidQueriesAndErrors(t *testing.T) {
 	f := newFixture(t)
-	for _, q := range []string{"limit=x", "limit=501", "cursor=!!", "state=Nope", "door=a%20b", "from=yesterday", "to=tomorrow"} {
-		expectProblem(t, f.get(t, "/appointments?"+q), http.StatusBadRequest, "invalid-query")
+	for q, slug := range map[string]string{"limit=x": "invalid-limit", "limit=501": "invalid-limit", "cursor=!!": "invalid-cursor", "state=Nope": "invalid-query", "door=a%20b": "invalid-query", "from=yesterday": "invalid-query", "to=tomorrow": "invalid-query", "after=x": "unknown-query-parameter", "offset=1": "unknown-query-parameter", "nextToken=x": "unknown-query-parameter"} {
+		expectProblem(t, f.get(t, "/appointments?"+q), http.StatusBadRequest, slug)
 	}
 	f.faults.apptList = errDB
 	expectProblem(t, f.get(t, "/appointments"), http.StatusInternalServerError, "internal-error")
