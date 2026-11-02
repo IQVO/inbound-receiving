@@ -25,17 +25,13 @@ type productRegisteredData struct {
 	SKU string `json:"sku"`
 }
 
-// SkuApplier is the use case the product consumer drives
-// (usecases.ApplyProductRegistered).
-type SkuApplier interface {
-	Handle(ctx context.Context, eventID, rawSKU string) (usecases.Outcome, error)
-}
-
 // ProductConsumer consumes ProductTopic under a stable consumer group and
-// keeps the known_skus local copy (ADR 0003).
+// keeps the known_skus local copy (ADR 0003). It drives the shared
+// StringEventUseCase port (usecases.ApplyProductRegistered): the SKU is the
+// single-string payload.
 type ProductConsumer struct {
 	Reader Reader
-	Apply  SkuApplier
+	Apply  StringEventUseCase
 	Logger *slog.Logger
 	Retry  RetryPolicy
 
@@ -44,13 +40,13 @@ type ProductConsumer struct {
 
 // NewProductConsumer reads ProductTopic from brokers under groupID (from
 // PRODUCT_CONSUMER_GROUP, never a literal). It does not dial.
-func NewProductConsumer(brokers []string, groupID string, apply SkuApplier, logger *slog.Logger) *ProductConsumer {
+func NewProductConsumer(brokers []string, groupID string, apply StringEventUseCase, logger *slog.Logger) *ProductConsumer {
 	return NewProductConsumerForTopic(brokers, ProductTopic, groupID, apply, logger)
 }
 
 // NewProductConsumerForTopic is NewProductConsumer on an explicit topic, so an
 // integration test can point the identical logic at a throwaway topic.
-func NewProductConsumerForTopic(brokers []string, topic, groupID string, apply SkuApplier, logger *slog.Logger) *ProductConsumer {
+func NewProductConsumerForTopic(brokers []string, topic, groupID string, apply StringEventUseCase, logger *slog.Logger) *ProductConsumer {
 	return &ProductConsumer{
 		Reader: kafkago.NewReader(readerConfig(brokers, topic, groupID)),
 		Apply:  apply,

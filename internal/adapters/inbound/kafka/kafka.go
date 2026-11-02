@@ -22,7 +22,19 @@ import (
 	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
+
+	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 )
+
+// StringEventUseCase is the port every consumer use case with a
+// single-string payload implements: the event ID carries idempotency (the
+// processed-event claim), the string the effect (a SKU for
+// ProductRegistered, a location code for LocationSlotDecommissioned). The
+// product and dock-door consumers share it because both keep a local copy
+// in sync from exactly that shape of event (ADR 0003).
+type StringEventUseCase interface {
+	Handle(ctx context.Context, eventID, code string) (usecases.Outcome, error)
+}
 
 // Reader is the subset of *kafkago.Reader a consumer needs, so unit tests
 // never need a broker. FetchMessage/CommitMessages (not ReadMessage, which

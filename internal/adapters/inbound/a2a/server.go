@@ -37,6 +37,10 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 )
 
+// modeJSON is the structured content mode this agent's skills speak; the
+// agent-level defaults additionally allow plain text.
+const modeJSON = "application/json"
+
 // Config carries the deployment-specific identity of this agent: the absolute
 // URL clients use to reach its JSON-RPC endpoint (advertised on the Agent
 // Card) and the card version. It is supplied by the composition root from
@@ -83,8 +87,8 @@ func Card(cfg Config) *a2a.AgentCard {
 		SupportedInterfaces: []*a2a.AgentInterface{
 			a2a.NewAgentInterface(cfg.AgentURL, a2a.TransportProtocolJSONRPC),
 		},
-		DefaultInputModes:  []string{"application/json", "text/plain"},
-		DefaultOutputModes: []string{"application/json", "text/plain"},
+		DefaultInputModes:  []string{modeJSON, "text/plain"},
+		DefaultOutputModes: []string{modeJSON, "text/plain"},
 		Capabilities:       a2a.AgentCapabilities{Streaming: false},
 		Skills: []a2a.AgentSkill{
 			{
@@ -92,7 +96,7 @@ func Card(cfg Config) *a2a.AgentCard {
 				Name:        "Receiving status of an ASN",
 				Description: "Composed read for one advance ship notice by asnNumber: the ASN (supplierRef, expectedArrival when announced, state Registered, Receiving, Closed or Cancelled, lines with expectedQty) and the receipts counted against it (state Open or Closed, door and appointment when not a walk-in, per-line receivedGood and receivedDamaged, and the discrepancies Short, Over or Damaged: provisional while the receipt is Open, final once Closed). Answers a 404 problem for an unknown ASN. Persists nothing.",
 				Tags:        []string{"inbound", "asn", "receipt", "read"},
-				InputModes:  []string{"application/json"},
+				InputModes:  []string{modeJSON},
 				Examples: []string{
 					`{"skill":"asn_receiving_status","arguments":{"asnNumber":"ASN-1001"}}`,
 				},
@@ -102,7 +106,7 @@ func Card(cfg Config) *a2a.AgentCard {
 				Name:        "Dock appointment schedule",
 				Description: "Read the carrier dock appointments in ascending window-start order, optionally only those at one door, in one state (Booked, CheckedIn, Completed or Cancelled) and/or overlapping a from/to range (RFC 3339 instants: from keeps appointments whose window ends after it, to those whose window starts before it). Each entry carries appointmentId, doorCode, carrier, windowStart, windowEnd (UTC), the asnNumbers it covers and its state. At most limit entries (1..100, default 50) are returned; truncated is true when more exist, so narrow the range instead of paging. Persists nothing.",
 				Tags:        []string{"inbound", "dock", "appointment", "read"},
-				InputModes:  []string{"application/json"},
+				InputModes:  []string{modeJSON},
 				Examples: []string{
 					`{"skill":"dock_schedule","arguments":{}}`,
 					`{"skill":"dock_schedule","arguments":{"door":"DOOR-3","state":"Booked","from":"2026-10-29T00:00:00Z","to":"2026-10-30T00:00:00Z","limit":20}}`,
