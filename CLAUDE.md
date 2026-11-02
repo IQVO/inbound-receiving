@@ -44,7 +44,7 @@ micro-frontend remote `inbound_mfe`.
    (`TestKafkaConsumerGroupNeverHardcodedInline`).
 6. **Resource-creating POSTs require `Idempotency-Key`** (`/asns`,
    `/appointments`, `/receipts`, `/receipts/{id}/lines`); action POSTs honour
-   it when sent. Same key + different request = 422 `idempotency-key-reused`.
+   it when sent. Same key + different request = 409 `idempotency-key-reused`.
 7. **The analytics read side never touches the OLTP database.**
    `cmd/inbound-projector` is the only writer of the analytical database
    (`ANALYTICS_DATABASE_URL`); `cmd/inbound-reports` reads it through a

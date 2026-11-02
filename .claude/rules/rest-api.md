@@ -13,17 +13,17 @@ path prefix: `/api/inbound-receiving`.
 - `POST /asns`                              -> `RegisterAsn` (201; `Idempotency-Key` required)
 - `GET  /asns?limit=&cursor=&state=`        -> `ListAsns`
 - `GET  /asns/{asnNumber}`                  -> `GetAsn`
-- `POST /asns/{asnNumber}/cancel`           -> `CancelAsn` (200)
+- `POST /asns/{asnNumber}/cancellations`           -> `CancelAsn` (200)
 - `POST /appointments`                      -> `BookAppointment` (201; `Idempotency-Key` required)
 - `GET  /appointments?door=&state=&from=&to=&limit=&cursor=` -> `ListAppointments`
 - `GET  /appointments/{appointmentId}`      -> `GetAppointment`
-- `POST /appointments/{appointmentId}/check-in` -> `CheckInAppointment` (200)
-- `POST /appointments/{appointmentId}/cancel`   -> `CancelAppointment` (200)
+- `POST /appointments/{appointmentId}/check-ins` -> `CheckInAppointment` (200)
+- `POST /appointments/{appointmentId}/cancellations`   -> `CancelAppointment` (200)
 - `POST /receipts`                          -> `OpenReceipt` (201; body `{asnNumber, appointmentId?}`; `Idempotency-Key` required)
 - `GET  /receipts?asnNumber=&state=&limit=&cursor=` -> `ListReceipts`
 - `GET  /receipts/{receiptId}`              -> `GetReceipt`
 - `POST /receipts/{receiptId}/lines`        -> `ReceiveLine` (201; `Idempotency-Key` required: receiving is not naturally idempotent)
-- `POST /receipts/{receiptId}/close`        -> `CloseReceipt` (200)
+- `POST /receipts/{receiptId}/closures`        -> `CloseReceipt` (200)
 - `GET  /docks`                             -> `ListDocks` (the `dock_doors` local copy)
 - `GET  /healthz`, `GET /readyz` (503 while draining), `GET /metrics`
 
@@ -53,7 +53,7 @@ read-only pool on the ANALYTICAL database, never the OLTP one):
   camelCase (events are snake_case).
 - Every resource-creating POST requires `Idempotency-Key` (the fleet
   idempotency middleware): missing = 400 `idempotency-key-required`, same key
-  with a different body = 422 `idempotency-key-reused`. The action POSTs
+  with a different body = 409 `idempotency-key-reused`. The action POSTs
   (`cancel`, `check-in`, `close`) accept it but do not require it.
 - Optimistic concurrency: bodies carry `version`, single-resource responses
   carry `ETag: "<version>"`; an action POST may send `If-Match` (stale = 412
