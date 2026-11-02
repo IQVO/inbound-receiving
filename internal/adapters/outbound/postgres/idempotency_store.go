@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,6 +26,20 @@ import (
 // not committed at all (rolled back, invisible to everyone) or committed
 // with its outcome set: a reader never sees a half-written row and needs no
 // "in progress" state, polling or timeout.
+//
+// # The handler runs behind a SAVEPOINT
+//
+// A mapped domain conflict -- a racing writer losing on a unique index,
+// say -- fails a statement on the server and leaves the transaction ABORTED
+// even though the handler answers a truthful 4xx. Recording that outcome
+// would then hit 25P02 ("current transaction is aborted") and the client
+// would see a 500 instead of the 409. Releasing the savepoint exposes the
+// abort: the release fails, ROLLBACK TO SAVEPOINT discards only the
+// handler's partial writes (the key row inserted before the savepoint
+// survives) and heals the transaction, and the 4xx outcome is recorded and
+// committed like any other. A 2xx answer behind a failed release is a lie
+// (its writes are gone), so it rolls everything back and fails the request:
+// the same key retries the real work.
 //
 // # Concurrency
 //
@@ -62,10 +77,27 @@ func (s *IdempotencyStore) Do(ctx context.Context, req idempotency.Request, hand
 		return s.replay(ctx, req)
 	}
 
+	if _, err := tx.Exec(ctx, "SAVEPOINT handler_run"); err != nil {
+		return idempotency.Response{}, 0, fmt.Errorf("open handler savepoint: %w", err)
+	}
 	resp := handle(pgtx.With(ctx, tx))
 	if resp.Transient {
 		// Nothing is stored and everything the handler wrote rolls back.
 		return resp, idempotency.Fresh, nil
+	}
+	if _, err := tx.Exec(ctx, "RELEASE SAVEPOINT handler_run"); err != nil {
+		// A statement inside the handler failed on the server: the
+		// transaction is aborted. Roll back to the savepoint to discard the
+		// handler's partial writes and return the transaction to health.
+		if _, rerr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT handler_run"); rerr != nil {
+			return idempotency.Response{}, 0, fmt.Errorf("heal aborted idempotent request: %w", rerr)
+		}
+		if resp.Status < http.StatusBadRequest {
+			// A success whose writes are gone must neither be returned nor
+			// cached: fail the request (deferred rollback drops the key row)
+			// so the key retries.
+			return idempotency.Response{}, 0, fmt.Errorf("handler answered %d over an aborted transaction: %w", resp.Status, err)
+		}
 	}
 	headers, err := json.Marshal(resp.Header)
 	if err != nil {
