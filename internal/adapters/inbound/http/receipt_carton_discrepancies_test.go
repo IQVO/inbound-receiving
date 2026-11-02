@@ -61,7 +61,7 @@ func TestGetReceiptListsTheCartonFindingsRaisedByScans(t *testing.T) {
 	}
 
 	// A close does not hide them, and the closed receipt keeps its three line kinds only.
-	closed := f.post(t, "/receipts/"+id+"/close", "")
+	closed := f.post(t, "/receipts/"+id+"/closures", "")
 	expectStatus(t, closed, http.StatusOK)
 	if got := cartonDiscrepancies(t, f.get(t, "/receipts/"+id)); !reflect.DeepEqual(got, want) {
 		t.Fatalf("after close cartonDiscrepancies = %v, want %v", got, want)

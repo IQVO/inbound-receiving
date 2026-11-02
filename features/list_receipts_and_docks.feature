@@ -122,7 +122,7 @@ Feature: Listing receipts, appointments and dock doors
   Scenario: Appointments can be narrowed by state
     Given an appointment at door "DOOR-1" from "2026-10-09T08:00:00Z" to "2026-10-09T09:00:00Z" covers the ASN "ASN-1"
     And an appointment at door "DOOR-2" from "2026-10-09T10:00:00Z" to "2026-10-09T11:00:00Z" covers the ASN "ASN-2"
-    And I POST "/appointments/{appointment}/cancel" with body ''
+    And I POST "/appointments/{appointment}/cancellations" with body ''
     When I list "/appointments" with query "state=Cancelled"
     Then the listed "doorCode" values are "DOOR-2"
     When I list "/appointments" with query "state=Booked"

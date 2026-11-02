@@ -92,7 +92,7 @@ curl -si -X POST localhost:8080/asns -H 'Content-Type: application/json' \
 ```
 
 Sending the same key and body again replays the same `201`; the same key with
-a different body returns `422 idempotency-key-reused`.
+a different body returns `409 idempotency-key-reused`.
 
 Book a dock appointment (the door must be a known inbound door in the local
 copy; `GET /docks` lists them with `"mode":"kafka"`):
@@ -106,7 +106,7 @@ curl -s -X POST localhost:8080/appointments -H 'Content-Type: application/json' 
 ```
 
 Checking in outside the window is refused:
-`POST /appointments/{appointmentId}/check-in` →
+`POST /appointments/{appointmentId}/check-ins` →
 `409 outside-check-in-window` ("check-in is only allowed from 30 minutes before
 the window until it ends").
 
@@ -124,9 +124,9 @@ curl -s -X POST localhost:8080/receipts/rcpt-afafe148-.../lines -H 'Content-Type
   -H 'Idempotency-Key: k-line-2' -d '{"lineNo":2,"quantity":4,"condition":"Good"}'
 # 201, ETag: "3"
 
-curl -s -X POST localhost:8080/receipts/rcpt-afafe148-.../close -H 'If-Match: "1"'
+curl -s -X POST localhost:8080/receipts/rcpt-afafe148-.../closures -H 'If-Match: "1"'
 # 412 version-mismatch ("The If-Match version is stale")
-curl -s -X POST localhost:8080/receipts/rcpt-afafe148-.../close
+curl -s -X POST localhost:8080/receipts/rcpt-afafe148-.../closures
 # 200 {"state":"Closed","closedAt":"...","discrepancies":[{"lineNo":2,"sku":"SKU-BLU-02",
 #      "kind":"Short","expectedQty":5,"receivedQty":4,"damagedQty":0}],"version":4}
 

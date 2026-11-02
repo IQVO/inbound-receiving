@@ -63,7 +63,7 @@ Feature: Register an ASN
 
   Scenario: Cancelling a registered ASN
     Given the ASN "ASN-1001" is registered
-    When I POST "/asns/ASN-1001/cancel" with body '{"reason":"Supplier cancelled the shipment"}'
+    When I POST "/asns/ASN-1001/cancellations" with body '{"reason":"Supplier cancelled the shipment"}'
     Then the response status is 200
     And the response field "state" is "Cancelled"
     And the response field "version" is "2"
@@ -72,13 +72,13 @@ Feature: Register an ASN
   Scenario: A cancelled ASN cannot be cancelled again
     Given the ASN "ASN-1001" is registered
     And the ASN "ASN-1001" is cancelled
-    When I POST "/asns/ASN-1001/cancel" with body ''
+    When I POST "/asns/ASN-1001/cancellations" with body ''
     Then the response status is 409
     And the problem type is "asn-terminal"
 
   Scenario: Cancelling with a stale version
     Given the ASN "ASN-1001" is registered
-    When I POST "/asns/ASN-1001/cancel" with If-Match "7" and body ''
+    When I POST "/asns/ASN-1001/cancellations" with If-Match "7" and body ''
     Then the response status is 412
     And the problem type is "version-mismatch"
 

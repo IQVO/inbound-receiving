@@ -1,6 +1,8 @@
 package http
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/claudioed/inbound-receiving/internal/adapters/inbound/http/page"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 )
 
@@ -36,17 +39,37 @@ func expectedVersion(r *http.Request) (int64, error) {
 	return v, nil
 }
 
-// listQuery reads the shared limit/cursor parameters.
-func listQuery(r *http.Request) (limit int, cursor string, err error) {
-	values := r.URL.Query()
-	cursor = values.Get("cursor")
-	if raw := values.Get("limit"); raw != "" {
-		limit, err = strconv.Atoi(raw)
-		if err != nil || limit == 0 {
-			return 0, "", usecases.ErrInvalidListQuery
+// listQuery reads the shared limit/cursor parameters and rejects any query
+// parameter the collection does not declare (allowed lists its filters).
+func listQuery(r *http.Request, allowed ...string) (limit int, cursor string, err error) {
+	if name := page.Unknown(r, allowed...); name != "" {
+		return 0, "", &unknownParamError{name: name}
+	}
+	if _, present := r.URL.Query()["limit"]; present {
+		if limit, err = page.Limit(r); err != nil {
+			return 0, "", fmt.Errorf("%w: %w", usecases.ErrInvalidLimit, err)
 		}
 	}
+	vals := r.URL.Query()["cursor"]
+	if len(vals) > 1 {
+		return 0, "", fmt.Errorf("%w: %w", usecases.ErrInvalidCursor, page.ErrInvalidCursor)
+	}
+	if len(vals) == 1 {
+		cursor = vals[0]
+	}
 	return limit, cursor, nil
+}
+
+// errUnknownQuery is the sentinel of 400 unknown-query-parameter.
+var errUnknownQuery = errors.New("unknown query parameter")
+
+// unknownParamError names the undeclared query parameter.
+type unknownParamError struct{ name string }
+
+func (e *unknownParamError) Unwrap() error { return errUnknownQuery }
+
+func (e *unknownParamError) Error() string {
+	return "query parameter " + e.name + " is not declared by this endpoint"
 }
 
 // instant parses an optional RFC 3339 query parameter.
@@ -127,7 +150,7 @@ func (s *Server) handleGetAsnCartons(w http.ResponseWriter, r *http.Request) {
 
 // handleListAsns backs GET /asns?limit=&cursor=&state=.
 func (s *Server) handleListAsns(w http.ResponseWriter, r *http.Request) {
-	limit, cursor, err := listQuery(r)
+	limit, cursor, err := listQuery(r, "state")
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -144,7 +167,7 @@ func (s *Server) handleListAsns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleCancelAsn backs POST /asns/{asnNumber}/cancel (200).
+// handleCancelAsn backs POST /asns/{asnNumber}/cancellations (200).
 func (s *Server) handleCancelAsn(w http.ResponseWriter, r *http.Request) {
 	number, err := pathParam(r, "asnNumber")
 	if err != nil {

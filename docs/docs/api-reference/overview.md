@@ -15,13 +15,13 @@ sidebar_position: 1
 
 ## Conventions
 
-- **Resource-creating `POST`s require `Idempotency-Key`**: `/asns`,
-  `/appointments`, `/receipts` and `/receipts/{receiptId}/lines`. A missing key is
-  `400 idempotency-key-required`, a replay with the same key and body returns the
-  original response, the same key with another body is `422
-  idempotency-key-reused`. The action `POST`s (`cancel`, `check-in`, `close`)
-  accept the header but do not require it: repeating them is refused by the state
-  machine (`409`).
+- **Every `POST` requires `Idempotency-Key`** (1-128 printable ASCII): a missing
+  key is `400 idempotency-key-required`, a malformed one `400
+  idempotency-key-invalid`, a replay with the same key and request returns the
+  original response with `Idempotency-Replayed: true`, the same key with another
+  request is `409 idempotency-key-reused`.
+- **Collections are keyset-paged**: `{items, nextCursor}` with `limit` and
+  `cursor`; undeclared query parameters are `400 unknown-query-parameter`.
 - **Versions and `ETag`.** Mutable resources carry a `version` (starts at 1, +1
   per accepted change) and a matching strong `ETag: "<version>"`. An action
   `POST` may send `If-Match`; a stale value is `412 version-mismatch` and a write
@@ -58,9 +58,9 @@ sidebar_position: 1
 
 | Tag | Endpoints |
 | --- | --- |
-| `ASNs` | `POST /asns`, `GET /asns`, `GET /asns/{asnNumber}`, `POST /asns/{asnNumber}/cancel` |
-| `Appointments` | `POST /appointments`, `GET /appointments`, `GET /appointments/{appointmentId}`, `POST /appointments/{appointmentId}/check-in`, `POST /appointments/{appointmentId}/cancel` |
-| `Receipts` | `POST /receipts`, `GET /receipts`, `GET /receipts/{receiptId}`, `POST /receipts/{receiptId}/lines`, `POST /receipts/{receiptId}/close` |
+| `ASNs` | `POST /asns`, `GET /asns`, `GET /asns/{asnNumber}`, `POST /asns/{asnNumber}/cancellations` |
+| `Appointments` | `POST /appointments`, `GET /appointments`, `GET /appointments/{appointmentId}`, `POST /appointments/{appointmentId}/check-ins`, `POST /appointments/{appointmentId}/cancellations` |
+| `Receipts` | `POST /receipts`, `GET /receipts`, `GET /receipts/{receiptId}`, `POST /receipts/{receiptId}/lines`, `POST /receipts/{receiptId}/closures` |
 | `Docks` | `GET /docks` |
 | `Reports` | `GET /reports/receiving-performance`, `GET /reports/freshness` (served by the separate `inbound-reports` binary on `:8092` from the analytical database, server `http://localhost:8092` in the spec, ADR 0006) |
 | `Health` | `GET /healthz`, `GET /readyz` |

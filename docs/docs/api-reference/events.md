@@ -39,14 +39,14 @@ Topic `warehouse.inbound-receiving.events`, written by the outbox relay.
 | Type suffix | Raised | Payload (`data`) |
 | --- | --- | --- |
 | `asn.ASNRegistered` | `POST /asns` | `asn_number`, `supplier_ref`, `expected_arrival?`, `lines[]` = `{line_no, sku, expected_qty}` |
-| `asn.ASNCancelled` | `POST /asns/{asnNumber}/cancel` | `asn_number`, `reason?` |
+| `asn.ASNCancelled` | `POST /asns/{asnNumber}/cancellations` | `asn_number`, `reason?` |
 | `dockappointment.DockAppointmentBooked` | `POST /appointments` | `appointment_id`, `door_code`, `carrier`, `window_start`, `window_end`, `asn_numbers[]` |
-| `dockappointment.DockAppointmentCheckedIn` | `POST /appointments/{appointmentId}/check-in` | `appointment_id`, `door_code`, `checked_in_at` |
-| `dockappointment.DockAppointmentCancelled` | `POST /appointments/{appointmentId}/cancel` | `appointment_id`, `door_code`, `reason?` |
-| `dockappointment.DockAppointmentCompleted` | `POST /receipts/{receiptId}/close` for a receipt opened from an appointment | `appointment_id`, `door_code`, `completed_at` |
+| `dockappointment.DockAppointmentCheckedIn` | `POST /appointments/{appointmentId}/check-ins` | `appointment_id`, `door_code`, `checked_in_at` |
+| `dockappointment.DockAppointmentCancelled` | `POST /appointments/{appointmentId}/cancellations` | `appointment_id`, `door_code`, `reason?` |
+| `dockappointment.DockAppointmentCompleted` | `POST /receipts/{receiptId}/closures` for a receipt opened from an appointment | `appointment_id`, `door_code`, `completed_at` |
 | `receipt.ReceiptOpened` | `POST /receipts` | `receipt_id`, `asn_number`, `appointment_id?`, `door_code?`, `opened_at` |
 | `receipt.ReceiptLineReceived` | `POST /receipts/{receiptId}/lines` | `receipt_id`, `asn_number`, `line_no`, `sku`, `quantity`, `condition` (`Good` or `Damaged`), `received_at` |
-| `receipt.ReceiptClosed` | `POST /receipts/{receiptId}/close` | `receipt_id`, `asn_number`, `closed_at`, `discrepancies[]` = `{line_no, sku, kind, expected_qty, received_qty, damaged_qty}` |
+| `receipt.ReceiptClosed` | `POST /receipts/{receiptId}/closures` | `receipt_id`, `asn_number`, `closed_at`, `discrepancies[]` = `{line_no, sku, kind, expected_qty, received_qty, damaged_qty}` |
 
 `?` marks a field omitted when unset. `kind` is `Short`, `Over` or `Damaged`;
 `discrepancies` is present and empty when everything matched. `received_qty` is

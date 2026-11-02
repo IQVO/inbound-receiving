@@ -121,7 +121,7 @@ describe("AsnDetailScreen", () => {
   it("cancels a Registered ASN with a reason and shows it Cancelled", async () => {
     const api = mockApi({
       ...baseRoutes(),
-      "POST /asns/ASN-1001/cancel": json(asn({ state: "Cancelled", version: 2 })),
+      "POST /asns/ASN-1001/cancellations": json(asn({ state: "Cancelled", version: 2 })),
     });
     const user = userEvent.setup();
     mount();
@@ -129,7 +129,7 @@ describe("AsnDetailScreen", () => {
     api.set("GET /asns/ASN-1001", json(asn({ state: "Cancelled", version: 2 })));
     await user.click(screen.getByRole("button", { name: "Cancel ASN" }));
     expect(await screen.findByText("Cancelled")).toHaveAttribute("data-tone", "danger");
-    const [call] = api.to("POST /asns/ASN-1001/cancel");
+    const [call] = api.to("POST /asns/ASN-1001/cancellations");
     expect(call.body).toEqual({ reason: "Supplier cancelled" });
     expect(call.headers["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
     expect(screen.queryByRole("button", { name: "Cancel ASN" })).not.toBeInTheDocument();
@@ -138,7 +138,7 @@ describe("AsnDetailScreen", () => {
   it("shows the problem when the ASN cannot be cancelled", async () => {
     mockApi({
       ...baseRoutes(),
-      "POST /asns/ASN-1001/cancel": problem(409, "asn-in-progress", "ASN is being received", "asn is being received and cannot be cancelled"),
+      "POST /asns/ASN-1001/cancellations": problem(409, "asn-in-progress", "ASN is being received", "asn is being received and cannot be cancelled"),
     });
     const user = userEvent.setup();
     mount();

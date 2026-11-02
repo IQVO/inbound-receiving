@@ -18,13 +18,13 @@ work.
 | Use case | Inbound | What it does |
 | --- | --- | --- |
 | `RegisterAsn` | `POST /asns` (`Idempotency-Key` required) | Builds the ASN (`asn.Register`), with `PRODUCT_MODE=kafka` checks every line's SKU against `known_skus` (`422 unknown-sku`), then saves it unless the number exists (`409 asn-already-exists`). `201`, `ASNRegistered`. |
-| `CancelAsn` | `POST /asns/{asnNumber}/cancel` | Loads the ASN, checks `If-Match`, cancels a `Registered` one. `200`, `ASNCancelled`. `409 asn-in-progress` while `Receiving`, `409 asn-terminal` when `Closed` or `Cancelled`. |
+| `CancelAsn` | `POST /asns/{asnNumber}/cancellations` | Loads the ASN, checks `If-Match`, cancels a `Registered` one. `200`, `ASNCancelled`. `409 asn-in-progress` while `Receiving`, `409 asn-terminal` when `Closed` or `Cancelled`. |
 | `BookAppointment` | `POST /appointments` (`Idempotency-Key` required) | Builds the appointment (`appointment.Book`), with `DOCK_DOOR_MODE=kafka` checks the door against `dock_doors` (`422 unknown-dock-door`), then in one unit of work takes the per-door advisory lock, requires every covered ASN to exist (`422 unknown-asn`) and be `Registered` or `Receiving` (`409 asn-not-receivable`), reads the active appointments of the door and runs `Schedule.CheckNoOverlap` (`409 door-window-overlap`). `201`, `DockAppointmentBooked`. |
-| `CheckInAppointment` | `POST /appointments/{appointmentId}/check-in` | Loads, checks `If-Match`, checks in with the server clock. `200`, `DockAppointmentCheckedIn`. `409 appointment-not-booked`, `409 outside-check-in-window`. |
-| `CancelAppointment` | `POST /appointments/{appointmentId}/cancel` | Cancels a `Booked` appointment. `200`, `DockAppointmentCancelled`. `409 appointment-not-booked` otherwise. |
+| `CheckInAppointment` | `POST /appointments/{appointmentId}/check-ins` | Loads, checks `If-Match`, checks in with the server clock. `200`, `DockAppointmentCheckedIn`. `409 appointment-not-booked`, `409 outside-check-in-window`. |
+| `CancelAppointment` | `POST /appointments/{appointmentId}/cancellations` | Cancels a `Booked` appointment. `200`, `DockAppointmentCancelled`. `409 appointment-not-booked` otherwise. |
 | `OpenReceipt` | `POST /receipts` (`Idempotency-Key` required) | In one unit of work: loads the ASN (`422 unknown-asn`), validates the optional appointment (`422 unknown-appointment`, `422 asn-not-on-appointment`, `409 appointment-not-checked-in`) and takes its door, opens the receipt against the ASN snapshot, requires no open receipt for the ASN (`409 receipt-already-open`), moves the ASN to `Receiving` and saves both. `201`, `ReceiptOpened`. |
 | `ReceiveLine` | `POST /receipts/{receiptId}/lines` (`Idempotency-Key` required, not naturally idempotent) | Loads the receipt, checks `If-Match`, records the quantity as `Good` or `Damaged`. `201`, `ReceiptLineReceived`. `409 receipt-closed`, `422 line-not-on-asn`, `400 invalid-condition`. |
-| `CloseReceipt` | `POST /receipts/{receiptId}/close` | In ONE unit of work: closes the receipt (computing the discrepancies), completes the ASN and, when the receipt came from an appointment, completes the appointment. `200`, `ReceiptClosed` and `DockAppointmentCompleted`. `409 receipt-closed`. |
+| `CloseReceipt` | `POST /receipts/{receiptId}/closures` | In ONE unit of work: closes the receipt (computing the discrepancies), completes the ASN and, when the receipt came from an appointment, completes the appointment. `200`, `ReceiptClosed` and `DockAppointmentCompleted`. `409 receipt-closed`. |
 
 ## Queries
 
@@ -66,9 +66,8 @@ Response shapes: [Runbook — Reports API](../operations/runbook.md#reports-api-
 
 ## Cross-cutting behaviour
 
-- **Idempotency.** `Idempotency-Key` on the creating `POST`s: a replay returns
-  the original response, the same key with another body is `422
-  idempotency-key-reused`. The action `POST`s honour the header when sent.
+- **Idempotency.** `Idempotency-Key` on every `POST`: a replay returns
+  the original response (`Idempotency-Replayed: true`), the same key with another request is `409 idempotency-key-reused`.
 - **Optimistic concurrency.** Every save is guarded by the loaded `version`; a
   race is `409 concurrent-modification`, a stale `If-Match` is `412
   version-mismatch`.

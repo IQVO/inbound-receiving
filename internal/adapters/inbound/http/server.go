@@ -84,29 +84,28 @@ func NewRouter(s *Server) http.Handler {
 		r.Method(http.MethodGet, "/metrics", s.Metrics)
 	}
 
-	// Resource-creating POSTs require an Idempotency-Key; action POSTs honour it.
-	create := r.With(RequireIdempotencyKey(s.Idempotency))
-	action := r.With(HonourIdempotencyKey(s.Idempotency))
+	// Every POST requires an Idempotency-Key (fleet REST API guideline).
+	keyed := r.With(RequireIdempotencyKey(s.Idempotency))
 
-	create.Post("/asns", s.handleRegisterAsn)
+	keyed.Post("/asns", s.handleRegisterAsn)
 	r.Get("/asns", s.handleListAsns)
 	r.Get("/asns/{asnNumber}", s.handleGetAsn)
 	r.Get("/asns/{asnNumber}/cartons", s.handleGetAsnCartons)
-	action.Post("/asns/{asnNumber}/cancel", s.handleCancelAsn)
+	keyed.Post("/asns/{asnNumber}/cancellations", s.handleCancelAsn)
 
-	create.Post("/appointments", s.handleBookAppointment)
+	keyed.Post("/appointments", s.handleBookAppointment)
 	r.Get("/appointments", s.handleListAppointments)
 	r.Get("/appointments/{appointmentId}", s.handleGetAppointment)
-	action.Post("/appointments/{appointmentId}/check-in", s.handleCheckInAppointment)
-	action.Post("/appointments/{appointmentId}/cancel", s.handleCancelAppointment)
+	keyed.Post("/appointments/{appointmentId}/check-ins", s.handleCheckInAppointment)
+	keyed.Post("/appointments/{appointmentId}/cancellations", s.handleCancelAppointment)
 
-	create.Post("/receipts", s.handleOpenReceipt)
+	keyed.Post("/receipts", s.handleOpenReceipt)
 	r.Get("/receipts", s.handleListReceipts)
 	r.Get("/receipts/{receiptId}", s.handleGetReceipt)
 	r.Get("/receipts/{receiptId}/cartons/{lpn}/label", s.handleGetCartonLabel)
-	create.Post("/receipts/{receiptId}/lines", s.handleReceiveLine)
-	create.Post("/receipts/{receiptId}/scans", s.handleReceiveScan)
-	action.Post("/receipts/{receiptId}/close", s.handleCloseReceipt)
+	keyed.Post("/receipts/{receiptId}/lines", s.handleReceiveLine)
+	keyed.Post("/receipts/{receiptId}/scans", s.handleReceiveScan)
+	keyed.Post("/receipts/{receiptId}/closures", s.handleCloseReceipt)
 
 	r.Get("/docks", s.handleListDocks)
 	return r

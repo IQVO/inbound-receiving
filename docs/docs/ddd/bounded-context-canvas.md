@@ -145,12 +145,12 @@ or "how many are in stock" question (ADR 0001).
 | Collaborator | Message | Type | Channel | Relationship |
 | --- | --- | --- | --- | --- |
 | Supplier-facing operator | Register ASN | Command | REST `POST /asns` (`Idempotency-Key` required) | This context is the OHS |
-| Operator | Cancel ASN | Command | REST `POST /asns/{asnNumber}/cancel` | OHS |
+| Operator | Cancel ASN | Command | REST `POST /asns/{asnNumber}/cancellations` | OHS |
 | Dock planner | Book dock appointment | Command | REST `POST /appointments` (`Idempotency-Key` required) | OHS |
-| Dock planner / gate | Check in, cancel appointment | Command | REST `POST /appointments/{appointmentId}/check-in`, `.../cancel` | OHS |
+| Dock planner / gate | Check in, cancel appointment | Command | REST `POST /appointments/{appointmentId}/check-ins`, `.../cancellations` | OHS |
 | Dock staff | Open receipt | Command | REST `POST /receipts` (`Idempotency-Key` required) | OHS |
 | Dock staff | Receive a quantity against a line | Command | REST `POST /receipts/{receiptId}/lines` (`Idempotency-Key` required) | OHS |
-| Dock staff | Close receipt | Command | REST `POST /receipts/{receiptId}/close` | OHS |
+| Dock staff | Close receipt | Command | REST `POST /receipts/{receiptId}/closures` | OHS |
 | Operator, console, agent | Get / list ASNs, appointments, receipts | Query | REST `GET /asns`, `/asns/{asnNumber}`, `/appointments`, `/appointments/{appointmentId}`, `/receipts`, `/receipts/{receiptId}` | OHS |
 | Operator, console, agent | List known inbound dock doors | Query | REST `GET /docks` | OHS |
 | `warehouse-ops-agent` | Get / list ASNs, appointments, receipts; list docks | Query | MCP (`cmd/mcp`, Streamable HTTP): `get_asn`, `list_asns`, `get_appointment`, `list_appointments`, `get_receipt`, `list_receipts`, `list_docks` | OHS, read-only (ADR 0005) |

@@ -40,7 +40,7 @@ func (s *Server) handleGetReceipt(w http.ResponseWriter, r *http.Request) {
 
 // handleListReceipts backs GET /receipts?limit=&cursor=&asnNumber=&state=.
 func (s *Server) handleListReceipts(w http.ResponseWriter, r *http.Request) {
-	limit, cursor, err := listQuery(r)
+	limit, cursor, err := listQuery(r, "asnNumber", "state")
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -85,7 +85,7 @@ func (s *Server) handleReceiveLine(w http.ResponseWriter, r *http.Request) {
 	writeVersioned(w, http.StatusCreated, x.Version(), toReceipt(x))
 }
 
-// handleCloseReceipt backs POST /receipts/{receiptId}/close (200).
+// handleCloseReceipt backs POST /receipts/{receiptId}/closures (200).
 func (s *Server) handleCloseReceipt(w http.ResponseWriter, r *http.Request) {
 	id, err := pathParam(r, "receiptId")
 	if err != nil {
@@ -109,7 +109,12 @@ func (s *Server) handleCloseReceipt(w http.ResponseWriter, r *http.Request) {
 
 // handleListDocks backs GET /docks.
 func (s *Server) handleListDocks(w http.ResponseWriter, r *http.Request) {
-	docks, err := s.ListDocks.Handle(r.Context())
+	limit, cursor, err := listQuery(r)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	docks, err := s.ListDocks.Handle(r.Context(), usecases.ListDocksQuery{Limit: limit, Cursor: cursor})
 	if err != nil {
 		writeError(w, r, err)
 		return
