@@ -62,7 +62,7 @@ func TestBookAppointmentOverlapAndUnreceivableAsn(t *testing.T) {
 	expectProblem(t, f.post(t, "/appointments", bookBody("DOOR-1", 25, "ASN-2")), http.StatusConflict, "door-window-overlap")
 	expectStatus(t, f.post(t, "/appointments", bookBody("DOOR-2", 25, "ASN-2")), http.StatusCreated)
 
-	f.mustPost(t, "/asns/ASN-1/cancel", "", http.StatusOK)
+	f.mustPost(t, "/asns/ASN-1/cancellations", "", http.StatusOK)
 	expectProblem(t, f.post(t, "/appointments", bookBody("DOOR-3", 48, "ASN-1")), http.StatusConflict, "asn-not-receivable")
 }
 
@@ -129,8 +129,8 @@ func TestListAppointmentsPagesAndFilters(t *testing.T) {
 
 func TestListAppointmentsInvalidQueriesAndErrors(t *testing.T) {
 	f := newFixture(t)
-	for _, q := range []string{"limit=x", "limit=501", "cursor=!!", "state=Nope", "door=a%20b", "from=yesterday", "to=tomorrow"} {
-		expectProblem(t, f.get(t, "/appointments?"+q), http.StatusBadRequest, "invalid-query")
+	for q, slug := range map[string]string{"limit=x": "invalid-limit", "limit=501": "invalid-limit", "cursor=!!": "invalid-cursor", "state=Nope": "invalid-query", "door=a%20b": "invalid-query", "from=yesterday": "invalid-query", "to=tomorrow": "invalid-query", "after=x": "unknown-query-parameter", "offset=1": "unknown-query-parameter", "nextToken=x": "unknown-query-parameter"} {
+		expectProblem(t, f.get(t, "/appointments?"+q), http.StatusBadRequest, slug)
 	}
 	f.faults.apptList = errDB
 	expectProblem(t, f.get(t, "/appointments"), http.StatusInternalServerError, "internal-error")
@@ -140,7 +140,7 @@ func TestCheckInAppointment(t *testing.T) {
 	f := newFixture(t)
 	f.seedAsn(t, "ASN-1")
 	id := f.seedAppointment(t, "DOOR-1", 1, "ASN-1")
-	path := "/appointments/" + id + "/check-in"
+	path := "/appointments/" + id + "/check-ins"
 
 	// at 07:00 the window opens at 08:00: inside the 30-minute lead? no.
 	expectProblem(t, f.post(t, path, ""), http.StatusConflict, "outside-check-in-window")
@@ -157,7 +157,7 @@ func TestAppointmentActionRefusals(t *testing.T) {
 	f := newFixture(t)
 	f.seedAsn(t, "ASN-1")
 	id := f.seedAppointment(t, "DOOR-1", 1, "ASN-1")
-	for _, action := range []string{"check-in", "cancel"} {
+	for _, action := range []string{"check-ins", "cancellations"} {
 		path := "/appointments/" + id + "/" + action
 		expectProblem(t, f.post(t, "/appointments/"+missingAppointment+"/"+action, ""), http.StatusNotFound, "appointment-not-found")
 		expectProblem(t, f.post(t, "/appointments/nope/"+action, ""), http.StatusBadRequest, "invalid-appointment-id")
@@ -167,15 +167,15 @@ func TestAppointmentActionRefusals(t *testing.T) {
 	}
 	f.faults.apptSave = errDB
 	f.clock.set(startOfDay.Add(time.Hour))
-	expectProblem(t, f.post(t, "/appointments/"+id+"/check-in", ""), http.StatusInternalServerError, "internal-error")
-	expectProblem(t, f.post(t, "/appointments/"+id+"/cancel", ""), http.StatusInternalServerError, "internal-error")
+	expectProblem(t, f.post(t, "/appointments/"+id+"/check-ins", ""), http.StatusInternalServerError, "internal-error")
+	expectProblem(t, f.post(t, "/appointments/"+id+"/cancellations", ""), http.StatusInternalServerError, "internal-error")
 }
 
 func TestCancelAppointment(t *testing.T) {
 	f := newFixture(t)
 	f.seedAsn(t, "ASN-1")
 	id := f.seedAppointment(t, "DOOR-1", 24, "ASN-1")
-	path := "/appointments/" + id + "/cancel"
+	path := "/appointments/" + id + "/cancellations"
 	expectProblem(t, f.post(t, path, `{"reason":"`+strings.Repeat("x", 201)+`"}`), http.StatusBadRequest, "invalid-reason")
 	r := f.post(t, path, `{"reason":"Carrier delayed"}`)
 	expectStatus(t, r, http.StatusOK)

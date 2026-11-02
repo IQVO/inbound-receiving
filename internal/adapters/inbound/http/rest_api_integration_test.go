@@ -336,7 +336,8 @@ func TestHTTPAsnLifecycleAndValidation(t *testing.T) {
 // TestHTTPIdempotencyKeyReplayAndReuse proves the Idempotency-Key
 // middleware contract over the real Postgres store: a retry with the same
 // key and body replays the first response without re-running the handler,
-// and the same key with a different body is a 422 idempotency-key-reused.
+// with Idempotency-Replayed: true, and the same key with a different body is
+// a 409 idempotency-key-reused.
 func TestHTTPIdempotencyKeyReplayAndReuse(t *testing.T) {
 	api := newHTTPAPI(t)
 	first := `{"asnNumber":"ASN-IDEM-1","supplierRef":"ACME","lines":[{"lineNo":1,"sku":"SKU-1","expectedQty":5}]}`
@@ -347,16 +348,19 @@ func TestHTTPIdempotencyKeyReplayAndReuse(t *testing.T) {
 		t.Fatalf("first POST: status %d body %v", status, body)
 	}
 	firstLocation := header.Get("Location")
+	if got := header.Get("Idempotency-Replayed"); got != "" {
+		t.Fatalf("first POST carries Idempotency-Replayed: %q", got)
+	}
 
 	// Same key, same body: the stored response is replayed verbatim.
 	status, header, body = api.do(t, request{method: "POST", path: "/asns", idempotencyKey: "idem-key-1", body: first})
-	if status != http.StatusCreated || header.Get("Location") != firstLocation {
+	if status != http.StatusCreated || header.Get("Location") != firstLocation || header.Get("Idempotency-Replayed") != "true" {
 		t.Fatalf("replay: status %d location %q body %v", status, header.Get("Location"), body)
 	}
 
-	// Same key, different body: 422 idempotency-key-reused.
+	// Same key, different body: 409 idempotency-key-reused.
 	status, _, problem := api.do(t, request{method: "POST", path: "/asns", idempotencyKey: "idem-key-1", body: second})
-	if status != http.StatusUnprocessableEntity || problemSlug(t, problem) != "idempotency-key-reused" {
+	if status != http.StatusConflict || problemSlug(t, problem) != "idempotency-key-reused" {
 		t.Fatalf("reuse: status %d problem %v", status, problem)
 	}
 
@@ -423,7 +427,7 @@ func TestHTTPReceiptFlow(t *testing.T) {
 
 	// Close the receipt: 200, Closed, and the discrepancy (8 of 10 = Short).
 	status, _, closed := api.do(t, request{method: "POST",
-		path: fmt.Sprintf("/receipts/%s/close", receiptID), idempotencyKey: "rcv-close"})
+		path: fmt.Sprintf("/receipts/%s/closures", receiptID), idempotencyKey: "rcv-close"})
 	if status != http.StatusOK || closed["state"] != "Closed" {
 		t.Fatalf("close receipt: status %d body %v", status, closed)
 	}

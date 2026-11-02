@@ -30,7 +30,7 @@ sequenceDiagram
   alt key missing
     I-->>Op: 400 idempotency-key-required
   else same key, different body
-    I-->>Op: 422 idempotency-key-reused
+    I-->>Op: 409 idempotency-key-reused
   else same key and body seen before
     I-->>Op: the original response replayed
   else new key
@@ -126,7 +126,7 @@ sequenceDiagram
   participant D as DockAppointment aggregate
   participant O as Outbox
 
-  Op->>H: POST /appointments/{id}/check-in or /cancel
+  Op->>H: POST /appointments/{id}/check-ins or /cancellations
   H->>UC: Handle(AppointmentActionCommand with If-Match)
   UC->>PR: Get(id) inside UoW
   alt not found
@@ -266,7 +266,7 @@ sequenceDiagram
   participant PR as AppointmentRepository
   participant O as Outbox
 
-  Dock->>H: POST /receipts/{id}/close
+  Dock->>H: POST /receipts/{id}/closures
   H->>UC: Handle(CloseReceiptCommand)
   UC->>RR: Get(id) inside ONE UoW
   UC->>RC: Close(now)

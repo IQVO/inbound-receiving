@@ -20,11 +20,13 @@ var (
 	// errMalformedRequest marks a body or parameter the adapter itself
 	// rejects (bad JSON, unknown field, unparsable If-Match).
 	errMalformedRequest = errors.New("request body is not valid JSON for this operation")
-	// errIdempotencyKeyRequired is a resource-creating POST without an
-	// Idempotency-Key header.
-	errIdempotencyKeyRequired = errors.New("resource-creating requests must send a non-empty Idempotency-Key")
+	// errIdempotencyKeyRequired is a POST without an Idempotency-Key header.
+	errIdempotencyKeyRequired = errors.New("every POST must send a non-empty Idempotency-Key")
+	// errIdempotencyKeyInvalid is a key longer than 128 characters or with a
+	// character outside printable ASCII.
+	errIdempotencyKeyInvalid = errors.New("idempotency key must be 1..128 printable ASCII characters")
 	// errIdempotencyKeyReused is a key seen before with a different request.
-	errIdempotencyKeyReused = errors.New("the idempotency key was used with a different request body")
+	errIdempotencyKeyReused = errors.New("the idempotency key was used with a different request")
 )
 
 // problem is the fixed (status, slug, title) of one error category; the
@@ -51,9 +53,13 @@ var problemCatalogue = []struct {
 	p   problem
 }{
 	{errMalformedRequest, bad("malformed-request", "Malformed request")},
+	{usecases.ErrInvalidLimit, bad("invalid-limit", "Invalid limit")},
+	{usecases.ErrInvalidCursor, bad("invalid-cursor", "Invalid cursor")},
+	{errUnknownQuery, bad("unknown-query-parameter", "Unknown query parameter")},
 	{usecases.ErrInvalidListQuery, bad("invalid-query", "Invalid query parameter")},
 	{errIdempotencyKeyRequired, bad("idempotency-key-required", "Idempotency-Key header is required")},
-	{errIdempotencyKeyReused, unprocessable("idempotency-key-reused", "Idempotency-Key was already used with a different request")},
+	{errIdempotencyKeyInvalid, bad("idempotency-key-invalid", "Idempotency-Key header is invalid")},
+	{errIdempotencyKeyReused, conflict("idempotency-key-reused", "Idempotency-Key was already used with a different request")},
 
 	{asn.ErrInvalidNumber, bad("invalid-asn-number", "ASN number is invalid")},
 	{asn.ErrInvalidSupplierRef, bad("invalid-supplier-ref", "Supplier reference is invalid")},

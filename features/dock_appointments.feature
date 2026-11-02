@@ -42,7 +42,7 @@ Feature: Book and manage dock appointments
 
   Scenario: A cancelled appointment frees its window
     Given an appointment at door "DOOR-1" from "2026-10-09T08:00:00Z" to "2026-10-09T10:00:00Z" covers the ASN "ASN-1"
-    When I POST "/appointments/{appointment}/cancel" with body '{"reason":"Carrier delayed"}'
+    When I POST "/appointments/{appointment}/cancellations" with body '{"reason":"Carrier delayed"}'
     Then the response status is 200
     And the response field "state" is "Cancelled"
     When I POST "/appointments" with body '{"doorCode":"DOOR-1","carrier":"Other","windowStart":"2026-10-09T08:00:00Z","windowEnd":"2026-10-09T10:00:00Z","asnNumbers":["ASN-2"]}'
@@ -50,8 +50,8 @@ Feature: Book and manage dock appointments
 
   Scenario: A booked appointment cannot be cancelled twice
     Given an appointment at door "DOOR-1" from "2026-10-09T08:00:00Z" to "2026-10-09T10:00:00Z" covers the ASN "ASN-1"
-    When I POST "/appointments/{appointment}/cancel" with body ''
-    And I POST "/appointments/{appointment}/cancel" with body ''
+    When I POST "/appointments/{appointment}/cancellations" with body ''
+    And I POST "/appointments/{appointment}/cancellations" with body ''
     Then the response status is 409
     And the problem type is "appointment-not-booked"
 
@@ -87,14 +87,14 @@ Feature: Book and manage dock appointments
 
   Scenario: Check-in before the window opens is refused
     Given an appointment at door "DOOR-1" from "2026-10-09T10:00:00Z" to "2026-10-09T12:00:00Z" covers the ASN "ASN-1"
-    When I POST "/appointments/{appointment}/check-in" with body ''
+    When I POST "/appointments/{appointment}/check-ins" with body ''
     Then the response status is 409
     And the problem type is "outside-check-in-window"
 
   Scenario: Check-in at the start of the window
     Given an appointment at door "DOOR-1" from "2026-10-09T08:00:00Z" to "2026-10-09T10:00:00Z" covers the ASN "ASN-1"
     And the clock is at "2026-10-09T08:00:00Z"
-    When I POST "/appointments/{appointment}/check-in" with If-Match "1" and body ''
+    When I POST "/appointments/{appointment}/check-ins" with If-Match "1" and body ''
     Then the response status is 200
     And the response field "state" is "CheckedIn"
     And the ETag is "2"

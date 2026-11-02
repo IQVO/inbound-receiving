@@ -64,7 +64,7 @@ Feature: Receive goods against an ASN
     And 30 units of line 1 were received as "Good"
     And 4 units of line 1 were received as "Damaged"
     And 7 units of line 2 were received as "Good"
-    When I POST "/receipts/{receipt}/close" with body ''
+    When I POST "/receipts/{receipt}/closures" with body ''
     Then the response status is 200
     And the response field "state" is "Closed"
     And the response field "discrepancies.0.kind" is "Short"
@@ -80,7 +80,7 @@ Feature: Receive goods against an ASN
     And a walk-in receipt is open for the ASN "ASN-2"
     And 40 units of line 1 were received as "Good"
     And 5 units of line 2 were received as "Good"
-    When I POST "/receipts/{receipt}/close" with body ''
+    When I POST "/receipts/{receipt}/closures" with body ''
     Then the response status is 200
     And the response field "discrepancies.0" is absent
 
@@ -91,7 +91,7 @@ Feature: Receive goods against an ASN
     When I POST "/receipts/{receipt}/lines" with body '{"lineNo":1,"quantity":1,"condition":"Good"}'
     Then the response status is 409
     And the problem type is "receipt-closed"
-    When I POST "/receipts/{receipt}/close" with body ''
+    When I POST "/receipts/{receipt}/closures" with body ''
     Then the response status is 409
     And the problem type is "receipt-closed"
 
@@ -100,7 +100,7 @@ Feature: Receive goods against an ASN
     And the clock is at "2026-10-09T08:00:00Z"
     And the appointment is checked in
     And a receipt is open for the ASN "ASN-1" on the appointment
-    When I POST "/receipts/{receipt}/close" with body ''
+    When I POST "/receipts/{receipt}/closures" with body ''
     Then the response status is 200
     When I GET "/appointments/{appointment}"
     Then the response field "state" is "Completed"

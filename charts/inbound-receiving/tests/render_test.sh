@@ -153,7 +153,7 @@ for bin in api mcp a2a inbound-projector inbound-reports; do
     *) rendered="$reports" ;;
   esac
   # The regex allows digits: A2A_AGENT_URL would otherwise be read as A_AGENT_URL.
-  vars="$(grep -hoE 'errors.New\("[A-Z][A-Z0-9_]+ is required' "$repo_dir"/cmd/"$bin"/main.go | sed -E 's/errors.New\("//; s/ is required//' | sort -u)"
+  vars="$(grep -hoE 'errors.New\("[A-Z][A-Z0-9_]+ is required' $(ls "$repo_dir"/cmd/"$bin"/*.go | grep -v '_test\.go$') | sed -E 's/errors.New\("//; s/ is required//' | sort -u)"
   [[ -n "$vars" ]] || fail "found no mandatory variables in cmd/$bin; the scan is looking in the wrong place"
   for var in $vars; do
     grep -q "name: $var\$" <<<"$rendered" || fail "the $bin Deployment does not render $var, which cmd/$bin requires"

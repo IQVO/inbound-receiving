@@ -35,6 +35,11 @@ var (
 	// ErrInvalidListQuery marks a malformed list query (limit, cursor or
 	// filter); the HTTP adapter maps it to 400 invalid-query.
 	ErrInvalidListQuery = errors.New("invalid list query")
+	// ErrInvalidLimit and ErrInvalidCursor refine ErrInvalidListQuery for a
+	// bad page size / an undecodable cursor (400 invalid-limit /
+	// invalid-cursor).
+	ErrInvalidLimit  = errors.New("invalid limit")
+	ErrInvalidCursor = errors.New("invalid cursor")
 	// ErrInvalidEvent marks a consumed event that can never be applied (a
 	// payload that breaks a domain rule). The consumer logs it and commits
 	// past the message.

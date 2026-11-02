@@ -251,7 +251,7 @@ func (w *world) asnIsRegistered(number string) error {
 }
 
 func (w *world) asnIsCancelled(number string) error {
-	return w.mustCall(http.MethodPost, "/asns/"+number+"/cancel", "")
+	return w.mustCall(http.MethodPost, "/asns/"+number+"/cancellations", "")
 }
 
 func (w *world) appointmentIsBooked(door, from, to, number string) error {
@@ -263,7 +263,7 @@ func (w *world) appointmentIsBooked(door, from, to, number string) error {
 }
 
 func (w *world) appointmentIsCheckedIn() error {
-	return w.mustCall(http.MethodPost, "/appointments/{appointment}/check-in", "")
+	return w.mustCall(http.MethodPost, "/appointments/{appointment}/check-ins", "")
 }
 
 func (w *world) walkInReceiptIsOpen(number string) error {
@@ -287,13 +287,16 @@ func (w *world) iReceive(qty, line int, condition string) error {
 }
 
 func (w *world) receiptIsClosed() error {
-	return w.mustCall(http.MethodPost, "/receipts/{receipt}/close", "")
+	return w.mustCall(http.MethodPost, "/receipts/{receipt}/closures", "")
 }
 
 func (w *world) rememberID(field string, dest *string) error {
 	v, ok, err := w.field(field)
-	if err != nil || !ok {
-		return fmt.Errorf("no %s in %s (%v)", field, w.body, err)
+	if err != nil {
+		return fmt.Errorf("no %s in %s (%w)", field, w.body, err)
+	}
+	if !ok {
+		return fmt.Errorf("no %s in %s", field, w.body)
 	}
 	*dest = fmt.Sprint(v)
 	return nil
@@ -387,8 +390,10 @@ func (w *world) theResponseFieldIsAbsent(path string) error {
 }
 
 func (w *world) theResponseFieldIsPresent(path string) error {
-	if _, ok, err := w.field(path); err != nil || !ok {
-		return fmt.Errorf("field %q absent in %s (%v)", path, w.body, err)
+	if _, ok, err := w.field(path); err != nil {
+		return fmt.Errorf("field %q absent in %s (%w)", path, w.body, err)
+	} else if !ok {
+		return fmt.Errorf("field %q absent in %s", path, w.body)
 	}
 	return nil
 }
@@ -396,6 +401,13 @@ func (w *world) theResponseFieldIsPresent(path string) error {
 func (w *world) theETagIs(version string) error {
 	if got := w.header.Get("ETag"); got != `"`+version+`"` {
 		return fmt.Errorf("ETag = %s, want \"%s\"", got, version)
+	}
+	return nil
+}
+
+func (w *world) theResponseHeaderIs(name, value string) error {
+	if got := w.header.Get(name); got != value {
+		return fmt.Errorf("header %s = %q, want %q", name, got, value)
 	}
 	return nil
 }
@@ -428,8 +440,11 @@ func (w *world) iListWithQuery(path, query string) error {
 
 func (w *world) iListTheNextPage() error {
 	cursor, ok, err := w.field("nextCursor")
-	if err != nil || !ok {
-		return fmt.Errorf("no nextCursor in %s (%v)", w.body, err)
+	if err != nil {
+		return fmt.Errorf("no nextCursor in %s (%w)", w.body, err)
+	}
+	if !ok {
+		return fmt.Errorf("no nextCursor in %s", w.body)
 	}
 	return w.iGET(w.listQuery + "&cursor=" + fmt.Sprint(cursor))
 }
@@ -488,6 +503,7 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the response field "([^"]*)" is absent$`, w.theResponseFieldIsAbsent)
 	sc.Step(`^the response field "([^"]*)" is present$`, w.theResponseFieldIsPresent)
 	sc.Step(`^the ETag is "([^"]*)"$`, w.theETagIs)
+	sc.Step(`^the response header "([^"]*)" is "([^"]*)"$`, w.theResponseHeaderIs)
 	sc.Step(`^the problem type is "([^"]*)"$`, w.theProblemTypeIs)
 	sc.Step(`^the outbox event types are "([^"]*)"$`, w.theOutboxEventTypesAre)
 	sc.Step(`^the outbox is empty$`, w.theOutboxIsEmpty)
