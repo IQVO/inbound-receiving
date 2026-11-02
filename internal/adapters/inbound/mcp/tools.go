@@ -8,6 +8,29 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 )
 
+// Authority levels (Agentic Standard v2, AS-1; docs/adr/0018). Every
+// registered tool declares exactly one of these in its Meta under
+// authorityMetaKey; the fleet rule is .claude/rules/fleet/agent-authority.md.
+// This context's MCP charter is READ-ONLY (ADR 0005), so every tool is L1:
+// a pure read of this context's own state that changes nothing. L2 (computed
+// recommendation) and L3 (state change) constants are deliberately absent:
+// no such tool can be registered here, and the `unused` sensor rejects
+// constants nothing references; add the constant together with the tool the
+// day an ADR 0005 amendment ever charters one.
+const (
+	// authorityMetaKey is the tools/list _meta key carrying a tool's level.
+	authorityMetaKey = "com.warehouse/authority"
+	// authorityL1 reads facts and changes nothing.
+	authorityL1 = "L1"
+)
+
+// authorityMeta is the Meta a tool registers to declare its authority level
+// (the fleet-pinned declaration shape; internal/architecture
+// mcp_authority_fitness_test.go enforces it).
+//
+//nolint:unparam // the level parameter pins the fleet-wide declaration shape authorityMeta(level); only L1 exists in this read-only charter.
+func authorityMeta(level string) mcp.Meta { return mcp.Meta{authorityMetaKey: level} }
+
 // Deps is everything the MCP tools need, injected by the composition root.
 // It carries the SAME read use cases the REST adapter uses (GET /asns,
 // /asns/{asnNumber}, /appointments, /appointments/{appointmentId}, /receipts,
@@ -162,15 +185,18 @@ func (d Deps) listDocks(ctx context.Context, _ noInput) (dockListView, error) {
 // read-only, idempotent and closed-world; TestToolSurface pins the set and
 // fails the build on any write-verb name (docs/adr/0005).
 func (d Deps) registerTools(server *mcp.Server) {
+	// closedWorld keeps the shared openWorldHint value; the annotations
+	// literal itself stays inline on every tool so the authority fitness
+	// sensor can prove ReadOnlyHint is true (internal/architecture).
 	closedWorld := false
-	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &closedWorld}
 
 	addTool(server, &mcp.Tool{
 		Name: "get_asn",
 		Description: "Read one advance ship notice (ASN) by number: supplier_ref, expected_arrival (omitted when none), state " +
 			"(Registered, Receiving, Closed or Cancelled), its lines (line_no, sku, expected_qty) and version. Read-only; " +
 			"fails with asn-not-found for an unknown number and invalid-asn-number for a malformed one.",
-		Annotations: readOnly,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &closedWorld},
+		Meta:        authorityMeta(authorityL1),
 	}, d.getAsn)
 
 	addTool(server, &mcp.Tool{
@@ -178,7 +204,8 @@ func (d Deps) registerTools(server *mcp.Server) {
 		Description: "List ASNs in ascending number order, a page at a time (default 100, max 500), optionally only those in " +
 			"one state. Pass the returned next_cursor to get the next page; it is absent on the last page. Read-only; a bad " +
 			"limit, cursor or state fails with invalid-query.",
-		Annotations: readOnly,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &closedWorld},
+		Meta:        authorityMeta(authorityL1),
 	}, d.listAsns)
 
 	addTool(server, &mcp.Tool{
@@ -186,7 +213,8 @@ func (d Deps) registerTools(server *mcp.Server) {
 		Description: "Read one carrier dock appointment by id: door_code, carrier, window_start and window_end (UTC), the " +
 			"asn_numbers it covers, state (Booked, CheckedIn, Completed or Cancelled) and version. Read-only; fails with " +
 			"appointment-not-found for an unknown id and invalid-appointment-id for a malformed one.",
-		Annotations: readOnly,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &closedWorld},
+		Meta:        authorityMeta(authorityL1),
 	}, d.getAppointment)
 
 	addTool(server, &mcp.Tool{
@@ -196,7 +224,8 @@ func (d Deps) registerTools(server *mcp.Server) {
 			"after it; to: window starts before it; both RFC 3339). Pass the returned next_cursor to get the next page; it " +
 			"is absent on the last page. Read-only; a bad limit, cursor, state or instant fails with invalid-query and a " +
 			"malformed door with invalid-door-code.",
-		Annotations: readOnly,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &closedWorld},
+		Meta:        authorityMeta(authorityL1),
 	}, d.listAppointments)
 
 	addTool(server, &mcp.Tool{
@@ -206,7 +235,8 @@ func (d Deps) registerTools(server *mcp.Server) {
 			"the discrepancies as the receipt stands (kind Short, Over or Damaged; final once Closed, provisional while " +
 			"Open) and version. Read-only; fails with " +
 			"receipt-not-found for an unknown id and invalid-receipt-id for a malformed one.",
-		Annotations: readOnly,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &closedWorld},
+		Meta:        authorityMeta(authorityL1),
 	}, d.getReceipt)
 
 	addTool(server, &mcp.Tool{
@@ -215,7 +245,8 @@ func (d Deps) registerTools(server *mcp.Server) {
 			"one ASN (asn_number) and/or in one state (Open or Closed). Pass the returned next_cursor to get the next page; " +
 			"it is absent on the last page. Read-only; a bad limit, cursor or state fails with invalid-query and a malformed " +
 			"asn_number with invalid-asn-number.",
-		Annotations: readOnly,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &closedWorld},
+		Meta:        authorityMeta(authorityL1),
 	}, d.listReceipts)
 
 	addTool(server, &mcp.Tool{
@@ -223,7 +254,8 @@ func (d Deps) registerTools(server *mcp.Server) {
 		Description: "List the inbound dock doors this service knows (door_code and dock_flow Inbound or Both) in ascending " +
 			"code order, with the mode the local copy runs in: permissive (any door code can be booked, the list may be " +
 			"empty) or kafka (only the listed doors can be booked). Takes no arguments. Read-only.",
-		Annotations: readOnly,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &closedWorld},
+		Meta:        authorityMeta(authorityL1),
 	}, d.listDocks)
 }
 
