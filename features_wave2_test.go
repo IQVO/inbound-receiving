@@ -70,10 +70,13 @@ func (w *world) theConsumerReports(want string) error {
 }
 
 func (w *world) theConsumerRefusesTheEvent() error {
-	if !errors.Is(w.wave2.err, usecases.ErrInvalidEvent) {
-		return fmt.Errorf("expected an invalid-event refusal, got outcome %q err %v", w.wave2.outcome, w.wave2.err)
+	if errors.Is(w.wave2.err, usecases.ErrInvalidEvent) {
+		return nil
 	}
-	return nil
+	if w.wave2.err != nil {
+		return fmt.Errorf("expected an invalid-event refusal, got outcome %q err %w", w.wave2.outcome, w.wave2.err)
+	}
+	return fmt.Errorf("expected an invalid-event refusal, got outcome %q with no error", w.wave2.outcome)
 }
 
 // theListedValuesAreAscending asserts the listed values are in ascending order

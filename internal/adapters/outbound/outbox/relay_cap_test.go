@@ -154,12 +154,12 @@ func TestRelay_MaxAttemptsNegativeIgnoredAndDefaultIsTwenty(t *testing.T) {
 }
 
 // A failure below the cap carries the row identity for the caller.
-func TestRelay_SendFailureCarriesTheRow(t *testing.T) {
+func TestRelay_SendFailureErrorCarriesTheRow(t *testing.T) {
 	store, sink := memory.NewOutboxRepo(), &poisonSink{failOn: "Poison"}
 	seedTyped(t, store, "Poison", "ASN-9")
 	_, err := relay.NewRelay(store, sink, quiet(), relay.WithMaxAttempts(5)).RelayOnce(context.Background())
-	var sf *outbox.SendFailure
+	var sf *outbox.SendFailureError
 	if !errors.As(err, &sf) || sf.Attempts != 1 || sf.Message.EventType != "Poison" || string(sf.Message.Key) != "ASN-9" {
-		t.Fatalf("err = %v (%+v), want a SendFailure for the poison row with attempts 1", err, sf)
+		t.Fatalf("err = %v (%+v), want a SendFailureError for the poison row with attempts 1", err, sf)
 	}
 }

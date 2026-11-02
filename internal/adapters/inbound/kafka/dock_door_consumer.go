@@ -30,14 +30,11 @@ type locationSlotData struct {
 	DockFlow     string `json:"dockFlow"`
 }
 
-// DoorRegistrar and DoorDecommissioner are the use cases the dock-door
+// DoorRegistrar and StringEventUseCase are the use cases the dock-door
 // consumer drives.
 type (
 	DoorRegistrar interface {
 		Handle(ctx context.Context, eventID string, slot usecases.LocationSlot) (usecases.Outcome, error)
-	}
-	DoorDecommissioner interface {
-		Handle(ctx context.Context, eventID, locationCode string) (usecases.Outcome, error)
 	}
 )
 
@@ -46,7 +43,7 @@ type (
 type DockDoorConsumer struct {
 	Reader        Reader
 	Registered    DoorRegistrar
-	Decommissions DoorDecommissioner
+	Decommissions StringEventUseCase
 	Logger        *slog.Logger
 	Retry         RetryPolicy
 
@@ -55,12 +52,12 @@ type DockDoorConsumer struct {
 
 // NewDockDoorConsumer reads FacilityTopic from brokers under groupID (from
 // DOCK_DOOR_CONSUMER_GROUP, never a literal). It does not dial.
-func NewDockDoorConsumer(brokers []string, groupID string, reg DoorRegistrar, dec DoorDecommissioner, logger *slog.Logger) *DockDoorConsumer {
+func NewDockDoorConsumer(brokers []string, groupID string, reg DoorRegistrar, dec StringEventUseCase, logger *slog.Logger) *DockDoorConsumer {
 	return NewDockDoorConsumerForTopic(brokers, FacilityTopic, groupID, reg, dec, logger)
 }
 
 // NewDockDoorConsumerForTopic is NewDockDoorConsumer on an explicit topic.
-func NewDockDoorConsumerForTopic(brokers []string, topic, groupID string, reg DoorRegistrar, dec DoorDecommissioner, logger *slog.Logger) *DockDoorConsumer {
+func NewDockDoorConsumerForTopic(brokers []string, topic, groupID string, reg DoorRegistrar, dec StringEventUseCase, logger *slog.Logger) *DockDoorConsumer {
 	return &DockDoorConsumer{
 		Reader:        kafkago.NewReader(readerConfig(brokers, topic, groupID)),
 		Registered:    reg,

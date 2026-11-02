@@ -292,8 +292,11 @@ func (w *world) receiptIsClosed() error {
 
 func (w *world) rememberID(field string, dest *string) error {
 	v, ok, err := w.field(field)
-	if err != nil || !ok {
-		return fmt.Errorf("no %s in %s (%v)", field, w.body, err)
+	if err != nil {
+		return fmt.Errorf("no %s in %s (%w)", field, w.body, err)
+	}
+	if !ok {
+		return fmt.Errorf("no %s in %s", field, w.body)
 	}
 	*dest = fmt.Sprint(v)
 	return nil
@@ -387,8 +390,10 @@ func (w *world) theResponseFieldIsAbsent(path string) error {
 }
 
 func (w *world) theResponseFieldIsPresent(path string) error {
-	if _, ok, err := w.field(path); err != nil || !ok {
-		return fmt.Errorf("field %q absent in %s (%v)", path, w.body, err)
+	if _, ok, err := w.field(path); err != nil {
+		return fmt.Errorf("field %q absent in %s (%w)", path, w.body, err)
+	} else if !ok {
+		return fmt.Errorf("field %q absent in %s", path, w.body)
 	}
 	return nil
 }
@@ -435,8 +440,11 @@ func (w *world) iListWithQuery(path, query string) error {
 
 func (w *world) iListTheNextPage() error {
 	cursor, ok, err := w.field("nextCursor")
-	if err != nil || !ok {
-		return fmt.Errorf("no nextCursor in %s (%v)", w.body, err)
+	if err != nil {
+		return fmt.Errorf("no nextCursor in %s (%w)", w.body, err)
+	}
+	if !ok {
+		return fmt.Errorf("no nextCursor in %s", w.body)
 	}
 	return w.iGET(w.listQuery + "&cursor=" + fmt.Sprint(cursor))
 }

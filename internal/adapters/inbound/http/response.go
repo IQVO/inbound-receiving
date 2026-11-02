@@ -54,7 +54,7 @@ func decodeJSON(r *http.Request, dest any) error {
 	dec := json.NewDecoder(io.LimitReader(r.Body, maxBodyBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dest); err != nil {
-		return fmt.Errorf("%w: %v", errMalformedRequest, err)
+		return fmt.Errorf("%w: %w", errMalformedRequest, err)
 	}
 	if dec.More() {
 		return fmt.Errorf("%w: trailing data after the JSON body", errMalformedRequest)
@@ -67,7 +67,7 @@ func decodeJSON(r *http.Request, dest any) error {
 func decodeOptionalJSON(r *http.Request, dest any) error {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
 	if err != nil {
-		return fmt.Errorf("%w: %v", errMalformedRequest, err)
+		return fmt.Errorf("%w: %w", errMalformedRequest, err)
 	}
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil
@@ -75,7 +75,7 @@ func decodeOptionalJSON(r *http.Request, dest any) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dest); err != nil {
-		return fmt.Errorf("%w: %v", errMalformedRequest, err)
+		return fmt.Errorf("%w: %w", errMalformedRequest, err)
 	}
 	if dec.More() {
 		return fmt.Errorf("%w: trailing data after the JSON body", errMalformedRequest)
