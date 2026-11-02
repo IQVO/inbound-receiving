@@ -13,17 +13,17 @@ path prefix: `/api/inbound-receiving`.
 - `POST /asns`                              -> `RegisterAsn` (201; `Idempotency-Key` required)
 - `GET  /asns?limit=&cursor=&state=`        -> `ListAsns`
 - `GET  /asns/{asnNumber}`                  -> `GetAsn`
-- `POST /asns/{asnNumber}/cancellations`           -> `CancelAsn` (200)
+- `POST /asns/{asnNumber}/cancellations`     -> `CancelAsn` (200; keyed)
 - `POST /appointments`                      -> `BookAppointment` (201; `Idempotency-Key` required)
 - `GET  /appointments?door=&state=&from=&to=&limit=&cursor=` -> `ListAppointments`
 - `GET  /appointments/{appointmentId}`      -> `GetAppointment`
-- `POST /appointments/{appointmentId}/check-ins` -> `CheckInAppointment` (200)
-- `POST /appointments/{appointmentId}/cancellations`   -> `CancelAppointment` (200)
+- `POST /appointments/{appointmentId}/check-ins` -> `CheckInAppointment` (200; keyed)
+- `POST /appointments/{appointmentId}/cancellations` -> `CancelAppointment` (200; keyed)
 - `POST /receipts`                          -> `OpenReceipt` (201; body `{asnNumber, appointmentId?}`; `Idempotency-Key` required)
 - `GET  /receipts?asnNumber=&state=&limit=&cursor=` -> `ListReceipts`
 - `GET  /receipts/{receiptId}`              -> `GetReceipt`
 - `POST /receipts/{receiptId}/lines`        -> `ReceiveLine` (201; `Idempotency-Key` required: receiving is not naturally idempotent)
-- `POST /receipts/{receiptId}/closures`        -> `CloseReceipt` (200)
+- `POST /receipts/{receiptId}/closures`     -> `CloseReceipt` (200; keyed)
 - `GET  /docks`                             -> `ListDocks` (the `dock_doors` local copy)
 - `GET  /healthz`, `GET /readyz` (503 while draining), `GET /metrics`
 
@@ -52,9 +52,12 @@ read-only pool on the ANALYTICAL database, never the OLTP one):
 - Request bodies reject unknown fields (`DisallowUnknownFields`); JSON is
   camelCase (events are snake_case).
 - Every resource-creating POST requires `Idempotency-Key` (the fleet
-  idempotency middleware): missing = 400 `idempotency-key-required`, same key
-  with a different body = 409 `idempotency-key-reused`. The action POSTs
-  (`cancel`, `check-in`, `close`) accept it but do not require it.
+  idempotency middleware, EVERY POST): missing = 400 `idempotency-key-required`,
+  invalid key = 400 `idempotency-key-invalid`, same key with a different request
+  = 409 `idempotency-key-reused`; replays carry `Idempotency-Replayed: true`;
+  the key is GLOBAL (fingerprint = method + path + body hash). List GETs page
+  (`limit` + keyset `cursor`, body `{items,nextCursor}`) and reject undeclared
+  query parameters with 400 `unknown-query-parameter`.
 - Optimistic concurrency: bodies carry `version`, single-resource responses
   carry `ETag: "<version>"`; an action POST may send `If-Match` (stale = 412
   `version-mismatch`); a lost database race is 409 `concurrent-modification`.
