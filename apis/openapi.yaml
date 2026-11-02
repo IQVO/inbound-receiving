@@ -102,7 +102,7 @@ paths:
         the identity; registering an existing number is 409
         `asn-already-exists`. `lines` is non-empty, `lineNo` runs exactly
         `1..n` in order, SKUs are unique across lines and every `expectedQty`
-        is positive. When `PRODUCT_MODE=kafka` an unknown SKU is 422
+        is positive. An unknown SKU (not in the `known_skus` local copy) is 422
         `unknown-sku`. Publishes `ASNRegistered`.
       tags: [ASNs]
       parameters:
@@ -305,7 +305,7 @@ paths:
         in `Booked` or `CheckedIn` may not overlap on one door: 409
         `door-window-overlap`. A covered ASN that does not exist is 422
         `unknown-asn`; one that is `Closed` or `Cancelled` is 409
-        `asn-not-receivable`. When `DOCK_DOOR_MODE=kafka` a door that is not an
+        `asn-not-receivable`. A door that is not a known
         inbound dock is 422 `unknown-dock-door`. Publishes
         `DockAppointmentBooked`.
       tags: [Appointments]
@@ -939,8 +939,9 @@ paths:
         The inbound dock doors this service knows from facility-layout events
         (ADR 0003): doors registered with `role=Dock` and `dockFlow` of
         `Inbound` or `Both`, minus decommissioned ones, in ascending door-code
-        order, a page at a time. `mode` is the current `DOCK_DOOR_MODE`; in
-        `permissive` the list is informational and any door code can be booked.
+        order, a page at a time. `mode` is always `kafka`: the shipped
+        binary refuses `DOCK_DOOR_MODE=permissive`/`off` at boot, so only the
+        doors in this list can be booked.
       tags: [Docks]
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -1169,8 +1170,10 @@ components:
       in: header
       required: false
       description: |
-        The `ETag` the caller last saw. When it no longer matches the current
-        version the request is refused with 412 `version-mismatch`.
+        The `ETag` the caller last saw (quoted or bare integer >= 1). When it no
+        longer matches the current version the request is refused with 412
+        `version-mismatch`; an empty value or `*` skips the check and any
+        other value is 400 `malformed-request`.
       schema:
         type: string
       example: '"2"'
@@ -1397,8 +1400,8 @@ components:
     Unprocessable:
       description: |
         The request is well-formed but refers to something that does not hold:
-        `unknown-sku` (`PRODUCT_MODE=kafka` only), `unknown-dock-door`
-        (`DOCK_DOOR_MODE=kafka` only), `unknown-asn`, `unknown-appointment`,
+        `unknown-sku`, `unknown-dock-door`,
+        `unknown-asn`, `unknown-appointment`,
         `asn-not-on-appointment`, `line-not-on-asn`, `invalid-sscc`,
         `duplicate-sscc`, `homogeneous-carton-mixed`, `carton-contents-mismatch`,
         `scan-kind-mismatch`, `unsupported-pack-level`,
@@ -1503,6 +1506,11 @@ components:
           minLength: 1
           maxLength: 64
           description: Non-blank supplier reference.
+        ownerRef:
+          type: string
+          maxLength: 64
+          pattern: "^[A-Za-z0-9._-]*$"
+          description: Optional opaque tenant tag; invalid is 400 `invalid-owner-ref`. Copied to the events, never interpreted.
         expectedArrival:
           type: string
           format: date-time
@@ -1512,6 +1520,11 @@ components:
           minItems: 1
           items:
             $ref: "#/components/schemas/AsnLine"
+        cartons:
+          type: array
+          description: Optional carton manifest (a flat ASN has none). Cartons can only be announced here.
+          items:
+            $ref: "#/components/schemas/AsnCarton"
     CartonKind:
       type: string
       description: |
@@ -1898,7 +1911,7 @@ components:
           format: int64
     Receipt:
       type: object
-      required: [receiptId, asnNumber, state, lines, openedAt, discrepancies, version]
+      required: [receiptId, asnNumber, state, lines, openedAt, discrepancies, cartonDiscrepancies, version]
       properties:
         receiptId:
           type: string
@@ -1973,8 +1986,8 @@ components:
       properties:
         mode:
           type: string
-          description: The current `DOCK_DOOR_MODE`.
-          enum: [kafka, permissive]
+          description: The runtime mode of the dock-door local copy; the service only runs in `kafka` mode.
+          enum: [kafka]
         items:
           type: array
           items:
@@ -1986,7 +1999,7 @@ components:
     Problem:
       type: object
       description: RFC 7807 problem document used for every non-2xx response.
-      required: [type, title, status, detail]
+      required: [type, title, status, detail, instance]
       properties:
         type:
           type: string

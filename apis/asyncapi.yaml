@@ -26,12 +26,14 @@ info:
 
     **Consumed (ADR 0003).** `ProductRegistered` from
     `warehouse.product-master.events` feeds the `known_skus` local copy
-    (`PRODUCT_MODE`, group from env `PRODUCT_CONSUMER_GROUP`).
+    (group from env `PRODUCT_CONSUMER_GROUP`); `ProductPackLevelDeclared` and
+    `ProductPackLevelRetired` from the same topic feed the packaging view
+    (group from env `PACKAGING_CONSUMER_GROUP`).
     `LocationSlotRegistered` and `LocationSlotDecommissioned` from
     `warehouse.facility.events` feed the `dock_doors` local copy
-    (`DOCK_DOOR_MODE`, group from env `DOCK_DOOR_CONSUMER_GROUP`). Both modes
-    default to `permissive` (consumer not started); a `kafka` mode with an
-    unset group is a boot error.
+    (group from env `DOCK_DOOR_CONSUMER_GROUP`). The three consumers always
+    run: `PRODUCT_MODE` / `DOCK_DOOR_MODE` accept only `kafka` (or unset) and
+    `permissive` / `off` are boot errors, as is an unset group variable.
 
     **Analytics (ADR 0006).** The same eleven events are ALSO written, in the
     same transaction, to `warehouse.inbound-receiving.analytics` with the same
@@ -162,7 +164,7 @@ channels:
     description: |
       product-master's integration topic. `ProductRegistered` feeds the
       `known_skus` local copy (ADR 0003, group from env `PRODUCT_CONSUMER_GROUP`,
-      started only when `PRODUCT_MODE=kafka`); `ProductPackLevelDeclared` and
+      always running); `ProductPackLevelDeclared` and
       `ProductPackLevelRetired` feed the packaging view (group from env
       `PACKAGING_CONSUMER_GROUP`). Every other type on the topic is ignored.
     publish:
@@ -185,8 +187,7 @@ channels:
       facility-layout's integration topic. Consumed ONLY for
       `LocationSlotRegistered` and `LocationSlotDecommissioned` (ADR 0003),
       into the `dock_doors` local copy, with a stable consumer group read from
-      env `DOCK_DOOR_CONSUMER_GROUP`; the consumer is started only when
-      `DOCK_DOOR_MODE=kafka`. Every other type on the topic is ignored. Key =
+      env `DOCK_DOOR_CONSUMER_GROUP`; the consumer always runs. Every other type on the topic is ignored. Key =
       `locationCode`.
     publish:
       operationId: consumeDockDoorEvents
