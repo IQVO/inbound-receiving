@@ -29,3 +29,4 @@ the authority; ADR bodies are never edited after acceptance.
 | [0015](./0015-carton-discrepancies-are-part-of-the-receipt-read-model.md) | Carton discrepancies are part of the receipt read model | Proposed (2026-10-24); amends 0014 |
 | [0016](./0016-a2a-inbound-adapter.md) | A2A inbound adapter (read-only, unauthenticated, additive) | Accepted (2026-10-29) |
 | [0017](./0017-fleet-rest-api-guideline-cutover.md) | Fleet REST API guideline cutover (noun routes, keyed POSTs, 409 reuse, keyset paging) | Accepted (2026-11-01) |
+| [0018](./0018-agent-authority-levels-and-complete-mcp-surface.md) | Agent authority levels and complete MCP surface (every tool/skill L1, stateless handler, receipt resource, receiving SOP prompt) | Accepted (2026-11-02) |
