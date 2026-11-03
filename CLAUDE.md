@@ -9,6 +9,7 @@ to, and not including, stock placement: the supplier's advance ship notice
 closes. Good units are handed to `inventory-storage` as events; stow stays
 there. It ships four binaries (`cmd/api` REST + outbox relay + two local-copy
 consumers, `cmd/mcp` read-only MCP, `cmd/inbound-projector` and
+ Agent authority: every MCP tool and A2A skill declares a level (`com.warehouse/authority` _meta / `authority:L<n>` skill tag; L1 read, L2 recommend, L3 write - ADR 0018); the MCP Streamable HTTP handler is stateless and answers the 2026-07-28 revision.
 `cmd/inbound-reports` for the analytics read side) and the `web/`
 micro-frontend remote `inbound_mfe`.
 
