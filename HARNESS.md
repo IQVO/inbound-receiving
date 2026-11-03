@@ -36,6 +36,7 @@ three regulation categories: **maintainability**, **architecture fitness**,
 | `coverage` (90% gate) | maintainability | computational | pre-push, PR | yes | minutes |
 | `bdd` (godog/Gherkin) | behaviour | computational | pre-push, PR | yes | seconds |
 | `arch-test` (arch-go fitness) | architecture fitness | computational | pre-push, PR | yes | seconds |
+| `mcp_authority_fitness_test.go` (agent authority + surface sensor, AS-1/AS-3) | architecture fitness | computational | pre-push, PR (`arch-test`) | yes | seconds |
 | `integration` (testcontainers) | behaviour | computational | PR | yes | minutes |
 | `mutation-fast` (gremlins, one aggregate) | maintainability | computational | PR | yes | ~1 min |
 | `mutation` (gremlins, full domain) | maintainability | computational | weekly schedule | no (advisory report) | tens of minutes |

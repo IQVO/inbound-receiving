@@ -95,7 +95,7 @@ func Card(cfg Config) *a2a.AgentCard {
 				ID:          skillAsnReceivingStatus,
 				Name:        "Receiving status of an ASN",
 				Description: "Composed read for one advance ship notice by asnNumber: the ASN (supplierRef, expectedArrival when announced, state Registered, Receiving, Closed or Cancelled, lines with expectedQty) and the receipts counted against it (state Open or Closed, door and appointment when not a walk-in, per-line receivedGood and receivedDamaged, and the discrepancies Short, Over or Damaged: provisional while the receipt is Open, final once Closed). Answers a 404 problem for an unknown ASN. Persists nothing.",
-				Tags:        []string{"inbound", "asn", "receipt", "read"},
+				Tags:        []string{"inbound", "asn", "receipt", "read", "authority:L1"},
 				InputModes:  []string{modeJSON},
 				Examples: []string{
 					`{"skill":"asn_receiving_status","arguments":{"asnNumber":"ASN-1001"}}`,
@@ -105,7 +105,7 @@ func Card(cfg Config) *a2a.AgentCard {
 				ID:          skillDockSchedule,
 				Name:        "Dock appointment schedule",
 				Description: "Read the carrier dock appointments in ascending window-start order, optionally only those at one door, in one state (Booked, CheckedIn, Completed or Cancelled) and/or overlapping a from/to range (RFC 3339 instants: from keeps appointments whose window ends after it, to those whose window starts before it). Each entry carries appointmentId, doorCode, carrier, windowStart, windowEnd (UTC), the asnNumbers it covers and its state. At most limit entries (1..100, default 50) are returned; truncated is true when more exist, so narrow the range instead of paging. Persists nothing.",
-				Tags:        []string{"inbound", "dock", "appointment", "read"},
+				Tags:        []string{"inbound", "dock", "appointment", "read", "authority:L1"},
 				InputModes:  []string{modeJSON},
 				Examples: []string{
 					`{"skill":"dock_schedule","arguments":{}}`,
