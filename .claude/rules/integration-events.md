@@ -72,21 +72,31 @@ This repo's ADR: `docs/adr/0004-cloudevents-envelope-and-type-catalogue.md`.
 ### Published types
 
 Topic `warehouse.inbound-receiving.events`. The `<entity>` segment is the
-raising aggregate, lowercase, no separators: `asn`, `dockappointment`,
-`receipt`. `subject` is the aggregate id; the Kafka key is shown per row.
+raising aggregate, lowercase, no separators: `asn`, `receipt` (the
+`dockappointment` entity is retired: ADR 0019, see below). `subject` is the aggregate id; the Kafka key is shown per row.
 `data` is snake_case, optional fields are omitted when unset.
 
 | `type` | Kafka key | `dataschema` |
 | --- | --- | --- |
 | `com.warehouse.wms.inbound-receiving.asn.ASNRegistered` | `asn_number` | `urn:warehouse:inbound-receiving:events:ASNRegistered:v1` |
 | `com.warehouse.wms.inbound-receiving.asn.ASNCancelled` | `asn_number` | `urn:warehouse:inbound-receiving:events:ASNCancelled:v1` |
-| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked` | `appointment_id` | `urn:warehouse:inbound-receiving:events:DockAppointmentBooked:v1` |
-| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCheckedIn` | `appointment_id` | `urn:warehouse:inbound-receiving:events:DockAppointmentCheckedIn:v1` |
-| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled` | `appointment_id` | `urn:warehouse:inbound-receiving:events:DockAppointmentCancelled:v1` |
-| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCompleted` | `appointment_id` | `urn:warehouse:inbound-receiving:events:DockAppointmentCompleted:v1` |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptOpened` | `asn_number` | `urn:warehouse:inbound-receiving:events:ReceiptOpened:v1` |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived` | `asn_number` | `urn:warehouse:inbound-receiving:events:ReceiptLineReceived:v1` |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptClosed` | `asn_number` | `urn:warehouse:inbound-receiving:events:ReceiptClosed:v1` |
+
+**Retired (ADR 0019).** The four `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointment{Booked,CheckedIn,Cancelled,Completed}`
+types are no longer raised; dock-scheduling owns the appointment. Only the stage B
+command `api republish-appointments` still enqueues them (key `appointment_id`,
+`dataschema` `urn:warehouse:inbound-receiving:events:<EventName>:v1`) so dock-scheduling's
+importer can rebuild its state; the encoders go at stage E.
+
+### Consumed from dock-scheduling (topic `warehouse.dock-scheduling.events`)
+
+`com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked` and
+`...DockAppointmentCancelled` only, dispatched on the full type string, group
+`DOCK_APPOINTMENT_CONSUMER_GROUP` (required, always on). They feed the
+`appointments` local copy, applied only when the event `version` is greater than the
+stored one, claimed on the CloudEvents id, and raising NO event (no loop).
 
 `ReceiptLineReceived` is the handover event inventory-storage consumes (Good
 quantities only, ADR 0003). `ReceiptClosed.discrepancies` is present and `[]`
