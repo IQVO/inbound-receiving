@@ -125,8 +125,10 @@ func TestMCPAgainstPostgres_ReadsWhatTheAPIWroteAndNeverWrites(t *testing.T) {
 
 	receiptID := seedThroughWriteUseCases(t, url)
 	before := countOutbox(t, url)
-	if before < 4 {
-		t.Fatalf("outbox rows after seeding = %d, want the ASN, appointment and receipt events", before)
+	// The ASN-1 and ASN-2 registrations and the receipt opening; the appointment
+	// arrives as a copy (ADR 0019) and raises no event.
+	if before != 3 {
+		t.Fatalf("outbox rows after seeding = %d, want 3 (two ASNs and the receipt opening)", before)
 	}
 
 	ct, st := sdk.NewInMemoryTransports()
