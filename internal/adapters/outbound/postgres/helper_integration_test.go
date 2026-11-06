@@ -101,3 +101,30 @@ func startPostgresPool(t *testing.T) *pgxpool.Pool {
 	t.Cleanup(pool.Close)
 	return pool
 }
+
+// startUnmigratedPool is startPostgresPool without the migrations, for tests
+// that step the schema themselves. It also returns the database URL.
+func startUnmigratedPool(t *testing.T) (*pgxpool.Pool, string) {
+	t.Helper()
+	ctx := context.Background()
+	pgOnce.Do(startContainer)
+	if pgStartErr != nil {
+		t.Fatalf("start postgres container: %v", pgStartErr)
+	}
+	name := fmt.Sprintf("itest_%d", dbCounter.Add(1))
+	admin, err := pgx.Connect(ctx, pgAdminURL)
+	if err != nil {
+		t.Fatalf("connect admin: %v", err)
+	}
+	defer admin.Close(ctx)
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+		t.Fatalf("create database: %v", err)
+	}
+	url := databaseURL(t, name)
+	pool, err := postgres.NewPool(ctx, url)
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool, url
+}

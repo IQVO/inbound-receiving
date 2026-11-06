@@ -11,12 +11,13 @@ import (
 
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
-	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
 
-// Writer bundles the ports every write use case needs.
+// Writer bundles the ports every write use case needs. Appointments is the
+// read side of the local copy (OpenReceipt validates against it); this
+// context never writes an appointment from a use case (ADR 0019).
 type Writer struct {
 	Asns         ports.AsnRepository
 	Appointments ports.AppointmentRepository
@@ -51,15 +52,6 @@ func (w Writer) saveAsn(ctx context.Context, a *asn.Asn, loadedVersion int64, ev
 		return err
 	}
 	msgs, err := w.Encoder.EncodeAsn(events...)
-	return w.enqueue(ctx, msgs, err)
-}
-
-// saveAppointment saves d guarded by loadedVersion and enqueues its events.
-func (w Writer) saveAppointment(ctx context.Context, d *appointment.DockAppointment, loadedVersion int64, events []appointment.Event) error {
-	if err := w.Appointments.Save(ctx, d, loadedVersion); err != nil {
-		return err
-	}
-	msgs, err := w.Encoder.EncodeAppointment(events...)
 	return w.enqueue(ctx, msgs, err)
 }
 

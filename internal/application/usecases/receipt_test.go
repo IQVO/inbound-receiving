@@ -116,14 +116,11 @@ func TestClosedReceiptRefusesFurtherChanges(t *testing.T) {
 	wantErr(t, err, receipt.ErrReceiptClosed)
 }
 
-func TestReceiptFromACheckedInAppointmentCompletesItOnClose(t *testing.T) {
+func TestReceiptFromAnAppointmentTakesItsDoorAndLeavesItAloneOnClose(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld()
 	w.registerAsn("ASN-1", "SKU-1")
 	d := w.book("DOOR-1", windowAt(w, 1), "ASN-1")
-	w.clock.now = windowAt(w, 1)
-	_, err := (&usecases.CheckInAppointment{Writer: w.writer}).Handle(ctx, usecases.AppointmentActionCommand{AppointmentID: string(d.ID())})
-	wantNoErr(t, err)
 
 	r, err := (&usecases.OpenReceipt{Writer: w.writer}).Handle(ctx, usecases.OpenReceiptCommand{AsnNumber: "ASN-1", AppointmentID: string(d.ID())})
 	wantNoErr(t, err)
@@ -133,13 +130,32 @@ func TestReceiptFromACheckedInAppointmentCompletesItOnClose(t *testing.T) {
 	before := len(w.outbox.msgs)
 	_, err = (&usecases.CloseReceipt{Writer: w.writer}).Handle(ctx, usecases.CloseReceiptCommand{ReceiptID: string(r.ID())})
 	wantNoErr(t, err)
-	want := []string{"dockappointment.DockAppointmentCompleted", "receipt.ReceiptClosed"}
+	// ADR 0019: closing no longer completes the appointment nor raises
+	// DockAppointmentCompleted; the door release in yard-management does.
+	want := []string{"receipt.ReceiptClosed"}
 	if got := w.eventTypes()[before:]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("close events = %v, want %v", got, want)
 	}
 	stored, _ := w.appointments.Get(ctx, d.ID())
-	if stored.State() != appointment.Completed {
-		t.Fatalf("appointment state = %s", stored.State())
+	if stored.State() != appointment.Booked || stored.Version() != d.Version() {
+		t.Fatalf("appointment = %s v%d, want it untouched (Booked v%d)", stored.State(), stored.Version(), d.Version())
+	}
+}
+
+func TestReceiptOpensOnEveryNotCancelledAppointmentState(t *testing.T) {
+	// A copy fed by dock-scheduling is Booked (check-in is not consumed) and a
+	// legacy row can be in any state but Cancelled.
+	for _, state := range []appointment.State{appointment.Booked, appointment.CheckedIn, appointment.Completed} {
+		t.Run(string(state), func(t *testing.T) {
+			w := newWorld()
+			w.registerAsn("ASN-1", "SKU-1")
+			d := w.seedAppointment(state, 0, "DOOR-9", windowAt(w, 1), "ASN-1")
+			r, err := (&usecases.OpenReceipt{Writer: w.writer}).Handle(context.Background(), usecases.OpenReceiptCommand{AsnNumber: "ASN-1", AppointmentID: string(d.ID())})
+			wantNoErr(t, err)
+			if r.DoorCode() != "DOOR-9" {
+				t.Fatalf("door = %s", r.DoorCode())
+			}
+		})
 	}
 }
 
@@ -165,12 +181,17 @@ func TestOpenReceiptAppointmentRefusals(t *testing.T) {
 	w.registerAsn("ASN-1", "SKU-1")
 	w.registerAsn("ASN-2", "SKU-2")
 	d := w.book("DOOR-1", windowAt(w, 1), "ASN-2")
+	cancelled := w.seedAppointment(appointment.Cancelled, 2, "DOOR-1", windowAt(w, 5), "ASN-2")
 	open := &usecases.OpenReceipt{Writer: w.writer}
 
 	_, err := open.Handle(ctx, usecases.OpenReceiptCommand{AsnNumber: "ASN-1", AppointmentID: string(d.ID())})
 	wantErr(t, err, usecases.ErrAsnNotOnAppointment)
-	_, err = open.Handle(ctx, usecases.OpenReceiptCommand{AsnNumber: "ASN-2", AppointmentID: string(d.ID())})
-	wantErr(t, err, usecases.ErrAppointmentNotCheckedIn)
+	_, err = open.Handle(ctx, usecases.OpenReceiptCommand{AsnNumber: "ASN-2", AppointmentID: string(cancelled.ID())})
+	wantErr(t, err, usecases.ErrAppointmentCancelled)
+	// Covering is checked before the state, so a cancelled appointment that
+	// does not cover the ASN is reported as not covering it.
+	_, err = open.Handle(ctx, usecases.OpenReceiptCommand{AsnNumber: "ASN-1", AppointmentID: string(cancelled.ID())})
+	wantErr(t, err, usecases.ErrAsnNotOnAppointment)
 }
 
 func TestOneOpenReceiptPerAsn(t *testing.T) {

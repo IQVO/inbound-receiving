@@ -2,7 +2,6 @@ package kafka
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"time"
 
@@ -122,41 +121,34 @@ func (c *PackagingConsumer) HandleMessage(ctx context.Context, value []byte) err
 	}
 }
 
+var (
+	declaredSpec = eventSpec[packLevelDeclaredData]{
+		kind: "ProductPackLevelDeclared", processed: "pack level declared processed",
+		attrs: func(d packLevelDeclaredData) []any { return []any{"sku", d.SKU, "level", d.Level, logGTIN, d.GTIN} },
+	}
+	retiredSpec = eventSpec[packLevelRetiredData]{
+		kind: "ProductPackLevelRetired", processed: "pack level retired processed",
+		attrs: func(d packLevelRetiredData) []any { return []any{logGTIN, d.GTIN} },
+	}
+)
+
+const logGTIN = "gtin"
+
 func (c *PackagingConsumer) declared(ctx context.Context, logger *slog.Logger, id string, decode func(*packLevelDeclaredData) error) error {
-	var data packLevelDeclaredData
-	if err := decode(&data); err != nil {
-		logger.WarnContext(ctx, "skipping a malformed ProductPackLevelDeclared payload", "event_id", id, "error", err)
-		return nil
-	}
-	outcome, err := c.Declared.Handle(ctx, id, usecases.PackLevelDeclared{
-		SKU: data.SKU, Level: data.Level, GTIN: data.GTIN, ChildGTIN: data.ChildGTIN, QtyOfChild: data.QtyOfChild,
-		UnitsPerPack: data.UnitsPerPack, EffectiveFrom: data.EffectiveFrom, Version: data.Version,
+	return applyEvent(ctx, logger, id, declaredSpec, decode, c.applyDeclared)
+}
+
+func (c *PackagingConsumer) applyDeclared(ctx context.Context, id string, d packLevelDeclaredData) (usecases.Outcome, error) {
+	return c.Declared.Handle(ctx, id, usecases.PackLevelDeclared{
+		SKU: d.SKU, Level: d.Level, GTIN: d.GTIN, ChildGTIN: d.ChildGTIN, QtyOfChild: d.QtyOfChild,
+		UnitsPerPack: d.UnitsPerPack, EffectiveFrom: d.EffectiveFrom, Version: d.Version,
 	})
-	if errors.Is(err, usecases.ErrInvalidEvent) {
-		logger.WarnContext(ctx, "skipping an invalid ProductPackLevelDeclared", "event_id", id, "gtin", data.GTIN, "error", err)
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	logger.InfoContext(ctx, "pack level declared processed", "event_id", id, "sku", data.SKU, "level", data.Level, "outcome", string(outcome))
-	return nil
 }
 
 func (c *PackagingConsumer) retired(ctx context.Context, logger *slog.Logger, id string, decode func(*packLevelRetiredData) error) error {
-	var data packLevelRetiredData
-	if err := decode(&data); err != nil {
-		logger.WarnContext(ctx, "skipping a malformed ProductPackLevelRetired payload", "event_id", id, "error", err)
-		return nil
-	}
-	outcome, err := c.Retired.Handle(ctx, id, data.GTIN, data.EffectiveTo, data.Version)
-	if errors.Is(err, usecases.ErrInvalidEvent) {
-		logger.WarnContext(ctx, "skipping an invalid ProductPackLevelRetired", "event_id", id, "gtin", data.GTIN, "error", err)
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	logger.InfoContext(ctx, "pack level retired processed", "event_id", id, "gtin", data.GTIN, "outcome", string(outcome))
-	return nil
+	return applyEvent(ctx, logger, id, retiredSpec, decode, c.applyRetired)
+}
+
+func (c *PackagingConsumer) applyRetired(ctx context.Context, id string, d packLevelRetiredData) (usecases.Outcome, error) {
+	return c.Retired.Handle(ctx, id, d.GTIN, d.EffectiveTo, d.Version)
 }

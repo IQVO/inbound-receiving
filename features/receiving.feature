@@ -1,7 +1,8 @@
 Feature: Receive goods against an ASN
   A receipt counts what physically arrived against the ASN lines, Good and
   Damaged apart. Closing it compares against the expectation, closes the ASN
-  and completes the linked appointment in one unit of work, and publishes the discrepancies.
+  and publishes the discrepancies. A receipt may name the appointment dock-scheduling
+  booked; closing it no longer completes the appointment (ADR 0019).
 
   Background:
     Given the ASN "ASN-1" is registered
@@ -95,27 +96,33 @@ Feature: Receive goods against an ASN
     Then the response status is 409
     And the problem type is "receipt-closed"
 
-  Scenario: Closing a receipt of an appointment completes the appointment
+  Scenario: Closing a receipt of an appointment leaves the appointment alone
     Given an appointment at door "DOOR-1" from "2026-10-09T08:00:00Z" to "2026-10-09T10:00:00Z" covers the ASN "ASN-1"
-    And the clock is at "2026-10-09T08:00:00Z"
-    And the appointment is checked in
     And a receipt is open for the ASN "ASN-1" on the appointment
     When I POST "/receipts/{receipt}/closures" with body ''
     Then the response status is 200
     When I GET "/appointments/{appointment}"
-    Then the response field "state" is "Completed"
+    Then the response field "state" is "Booked"
+    And the response field "version" is "1"
+    And the outbox event types are "asn.ASNRegistered, receipt.ReceiptOpened, receipt.ReceiptClosed"
 
-  Scenario: A receipt needs a checked-in appointment
+  Scenario: A receipt takes its door from the appointment
+    Given an appointment at door "DOOR-7" from "2026-10-09T08:00:00Z" to "2026-10-09T10:00:00Z" covers the ASN "ASN-1"
+    When I POST "/receipts" with body '{"asnNumber":"ASN-1","appointmentId":"{appointment}"}'
+    Then the response status is 201
+    And the response field "doorCode" is "DOOR-7"
+    And the response field "appointmentId" is present
+
+  Scenario: A receipt cannot be opened on a cancelled appointment
     Given an appointment at door "DOOR-1" from "2026-10-09T08:00:00Z" to "2026-10-09T10:00:00Z" covers the ASN "ASN-1"
+    And dock-scheduling cancels the appointment
     When I POST "/receipts" with body '{"asnNumber":"ASN-1","appointmentId":"{appointment}"}'
     Then the response status is 409
-    And the problem type is "appointment-not-checked-in"
+    And the problem type is "appointment-cancelled"
 
   Scenario: A receipt rejects an ASN that the appointment does not cover
     Given the ASN "ASN-2" is registered
     And an appointment at door "DOOR-1" from "2026-10-09T08:00:00Z" to "2026-10-09T10:00:00Z" covers the ASN "ASN-1"
-    And the clock is at "2026-10-09T08:00:00Z"
-    And the appointment is checked in
     When I POST "/receipts" with body '{"asnNumber":"ASN-2","appointmentId":"{appointment}"}'
     Then the response status is 422
     And the problem type is "asn-not-on-appointment"

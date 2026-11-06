@@ -42,6 +42,14 @@ type doorCopy interface {
 	ports.DockDoorStore
 }
 
+// appointmentCopy is the appointments local copy of dock-scheduling's
+// appointments, read by the receiving use cases and the deprecated GETs and
+// written by the dock-appointment consumer (the same adapter serves both).
+type appointmentCopy interface {
+	ports.AppointmentRepository
+	ports.AppointmentStore
+}
+
 // packagingView is the PackagingView read by the receiving use cases and
 // written by the packaging consumer (the same adapter serves both).
 type packagingView interface {
@@ -52,7 +60,7 @@ type packagingView interface {
 // adapters is the set of outbound adapters the composition root wires.
 type adapters struct {
 	asns         ports.AsnRepository
-	appointments ports.AppointmentRepository
+	appointments appointmentCopy
 	receipts     ports.ReceiptRepository
 	outbox       ports.OutboxRepository
 	outboxStore  outboxrelay.Store
@@ -79,27 +87,24 @@ func (a adapters) writer() usecases.Writer {
 func buildServer(ad adapters, readiness *inboundhttp.Readiness, metrics http.Handler, receiptMetrics ports.ReceiptMetrics) *inboundhttp.Server {
 	w := ad.writer()
 	return &inboundhttp.Server{
-		RegisterAsn:        &usecases.RegisterAsn{Writer: w, SkuMode: usecases.ModeKafka, Skus: ad.skus},
-		CancelAsn:          &usecases.CancelAsn{Writer: w},
-		GetAsn:             &usecases.GetAsn{Asns: ad.asns},
-		GetAsnCartons:      &usecases.GetAsnCartons{Asns: ad.asns, Receipts: ad.receipts},
-		ListAsns:           &usecases.ListAsns{Asns: ad.asns},
-		BookAppointment:    &usecases.BookAppointment{Writer: w, DoorMode: usecases.ModeKafka, Doors: ad.doors},
-		CheckInAppointment: &usecases.CheckInAppointment{Writer: w},
-		CancelAppointment:  &usecases.CancelAppointment{Writer: w},
-		GetAppointment:     &usecases.GetAppointment{Appointments: ad.appointments},
-		ListAppointments:   &usecases.ListAppointments{Appointments: ad.appointments},
-		OpenReceipt:        &usecases.OpenReceipt{Writer: w},
-		ReceiveLine:        (&usecases.ReceiveLine{Writer: w}).WithMetrics(receiptMetrics),
-		ReceiveScan:        (&usecases.ReceiveScan{Writer: w, Packaging: ad.packaging, Limits: cartonLimits(os.Getenv, slog.Default())}).WithMetrics(receiptMetrics),
-		GetCartonLabel:     &usecases.GetCartonLabel{Receipts: ad.receipts},
-		CloseReceipt:       &usecases.CloseReceipt{Writer: w},
-		GetReceipt:         &usecases.GetReceipt{Receipts: ad.receipts},
-		ListReceipts:       &usecases.ListReceipts{Receipts: ad.receipts},
-		ListDocks:          &usecases.ListDocks{Doors: ad.doors, Mode: usecases.ModeKafka},
-		Idempotency:        ad.idempotency,
-		Readiness:          readiness,
-		Metrics:            metrics,
+		RegisterAsn:      &usecases.RegisterAsn{Writer: w, SkuMode: usecases.ModeKafka, Skus: ad.skus},
+		CancelAsn:        &usecases.CancelAsn{Writer: w},
+		GetAsn:           &usecases.GetAsn{Asns: ad.asns},
+		GetAsnCartons:    &usecases.GetAsnCartons{Asns: ad.asns, Receipts: ad.receipts},
+		ListAsns:         &usecases.ListAsns{Asns: ad.asns},
+		GetAppointment:   &usecases.GetAppointment{Appointments: ad.appointments},
+		ListAppointments: &usecases.ListAppointments{Appointments: ad.appointments},
+		OpenReceipt:      &usecases.OpenReceipt{Writer: w},
+		ReceiveLine:      (&usecases.ReceiveLine{Writer: w}).WithMetrics(receiptMetrics),
+		ReceiveScan:      (&usecases.ReceiveScan{Writer: w, Packaging: ad.packaging, Limits: cartonLimits(os.Getenv, slog.Default())}).WithMetrics(receiptMetrics),
+		GetCartonLabel:   &usecases.GetCartonLabel{Receipts: ad.receipts},
+		CloseReceipt:     &usecases.CloseReceipt{Writer: w},
+		GetReceipt:       &usecases.GetReceipt{Receipts: ad.receipts},
+		ListReceipts:     &usecases.ListReceipts{Receipts: ad.receipts},
+		ListDocks:        &usecases.ListDocks{Doors: ad.doors, Mode: usecases.ModeKafka},
+		Idempotency:      ad.idempotency,
+		Readiness:        readiness,
+		Metrics:          metrics,
 	}
 }
 

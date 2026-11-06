@@ -14,10 +14,12 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 )
 
-// AppointmentRepo is the pgx-backed ports.AppointmentRepository over
-// appointments and appointment_asns. Save is version-guarded like the other
-// repositories. Everything but the state is immutable after booking, so an
-// update touches the header row only.
+// AppointmentRepo is the pgx-backed appointments local copy over
+// appointments and appointment_asns (ADR 0019): the read side
+// (ports.AppointmentRepository), the consumer's write side
+// (ports.AppointmentStore) and the stage B backfill's reader
+// (ports.AppointmentHistory). Both writes are version-guarded: a change
+// applies only when its version is greater than the stored one.
 type AppointmentRepo struct {
 	pool *pgxpool.Pool
 }
@@ -25,7 +27,11 @@ type AppointmentRepo struct {
 // NewAppointmentRepo constructs an AppointmentRepo over pool.
 func NewAppointmentRepo(pool *pgxpool.Pool) *AppointmentRepo { return &AppointmentRepo{pool: pool} }
 
-var _ ports.AppointmentRepository = (*AppointmentRepo)(nil)
+var (
+	_ ports.AppointmentRepository = (*AppointmentRepo)(nil)
+	_ ports.AppointmentStore      = (*AppointmentRepo)(nil)
+	_ ports.AppointmentHistory    = (*AppointmentRepo)(nil)
+)
 
 const appointmentColumns = `id, door_code, carrier, window_start, window_end, state, version`
 
@@ -90,43 +96,101 @@ func loadAppointmentAsns(ctx context.Context, q querier, ids []string) (map[stri
 	return out, nil
 }
 
-// Save implements ports.AppointmentRepository (see AsnRepo.Save for the
-// version-guard contract).
-func (r *AppointmentRepo) Save(ctx context.Context, d *appointment.DockAppointment, loadedVersion int64) error {
-	return inTx(ctx, r.pool, func(q querier) error {
-		if loadedVersion == 0 {
-			return insertAppointment(ctx, q, d)
-		}
-		tag, err := q.Exec(ctx, `UPDATE appointments SET state = $2, version = $3, updated_at = now()
-			WHERE id = $1 AND version = $4`, string(d.ID()), string(d.State()), d.Version(), loadedVersion)
+// ApplyBooked implements ports.AppointmentStore. A new id is inserted as
+// Booked; a stored one gets its door, carrier, window, ASNs and version
+// refreshed ONLY when the version is greater, and keeps its state, so a
+// Booked event can never revive a Cancelled row or downgrade a legacy
+// CheckedIn / Completed one.
+func (r *AppointmentRepo) ApplyBooked(ctx context.Context, d *appointment.DockAppointment) (bool, error) {
+	applied := false
+	err := inTx(ctx, r.pool, func(q querier) error {
+		w := d.Window()
+		tag, err := q.Exec(ctx, `INSERT INTO appointments (`+appointmentColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (id) DO UPDATE SET door_code = EXCLUDED.door_code, carrier = EXCLUDED.carrier,
+				window_start = EXCLUDED.window_start, window_end = EXCLUDED.window_end,
+				version = EXCLUDED.version, updated_at = now()
+			WHERE appointments.version < EXCLUDED.version`,
+			string(d.ID()), string(d.DoorCode()), d.Carrier(), w.Start(), w.End(), string(d.State()), d.Version())
 		if err != nil {
-			return fmt.Errorf("update appointment %s: %w", d.ID(), err)
+			return fmt.Errorf("upsert appointment %s: %w", d.ID(), err)
 		}
 		if tag.RowsAffected() != 1 {
-			return repository.ErrConcurrentModification
+			return nil
+		}
+		applied = true
+		if _, err := q.Exec(ctx, `DELETE FROM appointment_asns WHERE appointment_id = $1`, string(d.ID())); err != nil {
+			return fmt.Errorf("replace appointment asns %s: %w", d.ID(), err)
+		}
+		for i, n := range d.AsnNumbers() {
+			if _, err := q.Exec(ctx, `INSERT INTO appointment_asns (appointment_id, position, asn_number) VALUES ($1, $2, $3)`,
+				string(d.ID()), i+1, string(n)); err != nil {
+				return fmt.Errorf("insert appointment asn %s: %w", n, err)
+			}
 		}
 		return nil
 	})
+	return applied, err
 }
 
-func insertAppointment(ctx context.Context, q querier, d *appointment.DockAppointment) error {
-	w := d.Window()
-	tag, err := q.Exec(ctx, `INSERT INTO appointments (`+appointmentColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (id) DO NOTHING`,
-		string(d.ID()), string(d.DoorCode()), d.Carrier(), w.Start(), w.End(), string(d.State()), d.Version())
+// ApplyCancelled implements ports.AppointmentStore.
+func (r *AppointmentRepo) ApplyCancelled(ctx context.Context, id appointment.ID, version int64) (bool, error) {
+	tag, err := queryFor(ctx, r.pool).Exec(ctx, `UPDATE appointments SET state = 'Cancelled', version = $2, updated_at = now()
+		WHERE id = $1 AND version < $2`, string(id), version)
 	if err != nil {
-		return fmt.Errorf("insert appointment %s: %w", d.ID(), err)
+		return false, fmt.Errorf("cancel appointment %s: %w", id, err)
 	}
-	if tag.RowsAffected() != 1 {
-		return repository.ErrConcurrentModification
+	return tag.RowsAffected() == 1, nil
+}
+
+// ListRecords implements ports.AppointmentHistory. The check-in moment of a
+// Completed row is the opening of its first receipt (a receipt could only be
+// opened on a CheckedIn appointment); NULL when it has none.
+func (r *AppointmentRepo) ListRecords(ctx context.Context, after appointment.ID, limit int) ([]repository.AppointmentRecord, error) {
+	q := queryFor(ctx, r.pool)
+	rows, err := q.Query(ctx, `SELECT a.id, a.door_code, a.carrier, a.window_start, a.window_end, a.state, a.version,
+			a.created_at, a.updated_at,
+			(SELECT min(rc.opened_at) FROM receipts rc WHERE rc.appointment_id = a.id)
+		FROM appointments a WHERE a.id > $1::text ORDER BY a.id LIMIT $2`, string(after), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list appointment records: %w", err)
 	}
-	for i, n := range d.AsnNumbers() {
-		if _, err := q.Exec(ctx, `INSERT INTO appointment_asns (appointment_id, position, asn_number) VALUES ($1, $2, $3)`,
-			string(d.ID()), i+1, string(n)); err != nil {
-			return fmt.Errorf("insert appointment asn %s: %w", n, err)
+	defer rows.Close()
+	type record struct {
+		row                  appointmentRow
+		created, updated     time.Time
+		firstReceiptOpenedAt *time.Time
+	}
+	var page []record
+	ids := make([]string, 0)
+	for rows.Next() {
+		var rec record
+		if err := rows.Scan(append(rec.row.targets(), &rec.created, &rec.updated, &rec.firstReceiptOpenedAt)...); err != nil {
+			return nil, fmt.Errorf("scan appointment record: %w", err)
 		}
+		page = append(page, rec)
+		ids = append(ids, rec.row.id)
 	}
-	return nil
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read appointment records: %w", err)
+	}
+	rows.Close()
+	numbers, err := loadAppointmentAsns(ctx, q, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]repository.AppointmentRecord, 0, len(page))
+	for _, rec := range page {
+		d, err := rec.row.toAppointment(numbers[rec.row.id])
+		if err != nil {
+			return nil, err
+		}
+		tl := appointment.Timeline{BookedAt: rec.created, ChangedAt: rec.updated}
+		if rec.firstReceiptOpenedAt != nil {
+			tl.CheckedInAt = *rec.firstReceiptOpenedAt
+		}
+		out = append(out, repository.AppointmentRecord{Appointment: d, Timeline: tl})
+	}
+	return out, nil
 }
 
 // List implements ports.AppointmentRepository: ascending (window_start, id),
@@ -145,17 +209,6 @@ func (r *AppointmentRepo) List(ctx context.Context, filter repository.Appointmen
 		nullTime(filter.From), nullTime(filter.To), limit)
 	if err != nil {
 		return nil, fmt.Errorf("list appointments: %w", err)
-	}
-	return r.collect(ctx, q, rows)
-}
-
-// ActiveOnDoor implements ports.AppointmentRepository.
-func (r *AppointmentRepo) ActiveOnDoor(ctx context.Context, door appointment.DoorCode) ([]*appointment.DockAppointment, error) {
-	q := queryFor(ctx, r.pool)
-	rows, err := q.Query(ctx, `SELECT `+appointmentColumns+` FROM appointments
-		WHERE door_code = $1 AND state IN ('Booked', 'CheckedIn') ORDER BY window_start, id`, string(door))
-	if err != nil {
-		return nil, fmt.Errorf("active appointments on door %s: %w", door, err)
 	}
 	return r.collect(ctx, q, rows)
 }
@@ -190,18 +243,6 @@ func (r *AppointmentRepo) collect(ctx context.Context, q querier, rows pgx.Rows)
 		out = append(out, d)
 	}
 	return out, nil
-}
-
-// LockDoor implements ports.AppointmentRepository with a transaction-scoped
-// advisory lock keyed by the door: concurrent bookings of one door queue up
-// until the surrounding transaction ends, so the overlap check and the
-// insert are atomic per door. It is a no-op outside a transaction, where the
-// lock would release at once; use cases always call it inside a UnitOfWork.
-func (r *AppointmentRepo) LockDoor(ctx context.Context, door appointment.DoorCode) error {
-	if _, err := queryFor(ctx, r.pool).Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('dock-door:' || $1::text, 0))`, string(door)); err != nil {
-		return fmt.Errorf("lock door %s: %w", door, err)
-	}
-	return nil
 }
 
 func nullTime(t time.Time) *time.Time {

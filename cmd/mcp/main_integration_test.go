@@ -73,10 +73,15 @@ func seedThroughWriteUseCases(t *testing.T, url string) (receiptID string) {
 		t.Fatalf("register asn: %v", err)
 	}
 	start := time.Now().Add(48 * time.Hour).Truncate(time.Hour)
-	if _, err := (&usecases.BookAppointment{Writer: w}).Handle(ctx, usecases.BookAppointmentCommand{
-		DoorCode: "DOOR-1", Carrier: "ACME Freight", WindowStart: start, WindowEnd: start.Add(2 * time.Hour), AsnNumbers: []string{"ASN-1"},
-	}); err != nil {
-		t.Fatalf("book appointment: %v", err)
+	// This context books nothing (ADR 0019): seed the local copy as the
+	// dock-appointment consumer would.
+	appt, err := appointment.Rehydrate("appt-00000000-0000-4000-8000-000000000001", "DOOR-1", "ACME Freight",
+		start, start.Add(2*time.Hour), []string{"ASN-1"}, appointment.Booked, 1)
+	if err != nil {
+		t.Fatalf("seed appointment: %v", err)
+	}
+	if _, err := postgres.NewAppointmentRepo(pool).ApplyBooked(ctx, appt); err != nil {
+		t.Fatalf("store appointment: %v", err)
 	}
 	if _, err := (&usecases.RegisterAsn{Writer: w}).Handle(ctx, usecases.RegisterAsnCommand{
 		AsnNumber: "ASN-2", SupplierRef: "ACME", Lines: []usecases.AsnLineInput{{LineNo: 1, SKU: "SKU-2", ExpectedQty: 3}},

@@ -2,18 +2,15 @@ package appointment
 
 import (
 	"errors"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
-	"github.com/claudioed/inbound-receiving/internal/domain/shared"
 )
 
 const (
 	id1 = "appt-123e4567-e89b-12d3-a456-426614174000"
-	id2 = "appt-223e4567-e89b-12d3-a456-426614174000"
 )
 
 var (
@@ -22,465 +19,260 @@ var (
 	end   = t0.Add(3 * time.Hour)
 )
 
-func book(t *testing.T) *DockAppointment {
+func rehydrate(t *testing.T, state State, version int64) *DockAppointment {
 	t.Helper()
-	d, _, err := Book(id1, "DOOR-1", "ACME Freight", start, end, []string{"ASN-1", "ASN-2"}, t0)
+	d, err := Rehydrate(id1, "DOOR-1", "ACME Freight", start, end, []string{"ASN-1", "ASN-2"}, state, version)
 	if err != nil {
-		t.Fatalf("Book: %v", err)
+		t.Fatalf("Rehydrate: %v", err)
 	}
 	return d
 }
 
-func bookAt(t *testing.T, id, door string, from, to time.Time) *DockAppointment {
-	t.Helper()
-	d, _, err := Book(id, door, "ACME", from, to, []string{"ASN-1"}, t0)
-	if err != nil {
-		t.Fatalf("Book: %v", err)
-	}
-	return d
-}
-
-func onlyEvent(t *testing.T, events []Event) Event {
-	t.Helper()
-	if len(events) != 1 {
-		t.Fatalf("got %d events, want 1: %+v", len(events), events)
-	}
-	return events[0]
-}
-
-func assertHeader(t *testing.T, e Event, name string, at time.Time) {
-	t.Helper()
-	if e.EventName() != name || e.AppointmentID() != id1 || !e.OccurredAt().Equal(at) || e.OccurredAt().Location() != time.UTC {
-		t.Fatalf("event = %s id=%s at=%v (%v), want %s at %v UTC", e.EventName(), e.AppointmentID(), e.OccurredAt(), e.OccurredAt().Location(), name, at)
-	}
-}
-
-func TestPolicyConstants(t *testing.T) {
-	if MaxWindow != 4*time.Hour {
-		t.Errorf("MaxWindow = %v, want 4h", MaxWindow)
-	}
-	if CheckInLeadTime != 30*time.Minute {
-		t.Errorf("CheckInLeadTime = %v, want 30m", CheckInLeadTime)
-	}
-}
-
-func TestBook(t *testing.T) {
+func TestRehydrate(t *testing.T) {
 	brt := time.FixedZone("BRT", -3*3600)
-	d, events, err := Book(id1, "DOOR-1", "ACME Freight", start.In(brt), end.In(brt), []string{"ASN-1", "ASN-2"}, t0.In(brt))
+	d, err := Rehydrate(id1, "DOOR-1", "ACME Freight", start.In(brt), end.In(brt), []string{"ASN-1", "ASN-2"}, Booked, 7)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.ID() != id1 || d.DoorCode() != "DOOR-1" || d.Carrier() != "ACME Freight" || d.State() != Booked || d.Version() != 1 {
+	if d.ID() != id1 || d.DoorCode() != "DOOR-1" || d.Carrier() != "ACME Freight" || d.State() != Booked || d.Version() != 7 {
 		t.Fatalf("appointment = %+v", d)
 	}
-	assertWindowUTC(t, d.Window())
+	if !d.Window().Start().Equal(start) || d.Window().Start().Location() != time.UTC || !d.Window().End().Equal(end) || d.Window().End().Location() != time.UTC {
+		t.Fatalf("window = %v..%v, want UTC %v..%v", d.Window().Start(), d.Window().End(), start, end)
+	}
 	if got := d.AsnNumbers(); len(got) != 2 || got[0] != "ASN-1" || got[1] != "ASN-2" {
 		t.Fatalf("asn numbers = %v", got)
 	}
-	e, ok := onlyEvent(t, events).(DockAppointmentBooked)
-	if !ok {
-		t.Fatalf("event = %T", events[0])
-	}
-	assertHeader(t, e, "DockAppointmentBooked", t0)
-	if e.DoorCode != "DOOR-1" || e.Carrier != "ACME Freight" || len(e.AsnNumbers) != 2 {
-		t.Fatalf("event = %+v", e)
-	}
-	assertWindowUTC(t, e.Window)
 }
 
-func assertWindowUTC(t *testing.T, w Window) {
-	t.Helper()
-	if !w.Start().Equal(start) || !w.End().Equal(end) || w.Start().Location() != time.UTC || w.End().Location() != time.UTC {
-		t.Fatalf("window = %v - %v", w.Start(), w.End())
+func TestRehydrateAcceptsAWindowInThePastAndVersionZero(t *testing.T) {
+	d, err := Rehydrate(id1, "DOOR-1", "ACME", t0.Add(-48*time.Hour), t0.Add(-47*time.Hour), []string{"ASN-1"}, Completed, 0)
+	if err != nil {
+		t.Fatalf("a legacy row (past window, version 0) must rehydrate: %v", err)
+	}
+	if d.Version() != 0 || d.State() != Completed {
+		t.Fatalf("appointment = %+v", d)
 	}
 }
 
-func TestBookAllowsAWindowStartingNow(t *testing.T) {
-	if _, _, err := Book(id1, "DOOR-1", "ACME", t0, t0.Add(time.Hour), []string{"ASN-1"}, t0); err != nil {
-		t.Fatalf("window starting exactly now rejected: %v", err)
+func TestRehydrateAcceptsALongWindow(t *testing.T) {
+	// dock-scheduling's longest window is a per-site setting: the copy has no cap.
+	if _, err := Rehydrate(id1, "DOOR-1", "ACME", start, start.Add(12*time.Hour), []string{"ASN-1"}, Booked, 1); err != nil {
+		t.Fatalf("a 12h window must rehydrate: %v", err)
 	}
 }
 
-func TestBookRejectsAWindowInThePast(t *testing.T) {
-	d, events, err := Book(id1, "DOOR-1", "ACME", t0.Add(-time.Nanosecond), t0.Add(time.Hour), []string{"ASN-1"}, t0)
-	if !errors.Is(err, ErrWindowInPast) || d != nil || events != nil {
-		t.Fatalf("Book = %v %v %v", d, events, err)
-	}
-}
-
-func TestBookRejects(t *testing.T) {
-	asns := []string{"ASN-1"}
-	cases := []struct {
-		name    string
-		id      string
-		door    string
-		carrier string
-		from    time.Time
-		to      time.Time
-		asns    []string
-		want    error
+func TestRehydrateRejects(t *testing.T) {
+	long := strings.Repeat("x", MaxCarrierLength+1)
+	tests := []struct {
+		name string
+		call func() error
+		want error
 	}{
-		{"bad id", "appt-1", "DOOR-1", "ACME", start, end, asns, ErrInvalidID},
-		{"upper-case uuid", strings.ToUpper(id1), "DOOR-1", "ACME", start, end, asns, ErrInvalidID},
-		{"empty door", id1, "", "ACME", start, end, asns, ErrInvalidDoorCode},
-		{"blank carrier", id1, "DOOR-1", "   ", start, end, asns, ErrInvalidCarrier},
-		{"empty carrier", id1, "DOOR-1", "", start, end, asns, ErrInvalidCarrier},
-		{"long carrier", id1, "DOOR-1", strings.Repeat("c", MaxCarrierLength+1), start, end, asns, ErrInvalidCarrier},
-		{"control carrier", id1, "DOOR-1", "AC\x00ME", start, end, asns, ErrInvalidCarrier},
-		{"leading control carrier", id1, "DOOR-1", "\nACME", start, end, asns, ErrInvalidCarrier},
-		{"end equals start", id1, "DOOR-1", "ACME", start, start, asns, ErrInvalidWindow},
-		{"end before start", id1, "DOOR-1", "ACME", end, start, asns, ErrInvalidWindow},
-		{"window too long", id1, "DOOR-1", "ACME", start, start.Add(MaxWindow + time.Nanosecond), asns, ErrInvalidWindow},
-		{"no asns", id1, "DOOR-1", "ACME", start, end, nil, ErrNoAsns},
-		{"bad asn number", id1, "DOOR-1", "ACME", start, end, []string{"ASN 1"}, asn.ErrInvalidNumber},
-		{"duplicate asn", id1, "DOOR-1", "ACME", start, end, []string{"ASN-1", "ASN-2", "ASN-1"}, ErrDuplicateAsn},
+		{"bad id", func() error { _, e := Rehydrate("nope", "D", "C", start, end, []string{"A"}, Booked, 1); return e }, ErrInvalidID},
+		{"bad door", func() error { _, e := Rehydrate(id1, "", "C", start, end, []string{"A"}, Booked, 1); return e }, ErrInvalidDoorCode},
+		{"blank carrier", func() error { _, e := Rehydrate(id1, "D", "  ", start, end, []string{"A"}, Booked, 1); return e }, ErrInvalidCarrier},
+		{"long carrier", func() error { _, e := Rehydrate(id1, "D", long, start, end, []string{"A"}, Booked, 1); return e }, ErrInvalidCarrier},
+		{"control carrier", func() error { _, e := Rehydrate(id1, "D", "A\nB", start, end, []string{"A"}, Booked, 1); return e }, ErrInvalidCarrier},
+		{"empty window", func() error { _, e := Rehydrate(id1, "D", "C", start, start, []string{"A"}, Booked, 1); return e }, ErrInvalidWindow},
+		{"inverted window", func() error { _, e := Rehydrate(id1, "D", "C", end, start, []string{"A"}, Booked, 1); return e }, ErrInvalidWindow},
+		{"no asns", func() error { _, e := Rehydrate(id1, "D", "C", start, end, nil, Booked, 1); return e }, ErrNoAsns},
+		{"duplicate asn", func() error { _, e := Rehydrate(id1, "D", "C", start, end, []string{"A", "A"}, Booked, 1); return e }, ErrDuplicateAsn},
+		{"bad asn", func() error { _, e := Rehydrate(id1, "D", "C", start, end, []string{""}, Booked, 1); return e }, asn.ErrInvalidNumber},
+		{"unknown state", func() error { _, e := Rehydrate(id1, "D", "C", start, end, []string{"A"}, State("Lost"), 1); return e }, ErrInvalidState},
+		{"negative version", func() error { _, e := Rehydrate(id1, "D", "C", start, end, []string{"A"}, Booked, -1); return e }, ErrInvalidVersion},
 	}
-	for _, tc := range cases {
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			d, events, err := Book(tc.id, tc.door, tc.carrier, tc.from, tc.to, tc.asns, t0)
-			if !errors.Is(err, tc.want) || d != nil || events != nil {
-				t.Fatalf("Book = %v %v %v; want %v", d, events, err, tc.want)
+			if err := tc.call(); !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
 			}
 		})
 	}
 }
 
-func TestBookAcceptsBoundaries(t *testing.T) {
-	long := strings.Repeat("c", MaxCarrierLength)
+func TestRehydrateAcceptsBoundaries(t *testing.T) {
 	door := strings.Repeat("d", MaxDoorCodeLength)
-	if _, _, err := Book(id1, door, long, start, start.Add(MaxWindow), []string{"A"}, t0); err != nil {
-		t.Fatalf("boundary values rejected: %v", err)
-	}
-	if _, _, err := Book(id1, "D", "C", start, start.Add(time.Nanosecond), []string{"A"}, t0); err != nil {
-		t.Fatalf("shortest window rejected: %v", err)
+	carrier := strings.Repeat("c", MaxCarrierLength)
+	if _, err := Rehydrate(id1, door, carrier, start, start.Add(time.Nanosecond), []string{"A"}, Booked, 0); err != nil {
+		t.Fatalf("boundary values must rehydrate: %v", err)
 	}
 }
 
 func TestNewID(t *testing.T) {
-	oracle := regexp.MustCompile(`^appt-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-	for _, v := range []string{id1, id2, "appt-00000000-0000-0000-0000-000000000000", "appt-ffffffff-ffff-ffff-ffff-ffffffffffff", "", "appt-", "rcpt-123e4567-e89b-12d3-a456-426614174000", id1 + "0", " " + id1, "appt-123e4567-e89b-12d3-a456-42661417400g"} {
-		got, err := NewID(v)
-		if (err == nil) != oracle.MatchString(v) {
-			t.Errorf("NewID(%q): err=%v", v, err)
-		}
-		if err == nil && got.String() != v {
-			t.Errorf("NewID(%q) = %q", v, got)
+	if id, err := NewID(id1); err != nil || id.String() != id1 {
+		t.Fatalf("NewID = %q, %v", id, err)
+	}
+	for _, bad := range []string{"", "appt-", "appt-XYZ", "ASN-1", id1 + "x", " " + id1, strings.ToUpper(id1)} {
+		if _, err := NewID(bad); !errors.Is(err, ErrInvalidID) {
+			t.Errorf("NewID(%q) err = %v, want ErrInvalidID", bad, err)
 		}
 	}
 }
 
 func TestNewDoorCode(t *testing.T) {
-	for _, v := range []string{"D", "WH1-DOCK-IN-01", strings.Repeat("d", MaxDoorCodeLength), strings.Repeat("å", MaxDoorCodeLength)} {
-		got, err := NewDoorCode(v)
-		if err != nil || got.String() != v {
-			t.Errorf("NewDoorCode(%q) = %q, %v", v, got, err)
+	for _, ok := range []string{"DOOR-1", "d", strings.Repeat("x", MaxDoorCodeLength)} {
+		if got, err := NewDoorCode(ok); err != nil || got.String() != ok {
+			t.Errorf("NewDoorCode(%q) = %q, %v", ok, got, err)
 		}
 	}
-	for _, v := range []string{"", strings.Repeat("d", MaxDoorCodeLength+1), "DOOR 1", " D", "D\t", "D/1", "D\x00", "\x07D"} {
-		if got, err := NewDoorCode(v); !errors.Is(err, ErrInvalidDoorCode) || got != "" {
-			t.Errorf("NewDoorCode(%q) = %q, %v; want ErrInvalidDoorCode", v, got, err)
+	for _, bad := range []string{"", "a b", "a/b", "a\tb", "a\x00b", strings.Repeat("x", MaxDoorCodeLength+1)} {
+		if _, err := NewDoorCode(bad); !errors.Is(err, ErrInvalidDoorCode) {
+			t.Errorf("NewDoorCode(%q) err = %v, want ErrInvalidDoorCode", bad, err)
 		}
 	}
 }
 
 func TestNewWindow(t *testing.T) {
-	w, err := NewWindow(start, start.Add(MaxWindow))
-	if err != nil || !w.Start().Equal(start) || !w.End().Equal(start.Add(MaxWindow)) {
-		t.Fatalf("window = %+v, %v", w, err)
+	w, err := NewWindow(start, end)
+	if err != nil || !w.Start().Equal(start) || !w.End().Equal(end) {
+		t.Fatalf("NewWindow = %+v, %v", w, err)
 	}
-	if _, err := NewWindow(start, start.Add(MaxWindow+time.Nanosecond)); !errors.Is(err, ErrInvalidWindow) {
-		t.Fatalf("over the limit: %v", err)
-	}
-	if _, err := NewWindow(start, start); !errors.Is(err, ErrInvalidWindow) {
-		t.Fatalf("empty window: %v", err)
-	}
-	if _, err := NewWindow(start, start.Add(-time.Second)); !errors.Is(err, ErrInvalidWindow) {
-		t.Fatalf("inverted window: %v", err)
-	}
-}
-
-func TestWindowOverlaps(t *testing.T) {
-	base, _ := NewWindow(start, start.Add(2*time.Hour))
-	at := func(fromMin, toMin int) Window {
-		w, err := NewWindow(start.Add(time.Duration(fromMin)*time.Minute), start.Add(time.Duration(toMin)*time.Minute))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return w
-	}
-	cases := []struct {
-		name  string
-		other Window
-		want  bool
-	}{
-		{"identical", at(0, 120), true},
-		{"inside", at(30, 60), true},
-		{"containing", at(-30, 150), true},
-		{"overlaps the start", at(-60, 30), true},
-		{"overlaps the end", at(90, 200), true},
-		{"touches the start", at(-60, 0), false},
-		{"touches the end", at(120, 180), false},
-		{"entirely before", at(-120, -60), false},
-		{"entirely after", at(150, 200), false},
-		{"one minute into the start", at(-60, 1), true},
-		{"one minute before the end", at(119, 200), true},
-	}
-	for _, tc := range cases {
-		if got := base.Overlaps(tc.other); got != tc.want {
-			t.Errorf("%s: base.Overlaps(other) = %v, want %v", tc.name, got, tc.want)
-		}
-		if got := tc.other.Overlaps(base); got != tc.want {
-			t.Errorf("%s: other.Overlaps(base) = %v, want %v", tc.name, got, tc.want)
+	for name, c := range map[string][2]time.Time{
+		"empty":    {start, start},
+		"inverted": {end, start},
+	} {
+		if _, err := NewWindow(c[0], c[1]); !errors.Is(err, ErrInvalidWindow) {
+			t.Errorf("%s: err = %v, want ErrInvalidWindow", name, err)
 		}
 	}
 }
 
-func TestCheckIn(t *testing.T) {
-	d := book(t)
-	at := start.Add(5 * time.Minute)
-	events, err := d.CheckIn(at.In(time.FixedZone("BRT", -3*3600)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	e, ok := onlyEvent(t, events).(DockAppointmentCheckedIn)
-	if !ok {
-		t.Fatalf("event = %T", events[0])
-	}
-	assertHeader(t, e, "DockAppointmentCheckedIn", at)
-	if e.DoorCode != "DOOR-1" || !e.CheckedInAt.Equal(at) || e.CheckedInAt.Location() != time.UTC {
-		t.Fatalf("event = %+v", e)
-	}
-	if d.State() != CheckedIn || d.Version() != 2 {
-		t.Fatalf("state=%s version=%d", d.State(), d.Version())
-	}
-}
-
-func TestCheckInWindowBoundaries(t *testing.T) {
-	allowed := []time.Time{start.Add(-CheckInLeadTime), start.Add(-CheckInLeadTime + time.Nanosecond), start, end.Add(-time.Nanosecond), end}
-	for _, at := range allowed {
-		if _, err := book(t).CheckIn(at); err != nil {
-			t.Errorf("CheckIn(%v) = %v; want allowed", at.Sub(start), err)
-		}
-	}
-	refused := []time.Time{start.Add(-CheckInLeadTime - time.Nanosecond), start.Add(-2 * time.Hour), end.Add(time.Nanosecond), end.Add(time.Hour)}
-	for _, at := range refused {
-		d := book(t)
-		events, err := d.CheckIn(at)
-		if !errors.Is(err, ErrOutsideCheckInWindow) || events != nil || d.State() != Booked || d.Version() != 1 {
-			t.Errorf("CheckIn(%v) = %v %v; want ErrOutsideCheckInWindow", at.Sub(start), events, err)
-		}
-	}
-}
-
-func TestCheckInRequiresBooked(t *testing.T) {
-	checkedIn := book(t)
-	_, _ = checkedIn.CheckIn(start)
-	cancelled := book(t)
-	_, _ = cancelled.Cancel("", t0)
-	completed := book(t)
-	_, _ = completed.CheckIn(start)
-	_, _ = completed.Complete(start.Add(time.Hour))
-	for name, d := range map[string]*DockAppointment{"checked in": checkedIn, "cancelled": cancelled, "completed": completed} {
-		version := d.Version()
-		if events, err := d.CheckIn(start); !errors.Is(err, ErrNotBooked) || events != nil || d.Version() != version {
-			t.Errorf("%s: events=%v err=%v", name, events, err)
-		}
-	}
-}
-
-func TestCancel(t *testing.T) {
-	d := book(t)
-	later := t0.Add(time.Minute)
-	events, err := d.Cancel("carrier delayed", later)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e, ok := onlyEvent(t, events).(DockAppointmentCancelled)
-	if !ok || e.DoorCode != "DOOR-1" || e.Reason != "carrier delayed" {
-		t.Fatalf("event = %+v", events[0])
-	}
-	assertHeader(t, e, "DockAppointmentCancelled", later)
-	if d.State() != Cancelled || d.Version() != 2 {
-		t.Fatalf("state=%s version=%d", d.State(), d.Version())
-	}
-}
-
-func TestCancelWithoutReason(t *testing.T) {
-	events, err := book(t).Cancel("", t0)
-	if err != nil || events[0].(DockAppointmentCancelled).Reason != "" {
-		t.Fatalf("events=%v err=%v", events, err)
-	}
-}
-
-func TestCancelRejectsInvalidReason(t *testing.T) {
-	d := book(t)
-	if events, err := d.Cancel("bad\nreason", t0); !errors.Is(err, shared.ErrInvalidReason) || events != nil || d.State() != Booked || d.Version() != 1 {
-		t.Fatalf("events=%v err=%v state=%s v=%d", events, err, d.State(), d.Version())
-	}
-}
-
-func TestCancelRequiresBooked(t *testing.T) {
-	checkedIn := book(t)
-	_, _ = checkedIn.CheckIn(start)
-	cancelled := book(t)
-	_, _ = cancelled.Cancel("", t0)
-	for name, d := range map[string]*DockAppointment{"checked in": checkedIn, "cancelled": cancelled} {
-		version := d.Version()
-		if events, err := d.Cancel("", t0); !errors.Is(err, ErrNotBooked) || events != nil || d.Version() != version {
-			t.Errorf("%s: events=%v err=%v", name, events, err)
-		}
-	}
-}
-
-func TestComplete(t *testing.T) {
-	d := book(t)
-	_, _ = d.CheckIn(start)
-	at := start.Add(time.Hour)
-	events, err := d.Complete(at.In(time.FixedZone("BRT", -3*3600)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	e, ok := onlyEvent(t, events).(DockAppointmentCompleted)
-	if !ok || e.DoorCode != "DOOR-1" || !e.CompletedAt.Equal(at) || e.CompletedAt.Location() != time.UTC {
-		t.Fatalf("event = %+v", events[0])
-	}
-	assertHeader(t, e, "DockAppointmentCompleted", at)
-	if d.State() != Completed || d.Version() != 3 {
-		t.Fatalf("state=%s version=%d", d.State(), d.Version())
-	}
-}
-
-func TestCompleteRequiresCheckedIn(t *testing.T) {
-	booked := book(t)
-	cancelled := book(t)
-	_, _ = cancelled.Cancel("", t0)
-	completed := book(t)
-	_, _ = completed.CheckIn(start)
-	_, _ = completed.Complete(start)
-	for name, d := range map[string]*DockAppointment{"booked": booked, "cancelled": cancelled, "completed": completed} {
-		version := d.Version()
-		if events, err := d.Complete(start); !errors.Is(err, ErrNotCheckedIn) || events != nil || d.Version() != version {
-			t.Errorf("%s: events=%v err=%v", name, events, err)
-		}
-	}
-}
-
-func TestStateActive(t *testing.T) {
-	want := map[State]bool{Booked: true, CheckedIn: true, Completed: false, Cancelled: false, "": false}
-	for s, active := range want {
-		if s.Active() != active {
-			t.Errorf("%q.Active() = %v, want %v", s, s.Active(), active)
-		}
-	}
-}
-
-func TestAsnNumbersReturnsACopy(t *testing.T) {
-	d := book(t)
+func TestAsnNumbersReturnsACopyAndCovers(t *testing.T) {
+	d := rehydrate(t, Booked, 1)
 	got := d.AsnNumbers()
-	got[0] = "HACKED"
+	got[0] = "MUTATED"
 	if d.AsnNumbers()[0] != "ASN-1" {
-		t.Fatal("AsnNumbers() exposed the internal slice")
+		t.Fatal("AsnNumbers must return a copy")
+	}
+	if !d.Covers("ASN-1") || !d.Covers("ASN-2") || d.Covers("ASN-3") || d.Covers("") {
+		t.Fatal("Covers must be true exactly for the listed ASNs")
 	}
 }
 
-func TestRehydrate(t *testing.T) {
-	past := t0.Add(-48 * time.Hour)
-	for _, state := range []State{Booked, CheckedIn, Completed, Cancelled} {
-		d, err := Rehydrate(id1, "DOOR-1", "ACME", past, past.Add(time.Hour), []string{"ASN-1"}, state, 4)
-		if err != nil || d.State() != state || d.Version() != 4 || d.ID() != id1 || d.Carrier() != "ACME" {
-			t.Fatalf("state %s: %+v %v", state, d, err)
+func names(events []Event) []string {
+	out := make([]string, 0, len(events))
+	for _, e := range events {
+		out = append(out, e.EventName())
+	}
+	return out
+}
+
+func TestReplayByState(t *testing.T) {
+	booked, changed, firstReceipt := t0, t0.Add(4*time.Hour), t0.Add(90*time.Minute)
+	tl := Timeline{BookedAt: booked, ChangedAt: changed, CheckedInAt: firstReceipt}
+	tests := []struct {
+		state State
+		want  string
+	}{
+		{Booked, "DockAppointmentBooked"},
+		{CheckedIn, "DockAppointmentBooked DockAppointmentCheckedIn"},
+		{Completed, "DockAppointmentBooked DockAppointmentCheckedIn DockAppointmentCompleted"},
+		{Cancelled, "DockAppointmentBooked DockAppointmentCancelled"},
+	}
+	for _, tc := range tests {
+		t.Run(string(tc.state), func(t *testing.T) {
+			events := rehydrate(t, tc.state, 3).Replay(tl)
+			if got := strings.Join(names(events), " "); got != tc.want {
+				t.Fatalf("events = %q, want %q", got, tc.want)
+			}
+			for _, e := range events {
+				if e.AppointmentID() != id1 || e.OccurredAt().Location() != time.UTC {
+					t.Fatalf("event %s id=%s at=%v", e.EventName(), e.AppointmentID(), e.OccurredAt())
+				}
+			}
+		})
+	}
+}
+
+func TestReplayPayloadsAndMoments(t *testing.T) {
+	tl := Timeline{BookedAt: t0, ChangedAt: t0.Add(4 * time.Hour), CheckedInAt: t0.Add(90 * time.Minute)}
+	t.Run("completed replays booked, checked in and completed with their payloads", func(t *testing.T) { assertCompletedReplay(t, tl) })
+	t.Run("a CheckedIn row checked in at its last change", func(t *testing.T) { assertCheckedInReplay(t, tl) })
+	t.Run("cancelled carries the last change and no reason", func(t *testing.T) { assertCancelledReplay(t, tl) })
+}
+
+func assertCompletedReplay(t *testing.T, tl Timeline) {
+	t.Helper()
+	events := rehydrate(t, Completed, 2).Replay(tl)
+	assertReplayedBooked(t, events[0], tl)
+	assertReplayedCheckedIn(t, events[1], tl)
+	assertReplayedCompleted(t, events[2], tl)
+}
+
+func assertReplayedBooked(t *testing.T, e Event, tl Timeline) {
+	t.Helper()
+	b, ok := e.(DockAppointmentBooked)
+	if !ok || b.DoorCode != "DOOR-1" || b.Carrier != "ACME Freight" || !b.Window.Start().Equal(start) || !b.Window.End().Equal(end) ||
+		len(b.AsnNumbers) != 2 || !b.At.Equal(tl.BookedAt) {
+		t.Fatalf("booked = %+v", e)
+	}
+}
+
+func assertReplayedCheckedIn(t *testing.T, e Event, tl Timeline) {
+	t.Helper()
+	in, ok := e.(DockAppointmentCheckedIn)
+	if !ok || !in.CheckedInAt.Equal(tl.CheckedInAt) || !in.At.Equal(tl.CheckedInAt) || in.DoorCode != "DOOR-1" {
+		t.Fatalf("checked in = %+v", e)
+	}
+}
+
+func assertReplayedCompleted(t *testing.T, e Event, tl Timeline) {
+	t.Helper()
+	done, ok := e.(DockAppointmentCompleted)
+	if !ok || !done.CompletedAt.Equal(tl.ChangedAt) || !done.At.Equal(tl.ChangedAt) || done.DoorCode != "DOOR-1" {
+		t.Fatalf("completed = %+v", e)
+	}
+}
+
+func assertCheckedInReplay(t *testing.T, tl Timeline) {
+	t.Helper()
+	events := rehydrate(t, CheckedIn, 2).Replay(tl)
+	if in := events[1].(DockAppointmentCheckedIn); !in.CheckedInAt.Equal(tl.ChangedAt) {
+		t.Fatalf("a CheckedIn row checked in at its last change, got %v", in.CheckedInAt)
+	}
+}
+
+func assertCancelledReplay(t *testing.T, tl Timeline) {
+	t.Helper()
+	events := rehydrate(t, Cancelled, 2).Replay(tl)
+	if c := events[1].(DockAppointmentCancelled); !c.At.Equal(tl.ChangedAt) || c.DoorCode != "DOOR-1" || c.Reason != "" {
+		t.Fatalf("cancelled = %+v", c)
+	}
+}
+
+func TestReplayNeverGoesBackInTime(t *testing.T) {
+	d := rehydrate(t, Completed, 1)
+	booked, changed := t0, t0.Add(time.Hour)
+	for name, tl := range map[string]Timeline{
+		"changed before booked":      {BookedAt: booked, ChangedAt: booked.Add(-time.Hour)},
+		"no check-in moment":         {BookedAt: booked, ChangedAt: changed},
+		"check-in before booked":     {BookedAt: booked, ChangedAt: changed, CheckedInAt: booked.Add(-time.Minute)},
+		"check-in after the changed": {BookedAt: booked, ChangedAt: changed, CheckedInAt: changed.Add(time.Minute)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			events := d.Replay(tl)
+			for i := 1; i < len(events); i++ {
+				if events[i].OccurredAt().Before(events[i-1].OccurredAt()) {
+					t.Fatalf("event %d (%s at %v) is before event %d (%s at %v)", i, events[i].EventName(), events[i].OccurredAt(),
+						i-1, events[i-1].EventName(), events[i-1].OccurredAt())
+				}
+			}
+			if events[0].OccurredAt().Before(booked) {
+				t.Fatalf("booked at %v is before the row was created", events[0].OccurredAt())
+			}
+		})
+	}
+}
+
+func TestReplayCheckInMomentIsKeptWhenInsideTheRange(t *testing.T) {
+	d := rehydrate(t, Completed, 1)
+	booked, changed := t0, t0.Add(time.Hour)
+	// The bounds are inclusive on both sides.
+	for _, in := range []time.Time{booked, changed, booked.Add(time.Minute)} {
+		got := d.Replay(Timeline{BookedAt: booked, ChangedAt: changed, CheckedInAt: in})[1].(DockAppointmentCheckedIn)
+		if !got.CheckedInAt.Equal(in) {
+			t.Errorf("check-in moment %v was replaced by %v", in, got.CheckedInAt)
 		}
-	}
-	d, err := Rehydrate(id1, "DOOR-1", "ACME", start, end, []string{"ASN-1"}, Booked, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.Cancel("", t0); err != nil || d.Version() != 2 {
-		t.Fatalf("err=%v v=%d", err, d.Version())
-	}
-}
-
-func TestRehydrateRevalidates(t *testing.T) {
-	ok := []string{"ASN-1"}
-	cases := []struct {
-		name    string
-		id      string
-		carrier string
-		from    time.Time
-		to      time.Time
-		asns    []string
-		state   State
-		version int64
-		want    error
-	}{
-		{"unknown state", id1, "ACME", start, end, ok, "Bogus", 1, ErrInvalidState},
-		{"version zero", id1, "ACME", start, end, ok, Booked, 0, ErrInvalidVersion},
-		{"bad id", "x", "ACME", start, end, ok, Booked, 1, ErrInvalidID},
-		{"blank carrier", id1, " ", start, end, ok, Booked, 1, ErrInvalidCarrier},
-		{"inverted window", id1, "ACME", end, start, ok, Booked, 1, ErrInvalidWindow},
-		{"no asns", id1, "ACME", start, end, nil, Booked, 1, ErrNoAsns},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			d, err := Rehydrate(tc.id, "DOOR-1", tc.carrier, tc.from, tc.to, tc.asns, tc.state, tc.version)
-			if !errors.Is(err, tc.want) || d != nil {
-				t.Fatalf("Rehydrate = %v, %v; want %v", d, err, tc.want)
-			}
-		})
-	}
-	if _, err := Rehydrate(id1, "", "ACME", start, end, ok, Booked, 1); !errors.Is(err, ErrInvalidDoorCode) {
-		t.Fatalf("empty door: %v", err)
-	}
-}
-
-func TestCheckNoOverlap(t *testing.T) {
-	candidate := bookAt(t, id1, "DOOR-1", start, end)
-	cases := []struct {
-		name string
-		prep func(t *testing.T) *DockAppointment
-		want error
-	}{
-		{"overlapping booked", func(t *testing.T) *DockAppointment {
-			return bookAt(t, id2, "DOOR-1", start.Add(time.Hour), end.Add(time.Hour))
-		}, ErrWindowOverlap},
-		{"overlapping checked in", func(t *testing.T) *DockAppointment {
-			d := bookAt(t, id2, "DOOR-1", start.Add(time.Hour), end.Add(time.Hour))
-			_, _ = d.CheckIn(start.Add(time.Hour))
-			return d
-		}, ErrWindowOverlap},
-		{"adjacent after", func(t *testing.T) *DockAppointment { return bookAt(t, id2, "DOOR-1", end, end.Add(time.Hour)) }, nil},
-		{"adjacent before", func(t *testing.T) *DockAppointment { return bookAt(t, id2, "DOOR-1", start.Add(-time.Hour), start) }, nil},
-		{"overlapping on another door", func(t *testing.T) *DockAppointment { return bookAt(t, id2, "DOOR-2", start, end) }, nil},
-		{"overlapping but cancelled", func(t *testing.T) *DockAppointment {
-			d := bookAt(t, id2, "DOOR-1", start, end)
-			_, _ = d.Cancel("", t0)
-			return d
-		}, nil},
-		{"overlapping but completed", func(t *testing.T) *DockAppointment {
-			d := bookAt(t, id2, "DOOR-1", start, end)
-			_, _ = d.CheckIn(start)
-			_, _ = d.Complete(end)
-			return d
-		}, nil},
-		{"the candidate itself", func(t *testing.T) *DockAppointment { return bookAt(t, id1, "DOOR-1", start, end) }, nil},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := (Schedule{}).CheckNoOverlap(candidate, []*DockAppointment{tc.prep(t)}); !errors.Is(err, tc.want) {
-				t.Fatalf("CheckNoOverlap = %v, want %v", err, tc.want)
-			}
-		})
-	}
-}
-
-func TestCheckNoOverlapScansEveryAppointment(t *testing.T) {
-	candidate := bookAt(t, id1, "DOOR-1", start, end)
-	free := bookAt(t, id2, "DOOR-1", end, end.Add(time.Hour))
-	clash := bookAt(t, "appt-323e4567-e89b-12d3-a456-426614174000", "DOOR-1", start.Add(time.Minute), start.Add(2*time.Minute))
-	if err := (Schedule{}).CheckNoOverlap(candidate, []*DockAppointment{free, clash}); !errors.Is(err, ErrWindowOverlap) {
-		t.Fatalf("clash after a free one: %v", err)
-	}
-	if err := (Schedule{}).CheckNoOverlap(candidate, nil); err != nil {
-		t.Fatalf("empty schedule: %v", err)
 	}
 }

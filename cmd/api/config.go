@@ -19,7 +19,10 @@ type config struct {
 	productGroup   string
 	doorGroup      string
 	packagingGroup string
-	kafkaBrokers   []string
+	// appointmentGroup is the stable group of the dock-appointment consumer
+	// (the appointments local copy fed by dock-scheduling, ADR 0019).
+	appointmentGroup string
+	kafkaBrokers     []string
 }
 
 // Boot errors for the variables the context cannot run without. Each message
@@ -30,7 +33,7 @@ var (
 )
 
 // loadConfig validates the environment before anything is opened or bound:
-// DATABASE_URL, KAFKA_BROKERS and both consumer groups are mandatory, the
+// DATABASE_URL, KAFKA_BROKERS and all four consumer groups are mandatory, the
 // consumer modes may only be `kafka` (the default), and EVENT_PUBLISHER may
 // only be `kafka`. Every error names the variable (ADR 0011).
 func loadConfig(env func(string) string) (config, error) {
@@ -59,6 +62,9 @@ func loadConfig(env func(string) string) (config, error) {
 	}
 	if cfg.packagingGroup = env("PACKAGING_CONSUMER_GROUP"); cfg.packagingGroup == "" {
 		return config{}, errors.New("PACKAGING_CONSUMER_GROUP is required: the packaging consumer (PackagingView) always runs on real Kafka")
+	}
+	if cfg.appointmentGroup = env("DOCK_APPOINTMENT_CONSUMER_GROUP"); cfg.appointmentGroup == "" {
+		return config{}, errors.New("DOCK_APPOINTMENT_CONSUMER_GROUP is required: the dock-appointment consumer (appointments local copy fed by dock-scheduling) always runs on real Kafka")
 	}
 	return cfg, nil
 }

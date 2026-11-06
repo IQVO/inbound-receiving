@@ -15,7 +15,8 @@ base=(--set database.url=postgres://u@example.invalid:5432/db
   --set kafka.brokers=kafka.example.invalid:9092
   --set config.productConsumerGroup=inbound-receiving-product
   --set config.dockDoorConsumerGroup=inbound-receiving-dock-doors
-  --set config.packagingConsumerGroup=inbound-receiving-packaging)
+  --set config.packagingConsumerGroup=inbound-receiving-packaging
+  --set config.dockAppointmentConsumerGroup=inbound-receiving-dock-appointments)
 analytics=(--set analytics.enabled=true
   --set analytics.database.projectorUrl=postgres://projector@example.invalid:5432/a
   --set analytics.database.reportsUrl=postgres://reports@example.invalid:5432/a)
@@ -103,7 +104,7 @@ env_value() { # env_value <rendered> <NAME>
 [[ "$(env_value "$api_deployment" KAFKA_BROKERS)" == "kafka.example.invalid:9092" ]] || fail "KAFKA_BROKERS is not rendered from kafka.brokers"
 for kv in 'EVENT_PUBLISHER=kafka' 'PRODUCT_MODE=kafka' 'DOCK_DOOR_MODE=kafka' \
   'PRODUCT_CONSUMER_GROUP=inbound-receiving-product' 'DOCK_DOOR_CONSUMER_GROUP=inbound-receiving-dock-doors' \
-  'PACKAGING_CONSUMER_GROUP=inbound-receiving-packaging'; do
+  'PACKAGING_CONSUMER_GROUP=inbound-receiving-packaging' 'DOCK_APPOINTMENT_CONSUMER_GROUP=inbound-receiving-dock-appointments'; do
   [[ "$(env_value "$api_deployment" "${kv%%=*}")" == "${kv#*=}" ]] || fail "the api Deployment does not render $kv"
   grep -q "^  ${kv%%=*}: \"${kv#*=}\"" <<<"$configmap" || fail "the ConfigMap does not carry $kv"
 done
@@ -123,7 +124,7 @@ grep -A4 'name: DATABASE_URL$' <<<"$a2a_dep" | grep -q 'secretKeyRef:' || fail "
 [[ "$(env_value "$a2a_dep" A2A_ADDR || true)" == ":8093" ]] || fail "the a2a agent must listen on :8093 (8090 is mcp, 8091 the projector admin, 8092 the reports API)"
 grep -q 'command: \["/app/a2a"\]' <<<"$a2a_dep" || fail "the a2a Deployment must run /app/a2a"
 # Read-only like mcp: no Kafka, publisher, relay, consumer or dock-door mode env.
-for stray in KAFKA_BROKERS EVENT_PUBLISHER PRODUCT_MODE DOCK_DOOR_MODE PRODUCT_CONSUMER_GROUP DOCK_DOOR_CONSUMER_GROUP PACKAGING_CONSUMER_GROUP; do
+for stray in KAFKA_BROKERS EVENT_PUBLISHER PRODUCT_MODE DOCK_DOOR_MODE PRODUCT_CONSUMER_GROUP DOCK_DOOR_CONSUMER_GROUP PACKAGING_CONSUMER_GROUP DOCK_APPOINTMENT_CONSUMER_GROUP; do
   if grep -q "name: $stray\$" <<<"$a2a_dep"; then fail "the read-only a2a Deployment must not render $stray"; fi
 done
 # The Agent Card must advertise a dialable absolute URL: it defaults to the
@@ -171,23 +172,25 @@ $err"
 }
 expect_refusal "no database source" "database.url or database.existingSecret" "${base[@]:2}"
 expect_refusal "no brokers" "kafka.brokers" --set database.url=postgres://u@h/db \
-  --set config.productConsumerGroup=g1 --set config.dockDoorConsumerGroup=g2 --set config.packagingConsumerGroup=g3
+  --set config.productConsumerGroup=g1 --set config.dockDoorConsumerGroup=g2 --set config.packagingConsumerGroup=g3 --set config.dockAppointmentConsumerGroup=g4
 expect_refusal "kafka switched off" "Kafka cannot be switched off" "${base[@]}" --set kafka.enabled=false
 expect_refusal "the log publisher" "config.eventPublisher" "${base[@]}" --set config.eventPublisher=log
 expect_refusal "permissive product mode" "config.productMode" "${base[@]}" --set config.productMode=permissive
 expect_refusal "off dock-door mode" "config.dockDoorMode" "${base[@]}" --set config.dockDoorMode=off
 expect_refusal "no product group" "config.productConsumerGroup" --set database.url=postgres://u@h/db --set kafka.brokers=k:9092 \
-  --set config.dockDoorConsumerGroup=g2 --set config.packagingConsumerGroup=g3
+  --set config.dockDoorConsumerGroup=g2 --set config.packagingConsumerGroup=g3 --set config.dockAppointmentConsumerGroup=g4
 expect_refusal "no dock-door group" "config.dockDoorConsumerGroup" --set database.url=postgres://u@h/db --set kafka.brokers=k:9092 \
-  --set config.productConsumerGroup=g1 --set config.packagingConsumerGroup=g3
+  --set config.productConsumerGroup=g1 --set config.packagingConsumerGroup=g3 --set config.dockAppointmentConsumerGroup=g4
 expect_refusal "no packaging group" "config.packagingConsumerGroup" --set database.url=postgres://u@h/db --set kafka.brokers=k:9092 \
-  --set config.productConsumerGroup=g1 --set config.dockDoorConsumerGroup=g2
+  --set config.productConsumerGroup=g1 --set config.dockDoorConsumerGroup=g2 --set config.dockAppointmentConsumerGroup=g4
+expect_refusal "no dock-appointment group" "config.dockAppointmentConsumerGroup" --set database.url=postgres://u@h/db --set kafka.brokers=k:9092 \
+  --set config.productConsumerGroup=g1 --set config.dockDoorConsumerGroup=g2 --set config.packagingConsumerGroup=g3
 expect_refusal "the log publisher through extraEnv" "EVENT_PUBLISHER" "${base[@]}" --set 'extraEnv[0].name=EVENT_PUBLISHER' --set 'extraEnv[0].value=log'
 expect_refusal "a *_MODE through extraEnv" "_MODE" "${base[@]}" --set 'extraEnv[0].name=PRODUCT_MODE' --set 'extraEnv[0].value=permissive'
 expect_refusal "analytics without a DSN source" "analytics.database.projectorUrl" "${base[@]}" --set analytics.enabled=true
 expect_refusal "mcp with a permissive dock-door mode" "config.dockDoorMode" "${base[@]}" --set mcp.enabled=true --set config.dockDoorMode=permissive
 expect_refusal "a2a without a database source" "database.url or database.existingSecret" --set a2a.enabled=true --set kafka.brokers=k:9092 \
-  --set config.productConsumerGroup=g1 --set config.dockDoorConsumerGroup=g2 --set config.packagingConsumerGroup=g3
+  --set config.productConsumerGroup=g1 --set config.dockDoorConsumerGroup=g2 --set config.packagingConsumerGroup=g3 --set config.dockAppointmentConsumerGroup=g4
 
 # --- what warehouse-infra sets keeps working -----------------------------------------
 # tests/warehouse-infra-platform-values.yaml + tests/warehouse-infra-values.yaml
@@ -204,6 +207,7 @@ infra_api="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only tem
 [[ "$(env_value "$infra_api" PRODUCT_CONSUMER_GROUP)" == "inbound-receiving-product" ]] || fail "infra values: PRODUCT_CONSUMER_GROUP"
 [[ "$(env_value "$infra_api" DOCK_DOOR_CONSUMER_GROUP)" == "inbound-receiving-dock-doors" ]] || fail "infra values: DOCK_DOOR_CONSUMER_GROUP"
 [[ "$(env_value "$infra_api" PACKAGING_CONSUMER_GROUP)" == "inbound-receiving-packaging" ]] || fail "infra values: PACKAGING_CONSUMER_GROUP"
+[[ "$(env_value "$infra_api" DOCK_APPOINTMENT_CONSUMER_GROUP)" == "inbound-receiving-dock-appointments" ]] || fail "infra values: DOCK_APPOINTMENT_CONSUMER_GROUP"
 grep -q 'inbound-receiving-db' <<<"$infra_api" || fail "infra values: DATABASE_URL must come from the inbound-receiving-db secret"
 infra_proj="$(helm template "$release" "$chart_dir" "${infra[@]}" --show-only templates/projector-deployment.yaml)"
 [[ "$(env_value "$infra_proj" ANALYTICS_CONSUMER_GROUP)" == "inbound-receiving-analytics" ]] || fail "infra values: ANALYTICS_CONSUMER_GROUP"

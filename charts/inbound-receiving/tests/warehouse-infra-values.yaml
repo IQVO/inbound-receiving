@@ -17,6 +17,7 @@ config:
   dockDoorMode: "kafka"
   dockDoorConsumerGroup: "inbound-receiving-dock-doors"
   packagingConsumerGroup: "inbound-receiving-packaging"
+  dockAppointmentConsumerGroup: "inbound-receiving-dock-appointments"
 
 kafka:
   enabled: true

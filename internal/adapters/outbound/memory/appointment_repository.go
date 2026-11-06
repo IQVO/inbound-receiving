@@ -9,10 +9,10 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 )
 
-// AppointmentRepo is an in-memory, mutex-guarded ports.AppointmentRepository.
-// LockDoor is a no-op: the in-memory UnitOfWork already serialises every
-// write, which gives the per-door atomicity the Postgres adapter gets from
-// an advisory lock.
+// AppointmentRepo is an in-memory, mutex-guarded appointments local copy
+// (ports.AppointmentRepository and ports.AppointmentStore) with the same
+// version rules as the Postgres adapter. Unit-test double only: the service
+// itself has no in-memory runtime (ADR 0011).
 type AppointmentRepo struct {
 	mu    sync.Mutex
 	items map[appointment.ID]*appointment.DockAppointment
@@ -31,27 +31,52 @@ func (r *AppointmentRepo) Get(_ context.Context, id appointment.ID) (*appointmen
 	if !ok {
 		return nil, repository.ErrAppointmentNotFound
 	}
-	return copyAppointment(d)
+	return copyAppointment(d, d.State())
 }
 
-// Save implements ports.AppointmentRepository.
-func (r *AppointmentRepo) Save(_ context.Context, d *appointment.DockAppointment, loadedVersion int64) error {
+// ApplyBooked implements ports.AppointmentStore.
+func (r *AppointmentRepo) ApplyBooked(_ context.Context, d *appointment.DockAppointment) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cur, exists := r.items[d.ID()]
-	var stored int64
-	if exists {
-		stored = cur.Version()
+	if !exists {
+		c, err := copyAppointment(d, d.State())
+		if err != nil {
+			return false, err
+		}
+		r.items[d.ID()] = c
+		return true, nil
 	}
-	if !versionGuardOK(loadedVersion, exists, stored) {
-		return repository.ErrConcurrentModification
+	if cur.Version() >= d.Version() {
+		return false, nil
 	}
-	c, err := copyAppointment(d)
+	// The stored state is kept (a Booked event never revives a Cancelled row).
+	c, err := copyAppointment(d, cur.State())
 	if err != nil {
-		return err
+		return false, err
 	}
 	r.items[d.ID()] = c
-	return nil
+	return true, nil
+}
+
+// ApplyCancelled implements ports.AppointmentStore.
+func (r *AppointmentRepo) ApplyCancelled(_ context.Context, id appointment.ID, version int64) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cur, exists := r.items[id]
+	if !exists || cur.Version() >= version {
+		return false, nil
+	}
+	numbers := make([]string, 0, len(cur.AsnNumbers()))
+	for _, n := range cur.AsnNumbers() {
+		numbers = append(numbers, string(n))
+	}
+	c, err := appointment.Rehydrate(string(cur.ID()), string(cur.DoorCode()), cur.Carrier(), cur.Window().Start(), cur.Window().End(), numbers, appointment.Cancelled, version)
+	if err != nil {
+		return false, err
+	}
+	r.items[id] = c
+	return true, nil
 }
 
 // List implements ports.AppointmentRepository: ascending (window start, id).
@@ -68,7 +93,7 @@ func (r *AppointmentRepo) List(_ context.Context, filter repository.AppointmentF
 		if !pastCursor(d, after) || !matchesFilter(d, filter) {
 			continue
 		}
-		c, err := copyAppointment(d)
+		c, err := copyAppointment(d, d.State())
 		if err != nil {
 			return nil, err
 		}
@@ -108,27 +133,6 @@ func matchesFilter(d *appointment.DockAppointment, f repository.AppointmentFilte
 	return f.To.IsZero() || d.Window().Start().Before(f.To)
 }
 
-// ActiveOnDoor implements ports.AppointmentRepository.
-func (r *AppointmentRepo) ActiveOnDoor(_ context.Context, door appointment.DoorCode) ([]*appointment.DockAppointment, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	var out []*appointment.DockAppointment
-	for _, d := range r.items {
-		if d.DoorCode() != door || !d.State().Active() {
-			continue
-		}
-		c, err := copyAppointment(d)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, nil
-}
-
-// LockDoor implements ports.AppointmentRepository (see the type comment).
-func (r *AppointmentRepo) LockDoor(context.Context, appointment.DoorCode) error { return nil }
-
 // Snapshot implements Snapshotter.
 func (r *AppointmentRepo) Snapshot() func() {
 	r.mu.Lock()
@@ -144,10 +148,10 @@ func (r *AppointmentRepo) Snapshot() func() {
 	}
 }
 
-func copyAppointment(d *appointment.DockAppointment) (*appointment.DockAppointment, error) {
+func copyAppointment(d *appointment.DockAppointment, state appointment.State) (*appointment.DockAppointment, error) {
 	numbers := make([]string, 0, len(d.AsnNumbers()))
 	for _, n := range d.AsnNumbers() {
 		numbers = append(numbers, string(n))
 	}
-	return appointment.Rehydrate(string(d.ID()), string(d.DoorCode()), d.Carrier(), d.Window().Start(), d.Window().End(), numbers, d.State(), d.Version())
+	return appointment.Rehydrate(string(d.ID()), string(d.DoorCode()), d.Carrier(), d.Window().Start(), d.Window().End(), numbers, state, d.Version())
 }

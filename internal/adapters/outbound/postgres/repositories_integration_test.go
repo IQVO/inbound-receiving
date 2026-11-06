@@ -5,9 +5,13 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/postgres"
 	"github.com/claudioed/inbound-receiving/internal/application/repository"
@@ -47,7 +51,7 @@ func newAppointment(t *testing.T, id, door string, start time.Time, asns ...stri
 	if len(asns) == 0 {
 		asns = []string{"ASN-1"}
 	}
-	d, _, err := appointment.Book(id, door, "ACME Freight", start, start.Add(time.Hour), asns, t0)
+	d, err := appointment.Rehydrate(id, door, "ACME Freight", start, start.Add(time.Hour), asns, appointment.Booked, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,16 +172,19 @@ func TestAsnRepoListPagesInByteOrderWithFilters(t *testing.T) {
 	}
 }
 
-func TestAppointmentRepoVersionGuardAndRoundTrip(t *testing.T) {
+func TestAppointmentRepoApplyRoundTripAndVersionGuard(t *testing.T) {
 	ctx := context.Background()
-	repo := postgres.NewAppointmentRepo(startPostgresPool(t))
+	pool := startPostgresPool(t)
+	repo := postgres.NewAppointmentRepo(pool)
 	start := t0.Add(24 * time.Hour)
 	d := newAppointment(t, apptID(1), "DOOR-1", start, "ASN-2", "ASN-1")
-	if err := repo.Save(ctx, d, 0); err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-	wantErr(t, repo.Save(ctx, d, 0), repository.ErrConcurrentModification)
 
+	if ok, err := repo.ApplyBooked(ctx, d); err != nil || !ok {
+		t.Fatalf("insert: %v %v", ok, err)
+	}
+	if ok, err := repo.ApplyBooked(ctx, d); err != nil || ok {
+		t.Fatalf("the same version must not apply again: %v %v", ok, err)
+	}
 	got, err := repo.Get(ctx, d.ID())
 	if err != nil {
 		t.Fatal(err)
@@ -189,23 +196,67 @@ func TestAppointmentRepoVersionGuardAndRoundTrip(t *testing.T) {
 		t.Fatalf("round trip = %+v %v", got, numbers)
 	}
 
-	first, _ := repo.Get(ctx, d.ID())
-	second, _ := repo.Get(ctx, d.ID())
-	if _, err := first.Cancel("", t0); err != nil {
+	// A newer Booked refreshes door, carrier, window, ASNs and version.
+	newer, err := appointment.Rehydrate(apptID(1), "DOOR-9", "Other Carrier", start.Add(time.Hour), start.Add(3*time.Hour), []string{"ASN-3"}, appointment.Booked, 4)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.Cancel("other", t0); err != nil {
-		t.Fatal(err)
+	if ok, err := repo.ApplyBooked(ctx, newer); err != nil || !ok {
+		t.Fatalf("newer: %v %v", ok, err)
 	}
-	if err := repo.Save(ctx, first, 1); err != nil {
-		t.Fatalf("first update: %v", err)
+	older, _ := appointment.Rehydrate(apptID(1), "DOOR-OLD", "Old", start, start.Add(time.Hour), []string{"ASN-1"}, appointment.Booked, 2)
+	if ok, err := repo.ApplyBooked(ctx, older); err != nil || ok {
+		t.Fatalf("an older version must not apply: %v %v", ok, err)
 	}
-	wantErr(t, repo.Save(ctx, second, 1), repository.ErrConcurrentModification)
+	got, _ = repo.Get(ctx, d.ID())
+	numbers = got.AsnNumbers()
+	if got.DoorCode() != "DOOR-9" || got.Carrier() != "Other Carrier" || !got.Window().Start().Equal(start.Add(time.Hour)) ||
+		len(numbers) != 1 || numbers[0] != "ASN-3" || got.Version() != 4 {
+		t.Fatalf("after the newer booking = %+v %v", got, numbers)
+	}
+
+	// A cancel needs a newer version and an existing appointment.
+	if ok, err := repo.ApplyCancelled(ctx, d.ID(), 4); err != nil || ok {
+		t.Fatalf("a cancel at the stored version must not apply: %v %v", ok, err)
+	}
+	if ok, err := repo.ApplyCancelled(ctx, appointment.ID(apptID(9)), 9); err != nil || ok {
+		t.Fatalf("cancelling an unknown appointment must not apply: %v %v", ok, err)
+	}
+	if ok, err := repo.ApplyCancelled(ctx, d.ID(), 5); err != nil || !ok {
+		t.Fatalf("cancel: %v %v", ok, err)
+	}
+	// A Booked event with a higher version refreshes the data but never revives it.
+	revive, _ := appointment.Rehydrate(apptID(1), "DOOR-9", "Other Carrier", start, start.Add(time.Hour), []string{"ASN-3"}, appointment.Booked, 7)
+	if ok, err := repo.ApplyBooked(ctx, revive); err != nil || !ok {
+		t.Fatalf("later booked: %v %v", ok, err)
+	}
+	got, _ = repo.Get(ctx, d.ID())
+	if got.State() != appointment.Cancelled || got.Version() != 7 {
+		t.Fatalf("state = %s v%d, want Cancelled v7", got.State(), got.Version())
+	}
 	_, err = repo.Get(ctx, appointment.ID(apptID(9)))
 	wantErr(t, err, repository.ErrAppointmentNotFound)
+
+	// The copy keeps the ASN positions exactly 1..n.
+	var positions []int
+	rows, err := pool.Query(ctx, `SELECT position FROM appointment_asns WHERE appointment_id = $1 ORDER BY position`, apptID(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p int
+		if err := rows.Scan(&p); err != nil {
+			t.Fatal(err)
+		}
+		positions = append(positions, p)
+	}
+	if len(positions) != 1 || positions[0] != 1 {
+		t.Fatalf("asn positions = %v", positions)
+	}
 }
 
-func TestAppointmentRepoListActiveAndFilters(t *testing.T) {
+func TestAppointmentRepoListAndFilters(t *testing.T) {
 	ctx := context.Background()
 	repo := postgres.NewAppointmentRepo(startPostgresPool(t))
 	h := time.Hour
@@ -215,16 +266,12 @@ func TestAppointmentRepoListActiveAndFilters(t *testing.T) {
 		newAppointment(t, apptID(1), "DOOR-1", t0.Add(24*h)),
 	}
 	for _, d := range seed {
-		if err := repo.Save(ctx, d, 0); err != nil {
+		if _, err := repo.ApplyBooked(ctx, d); err != nil {
 			t.Fatal(err)
 		}
 	}
-	cancelled, _ := repo.Get(ctx, appointment.ID(apptID(3)))
-	if _, err := cancelled.Cancel("", t0); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.Save(ctx, cancelled, 1); err != nil {
-		t.Fatal(err)
+	if ok, err := repo.ApplyCancelled(ctx, appointment.ID(apptID(3)), 2); err != nil || !ok {
+		t.Fatalf("cancel: %v %v", ok, err)
 	}
 
 	last := func(items []*appointment.DockAppointment) string {
@@ -238,14 +285,134 @@ func TestAppointmentRepoListActiveAndFilters(t *testing.T) {
 	all, _ := repo.List(ctx, repository.AppointmentFilter{}, none, 10)
 	after, _ := repo.List(ctx, repository.AppointmentFilter{}, repository.AppointmentCursor{WindowStart: t0.Add(24 * h), ID: all[0].ID()}, 10)
 	door1, _ := repo.List(ctx, repository.AppointmentFilter{Door: "DOOR-1", State: appointment.Booked}, none, 10)
+	cancelled, _ := repo.List(ctx, repository.AppointmentFilter{State: appointment.Cancelled}, none, 10)
 	window, _ := repo.List(ctx, repository.AppointmentFilter{From: t0.Add(24*h + 30*time.Minute), To: t0.Add(25 * h)}, none, 10)
 	limited, _ := repo.List(ctx, repository.AppointmentFilter{}, none, 2)
-	active, _ := repo.ActiveOnDoor(ctx, "DOOR-1")
-	if last(all) != "123" || last(after) != "23" || last(door1) != "1" || last(window) != "12" || last(limited) != "12" || last(active) != "1" {
-		t.Fatalf("all=%s after=%s door1=%s window=%s limited=%s active=%s", last(all), last(after), last(door1), last(window), last(limited), last(active))
+	if last(all) != "123" || last(after) != "23" || last(door1) != "1" || last(cancelled) != "3" || last(window) != "12" || last(limited) != "12" {
+		t.Fatalf("all=%s after=%s door1=%s cancelled=%s window=%s limited=%s", last(all), last(after), last(door1), last(cancelled), last(window), last(limited))
 	}
 	if len(all[0].AsnNumbers()) != 1 {
 		t.Fatal("list must load the covered ASN numbers")
+	}
+}
+
+// Stage C migration (0005) on rows that exist today: the legacy aggregate
+// version resets to 0, so ANY dock-scheduling version wins over a legacy row,
+// and a legacy row keeps everything else.
+func TestMigration0005ResetsLegacyVersionsSoAnyNewVersionWins(t *testing.T) {
+	ctx := context.Background()
+	pool, url := startUnmigratedPool(t)
+	src, err := iofs.New(os.DirFS("."), "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := migrate.NewWithSourceInstance("iofs", src, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = m.Close() })
+	if err := m.Migrate(4); err != nil {
+		t.Fatalf("migrate to 4: %v", err)
+	}
+	// The legacy aggregate at its version 3 (booked, checked in, completed).
+	if _, err := pool.Exec(ctx, `INSERT INTO appointments (id, door_code, carrier, window_start, window_end, state, version)
+		VALUES ($1, 'DOOR-1', 'ACME', $2, $3, 'Completed', 3)`, apptID(1), t0, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO appointment_asns (appointment_id, position, asn_number) VALUES ($1, 1, 'ASN-1')`, apptID(1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Up(); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+
+	repo := postgres.NewAppointmentRepo(pool)
+	legacy, err := repo.Get(ctx, appointment.ID(apptID(1)))
+	if err != nil || legacy.Version() != 0 || legacy.State() != appointment.Completed || legacy.DoorCode() != "DOOR-1" {
+		t.Fatalf("legacy row = %+v, %v; want version 0, state kept", legacy, err)
+	}
+	// The aggregate guard is gone: version 0 and a default are allowed, negatives are not.
+	if _, err := pool.Exec(ctx, `INSERT INTO appointments (id, door_code, carrier, window_start, window_end, state)
+		VALUES ($1, 'DOOR-2', 'ACME', $2, $3, 'Booked')`, apptID(2), t0, t0.Add(time.Hour)); err != nil {
+		t.Fatalf("a row without a version must default to 0: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE appointments SET version = -1 WHERE id = $1`, apptID(2)); err == nil {
+		t.Fatal("a negative version must be refused")
+	}
+	// The first dock-scheduling version wins over the legacy row.
+	first, _ := appointment.Rehydrate(apptID(1), "DOOR-5", "ACME", t0, t0.Add(time.Hour), []string{"ASN-1"}, appointment.Booked, 1)
+	if ok, err := repo.ApplyBooked(ctx, first); err != nil || !ok {
+		t.Fatalf("version 1 over a legacy row: %v %v", ok, err)
+	}
+	if got, _ := repo.Get(ctx, appointment.ID(apptID(1))); got.DoorCode() != "DOOR-5" || got.Version() != 1 || got.State() != appointment.Completed {
+		t.Fatalf("after = %s v%d %s; the legacy state must be kept", got.DoorCode(), got.Version(), got.State())
+	}
+	// The down migration restores the aggregate guard (every row restarts at 1).
+	if err := m.Migrate(4); err != nil {
+		t.Fatalf("down to 4: %v", err)
+	}
+	var v int64
+	if err := pool.QueryRow(ctx, `SELECT min(version) FROM appointments`).Scan(&v); err != nil || v != 1 {
+		t.Fatalf("min version after the down migration = %d, %v", v, err)
+	}
+}
+
+// ListRecords feeds the stage B backfill: ascending id, the row's own
+// timestamps and, for a Completed row, the opening of its first receipt.
+func TestAppointmentRepoListRecordsForTheBackfill(t *testing.T) {
+	ctx := context.Background()
+	pool := startPostgresPool(t)
+	repo := postgres.NewAppointmentRepo(pool)
+	asns, receipts := postgres.NewAsnRepo(pool), postgres.NewReceiptRepo(pool)
+	for i, state := range []string{"Booked", "CheckedIn", "Completed", "Cancelled"} {
+		if _, err := pool.Exec(ctx, `INSERT INTO appointments (id, door_code, carrier, window_start, window_end, state, version, created_at, updated_at)
+			VALUES ($1, 'DOOR-1', 'ACME', $2, $3, $4, 0, $5, $6)`,
+			apptID(i+1), t0, t0.Add(time.Hour), state, t0.Add(-48*time.Hour), t0.Add(time.Duration(i)*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO appointment_asns (appointment_id, position, asn_number) VALUES ($1, 1, $2)`,
+			apptID(i+1), "ASN-"+string(rune('1'+i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The Completed one (id 3) had a receipt opened at t0+20min.
+	a := newAsn(t, "ASN-3")
+	if err := asns.Save(ctx, a, 0); err != nil {
+		t.Fatal(err)
+	}
+	r, _, err := receipt.Open(rcptID(1), a.Snapshot(), apptID(3), "DOOR-1", t0.Add(20*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := receipts.Save(ctx, r, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := repo.ListRecords(ctx, "", 10)
+	if err != nil || len(all) != 4 {
+		t.Fatalf("records = %d, %v", len(all), err)
+	}
+	for i, rec := range all {
+		if string(rec.Appointment.ID()) != apptID(i+1) {
+			t.Fatalf("record %d = %s, want ascending id", i, rec.Appointment.ID())
+		}
+		if !rec.Timeline.BookedAt.Equal(t0.Add(-48*time.Hour)) || !rec.Timeline.ChangedAt.Equal(t0.Add(time.Duration(i)*time.Hour)) {
+			t.Fatalf("record %d timeline = %+v", i, rec.Timeline)
+		}
+		wantIn := time.Time{}
+		if i == 2 {
+			wantIn = t0.Add(20 * time.Minute)
+		}
+		if !rec.Timeline.CheckedInAt.Equal(wantIn) {
+			t.Fatalf("record %d checked-in moment = %v, want %v", i, rec.Timeline.CheckedInAt, wantIn)
+		}
+	}
+	page, err := repo.ListRecords(ctx, appointment.ID(apptID(2)), 1)
+	if err != nil || len(page) != 1 || string(page[0].Appointment.ID()) != apptID(3) {
+		t.Fatalf("page after #2 limit 1 = %v, %v", page, err)
+	}
+	if rest, err := repo.ListRecords(ctx, appointment.ID(apptID(4)), 10); err != nil || len(rest) != 0 {
+		t.Fatalf("after the last = %v, %v", rest, err)
 	}
 }
 
