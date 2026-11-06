@@ -7,6 +7,10 @@ sidebar_position: 14
 
 # Aggregate design canvas
 
+:::caution[DockAppointment moved (ADR 0019)]
+The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (only the one-shot `api republish-appointments` backfill does). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
+:::
+
 Following the ddd-crew [Aggregate Design Canvas v1.1](https://github.com/ddd-crew/aggregate-design-canvas),
 one canvas per aggregate root. Sections 8 (throughput) and 9 (size) are
 **estimates**, labelled as such: nothing in the repository measures them.

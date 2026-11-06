@@ -117,7 +117,7 @@ never a source of truth, and can be rebuilt by replay (see below).
 |---|---|---|
 | `analytics_processed_events` | applied CloudEvents `id` (with `event_type`, `occurred_at`); `max(occurred_at)` is the freshness | every applied event, same transaction as its effect |
 | `asn_facts` | ASN: `expected_arrival`, `registered_at`, `cancelled_at`, earliest `receipt_opened_at` | `ASNRegistered`, `ASNCancelled`, `ReceiptOpened` |
-| `appointment_facts` | appointment: `booked_at`, `checked_in_at`, `cancelled_at`, `completed_at` | the four `DockAppointment*` events |
+| `appointment_facts` | appointment: `booked_at`, `checked_in_at`, `cancelled_at`, `completed_at` | the four legacy `DockAppointment*` events (no new ones since ADR 0019) |
 | `receipt_facts` | receipt: `asn_number`, `opened_at`, `closed_at` | `ReceiptOpened`, `ReceiptClosed` |
 | `receipt_line_events` | `ReceiptLineReceived` (keyed by event id): line, SKU, quantity, `Good`/`Damaged` | `ReceiptLineReceived` |
 | `receipt_discrepancies` | (receipt, line, kind `Short`/`Over`/`Damaged`) stamped with the close time | `ReceiptClosed` |
@@ -134,7 +134,7 @@ All messages are CloudEvents 1.0 in structured mode
 
 | Topic | Direction | Binary | Consumer group | Notes |
 |---|---|---|---|---|
-| `warehouse.inbound-receiving.events` | produced | `cmd/api` (outbox relay) | — | the 9 integration events; key = ASN number (ASN and receipt events) or appointment id |
+| `warehouse.inbound-receiving.events` | produced | `cmd/api` (outbox relay) | — | the 7 integration events; key = ASN number (ASN and receipt events). The four legacy `DockAppointment*` events are no longer raised (ADR 0019) except by `republish-appointments` |
 | `warehouse.inbound-receiving.analytics` | produced and consumed | `cmd/api` produces; `cmd/inbound-projector` consumes | `ANALYTICS_CONSUMER_GROUP` (`inbound-receiving-analytics`) | same 9 events, same `id` and `type` as the integration row, `dataschema` `...:analytics:...` |
 | `warehouse.inbound-receiving.analytics.dlq` | produced | `cmd/inbound-projector` | — | raw poison message + `x-dlq-source-topic`, `x-dlq-source-partition`, `x-dlq-source-offset`, `x-dlq-error`, `x-dlq-failed-at` headers; auto-created on first write |
 | `warehouse.product-master.events` | consumed | `cmd/api` (only when `PRODUCT_MODE=kafka`) | `PRODUCT_CONSUMER_GROUP` (`inbound-receiving-product` in kind) | `ProductRegistered` fills `known_skus` |
@@ -286,7 +286,7 @@ is logged, never echoed).
 
 The first start under a new consumer group reads the source topic from the
 beginning. Readiness does not wait for that replay, so `POST /asns` /
-`POST /appointments` may answer `422 unknown-sku` / `unknown-dock-door` until
+`POST /receipts` may answer `422 unknown-sku` / `unknown-appointment` until
 the consumer has caught up (there is no `permissive` mode any more, ADR 0011).
 
 ### Re-publish outbox rows

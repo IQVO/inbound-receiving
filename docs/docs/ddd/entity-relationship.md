@@ -7,6 +7,10 @@ sidebar_position: 18
 
 # Entity-relationship diagram
 
+:::caution[DockAppointment moved (ADR 0019)]
+The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (only the one-shot `api republish-appointments` backfill does). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
+:::
+
 The final schemas after all migrations. There are **two** Postgres databases:
 
 - the **OLTP** database (`DATABASE_URL`): migrations `0001_inbound_receiving`

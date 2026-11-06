@@ -60,7 +60,7 @@ consumer that started before its topic existed does not pick it up when it
 appears (restart `cmd/api` afterwards). In the kind cluster they exist; on the
 compose broker publish the first events (or `kafka-topics --create`) first.
 Writes then need the SKU / door in the local copies: `POST /asns` returns
-`422 unknown-sku` and `POST /appointments` `422 unknown-dock-door` until the
+`422 unknown-sku` until the
 copy has seen them.
 
 With no OpenTelemetry collector on `localhost:4317` you will also see periodic
@@ -94,21 +94,15 @@ curl -si -X POST localhost:8080/asns -H 'Content-Type: application/json' \
 Sending the same key and body again replays the same `201`; the same key with
 a different body returns `409 idempotency-key-reused`.
 
-Book a dock appointment (the door must be a known inbound door in the local
-copy; `GET /docks` lists them with `"mode":"kafka"`):
+Dock appointments are booked in dock-scheduling since ADR 0019. This service
+keeps a read-only copy fed by `DockAppointmentBooked` / `DockAppointmentCancelled`
+(`GET /appointments` and `GET /appointments/{appointmentId}` are deprecated), and
+the three former write routes answer `410`:
 
 ```bash
-curl -s -X POST localhost:8080/appointments -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: k-appt-1' \
-  -d '{"doorCode":"DOCK-IN-01","carrier":"ACME Freight","windowStart":"2026-10-13T09:00:00Z",
-       "windowEnd":"2026-10-13T10:00:00Z","asnNumbers":["ASN-1001"]}'
-# 201 {"appointmentId":"appt-aab0ea5f-...","doorCode":"DOCK-IN-01","state":"Booked","version":1,...}
+curl -s -i -X POST localhost:8080/appointments -H 'Content-Type: application/json' -d '{}'
+# 410 {"type":".../appointment-moved","title":"Appointment writes moved to dock-scheduling",...}
 ```
-
-Checking in outside the window is refused:
-`POST /appointments/{appointmentId}/check-ins` →
-`409 outside-check-in-window` ("check-in is only allowed from 30 minutes before
-the window until it ends").
 
 Open a receipt (walk-in, no appointment), receive lines and close it:
 
@@ -169,8 +163,8 @@ at the cluster broker directly.
 
 Use your own group ids locally so you do not steal partitions from the
 in-cluster deployment (`inbound-receiving-product`,
-`inbound-receiving-dock-doors`). `POST /asns` and `POST /appointments` only
-accept SKUs and doors already seen on `warehouse.product-master.events` and
+`inbound-receiving-dock-doors`, plus `DOCK_APPOINTMENT_CONSUMER_GROUP`). `POST /asns` only
+accepts SKUs, and `POST /receipts` doors, already seen on `warehouse.product-master.events` and
 `warehouse.facility.events`.
 
 ## Run the analytics side
