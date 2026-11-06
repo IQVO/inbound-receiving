@@ -34,6 +34,7 @@ import (
 const (
 	topicProducts  = "warehouse.product-master.events"
 	topicFacility  = "warehouse.facility.events"
+	topicDockSched = "warehouse.dock-scheduling.events"
 	topicEvents    = "warehouse.inbound-receiving.events"
 	topicAnalytics = "warehouse.inbound-receiving.analytics"
 
@@ -232,6 +233,7 @@ func (e env) apply(t *testing.T) {
 	t.Setenv("DOCK_DOOR_MODE", "kafka")
 	t.Setenv("DOCK_DOOR_CONSUMER_GROUP", "inbound-receiving-dock-doors-e2e")
 	t.Setenv("PACKAGING_CONSUMER_GROUP", "inbound-receiving-packaging-e2e")
+	t.Setenv("DOCK_APPOINTMENT_CONSUMER_GROUP", "inbound-receiving-appointments-e2e")
 	t.Setenv("HTTP_ADDR", e.addr)
 	t.Setenv("SHUTDOWN_DRAIN_DELAY", "0")
 	t.Setenv("OUTBOX_RELAY_INTERVAL", "200ms")
@@ -467,12 +469,27 @@ func phaseLocalCopies(t *testing.T, s *service, w *world) {
 		"/warehouse/facility-layout", "com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered", doorCode,
 		map[string]any{"eventName": "LocationSlotRegistered", "locationCode": doorCode, "locationType": "DockDoor", "role": "Dock", "dockFlow": "Inbound", "maxWeightKg": 0, "maxVolumeM3": 0})})
 
-	waitFor(t, 60*time.Second, "both local copies to be fed from Kafka", func() bool {
+	// dock-scheduling books the appointment (ADR 0019); this context only
+	// copies it. The Booked event is delivered twice under one CloudEvents id.
+	w.apptID = "appt-00000000-0000-4000-8000-0000000000e2"
+	start := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Hour)
+	booked := inputEvent(t, "appt-evt-1", "/warehouse/dock-scheduling", "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked",
+		w.apptID, map[string]any{"appointment_id": w.apptID, "site_id": "WH1", "direction": "INBOUND", "door_code": doorCode, "carrier": "ACME Freight",
+			"window_start": start.Format(time.RFC3339), "window_end": start.Add(2 * time.Hour).Format(time.RFC3339), "asn_numbers": []string{"ASN-1"},
+			"provenance": "native", "version": 1})
+	produce(t, w.brokers, topicDockSched, kafkago.Message{Key: []byte(w.apptID), Value: booked}, kafkago.Message{Key: []byte(w.apptID), Value: booked})
+
+	waitFor(t, 60*time.Second, "the three local copies to be fed from Kafka", func() bool {
 		return w.db.count(`SELECT count(*) FROM known_skus WHERE sku = 'SKU-1'`) == 1 &&
-			w.db.count(`SELECT count(*) FROM dock_doors WHERE door_code = $1`, doorCode) == 1
+			w.db.count(`SELECT count(*) FROM dock_doors WHERE door_code = $1`, doorCode) == 1 &&
+			w.db.count(`SELECT count(*) FROM appointments WHERE id = $1 AND version = 1 AND state = 'Booked'`, w.apptID) == 1
 	})
-	if n := w.db.count(`SELECT count(*) FROM processed_events`); n != 2 {
-		t.Fatalf("processed_events = %d, want 2 (the duplicate delivery was deduped by CloudEvents id)", n)
+	if n := w.db.count(`SELECT count(*) FROM processed_events`); n != 3 {
+		t.Fatalf("processed_events = %d, want 3 (the duplicate delivery was deduped by CloudEvents id)", n)
+	}
+	// Applying the event published nothing (no loop, ADR 0019).
+	if n := w.db.count(`SELECT count(*) FROM outbox_events`); n != 0 {
+		t.Fatalf("outbox rows after the appointment copy = %d, want 0", n)
 	}
 	docks := s.call(http.MethodGet, "/docks", "", "", http.StatusOK)
 	if !strings.Contains(docks, `"mode":"kafka"`) || !strings.Contains(docks, doorCode) {
@@ -487,7 +504,7 @@ func assertProblem(t *testing.T, body, slug string) {
 	}
 }
 
-// Phase 3: the whole receiving workflow through REST only. Five occurrences
+// Phase 3: the whole receiving workflow through REST only. Four occurrences
 // reach the outbox, each written to the integration AND the analytics topic.
 func phaseWorkflow(t *testing.T, s *service, w *world) {
 	t.Helper()
@@ -499,26 +516,25 @@ func phaseWorkflow(t *testing.T, s *service, w *world) {
 	assertProblem(t, s.call(http.MethodPost, "/asns", `{"asnNumber":"ASN-2","supplierRef":"ACME","lines":[{"lineNo":1,"sku":"SKU-1","expectedQty":1}]}`,
 		"reg-1", http.StatusConflict), "idempotency-key-reused")
 
-	start := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Hour)
-	appt := fmt.Sprintf(`{"doorCode":%q,"carrier":"ACME Freight","windowStart":%q,"windowEnd":%q,"asnNumbers":["ASN-1"]}`,
-		doorCode, start.Format(time.RFC3339), start.Add(2*time.Hour).Format(time.RFC3339))
-	var booked struct {
-		AppointmentID string `json:"appointmentId"`
+	// The former write routes answer 410 (ADR 0019); the appointment arrived
+	// through Kafka and is readable (deprecated GET) from the local copy.
+	for _, path := range []string{"/appointments", "/appointments/" + w.apptID + "/check-ins", "/appointments/" + w.apptID + "/cancellations"} {
+		assertProblem(t, s.call(http.MethodPost, path, "{}", "gone-"+path, http.StatusGone), "appointment-moved")
 	}
-	mustDecode(t, s.call(http.MethodPost, "/appointments", appt, "book-1", http.StatusCreated), &booked)
-	w.apptID = booked.AppointmentID
+	if got := s.call(http.MethodGet, "/appointments/"+w.apptID, "", "", http.StatusOK); !strings.Contains(got, w.apptID) || !strings.Contains(got, doorCode) {
+		t.Fatalf("GET /appointments/{id} = %s, want the copied appointment", got)
+	}
 
 	var opened struct {
 		ReceiptID string `json:"receiptId"`
 	}
-	mustDecode(t, s.call(http.MethodPost, "/receipts", `{"asnNumber":"ASN-1"}`, "open-1", http.StatusCreated), &opened)
+	mustDecode(t, s.call(http.MethodPost, "/receipts", fmt.Sprintf(`{"asnNumber":"ASN-1","appointmentId":%q}`, w.apptID), "open-1", http.StatusCreated), &opened)
 	w.receiptID = opened.ReceiptID
 	s.call(http.MethodPost, "/receipts/"+w.receiptID+"/lines", `{"lineNo":1,"quantity":10,"condition":"Good"}`, "line-1", http.StatusCreated)
 	s.call(http.MethodPost, "/receipts/"+w.receiptID+"/closures", "", "close-1", http.StatusOK)
 
 	w.expected = []expectedEvent{
 		{"asn", "ASNRegistered", "ASN-1", "ASN-1"},
-		{"dockappointment", "DockAppointmentBooked", w.apptID, w.apptID},
 		{"receipt", "ReceiptOpened", w.receiptID, "ASN-1"},
 		{"receipt", "ReceiptLineReceived", w.receiptID, "ASN-1"},
 		{"receipt", "ReceiptClosed", w.receiptID, "ASN-1"},
@@ -699,7 +715,7 @@ func phaseTopics(t *testing.T, w *world) {
 		Quantity  int64  `json:"quantity"`
 		Condition string `json:"condition"`
 	}
-	mustDecode(t, string(decodeEnvelope(t, ev[3]).Data), &line)
+	mustDecode(t, string(decodeEnvelope(t, ev[2]).Data), &line)
 	if line.ReceiptID != w.receiptID || line.SKU != "SKU-1" || line.Quantity != 10 || line.Condition != "Good" {
 		t.Fatalf("ReceiptLineReceived data = %+v", line)
 	}
@@ -722,8 +738,8 @@ func phaseRestart(t *testing.T, w *world, s *service) *service {
 	// Give the restarted consumers time to (wrongly) re-apply and the relay to
 	// (wrongly) re-publish; neither may happen.
 	time.Sleep(3 * time.Second)
-	if n := w.db.count(`SELECT count(*) FROM processed_events`); n != 4 {
-		t.Fatalf("processed_events after the restart = %d, want still 4", n)
+	if n := w.db.count(`SELECT count(*) FROM processed_events`); n != 5 {
+		t.Fatalf("processed_events after the restart = %d, want still 5", n)
 	}
 	noMoreMessages(t, w.brokers, topicEvents, len(w.expected))
 	noMoreMessages(t, w.brokers, topicAnalytics, len(w.expected))
@@ -777,6 +793,7 @@ func TestRunOnRealPostgresAndKafka(t *testing.T) {
 	// The input topics are infra's: create them the way the cluster has them.
 	createTopic(t, brokers, topicProducts)
 	createTopic(t, brokers, topicFacility)
+	createTopic(t, brokers, topicDockSched)
 	w := &world{e: env{dbURL: dbURL, brokers: brokers, addr: freeAddr(t)}, pg: pg, kc: kc, db: newPGView(t, dbURL), brokers: brokers}
 
 	s := w.e.start(t)
@@ -797,7 +814,7 @@ func TestRunOnRealPostgresAndKafka(t *testing.T) {
 // ReceiptCartonReceived, and never a site_id.
 func assertCartonPayloads(t *testing.T, ev []kafkago.Message, w *world) {
 	t.Helper()
-	for _, i := range []int{5, 7, 8, 9, 10} {
+	for _, i := range []int{4, 6, 7, 8, 9} {
 		var raw map[string]any
 		mustDecode(t, string(decodeEnvelope(t, ev[i]).Data), &raw)
 		if _, has := raw["site_id"]; has {
@@ -805,7 +822,7 @@ func assertCartonPayloads(t *testing.T, ev []kafkago.Message, w *world) {
 		}
 	}
 	var reg map[string]any
-	mustDecode(t, string(decodeEnvelope(t, ev[5]).Data), &reg)
+	mustDecode(t, string(decodeEnvelope(t, ev[4]).Data), &reg)
 	cartons, _ := reg["cartons"].([]any)
 	if reg["owner_ref"] != "tenant-7f3a" || len(cartons) != 2 {
 		t.Fatalf("ASNRegistered of the carton ASN = %v", reg)
@@ -824,20 +841,20 @@ func assertCartonPayloads(t *testing.T, ev []kafkago.Message, w *world) {
 		PackGTIN  string `json:"pack_gtin"`
 		Cases     int64  `json:"cases"`
 	}
-	mustDecode(t, string(decodeEnvelope(t, ev[7]).Data), &line)
+	mustDecode(t, string(decodeEnvelope(t, ev[6]).Data), &line)
 	if line.ReceiptID != w.cartonReceipt || line.Quantity != 20 || line.OwnerRef != "tenant-7f3a" || line.SSCC != ssccA || line.Cases != 1 ||
 		line.PackGTIN != caseGTIN {
 		t.Fatalf("carton ReceiptLineReceived = %+v", line)
 	}
 	var carton cartonReceivedData
-	mustDecode(t, string(decodeEnvelope(t, ev[8]).Data), &carton)
+	mustDecode(t, string(decodeEnvelope(t, ev[7]).Data), &carton)
 	if carton.SSCC != ssccA || carton.LPN != ssccA || !carton.Sealed || carton.OwnerRef != "tenant-7f3a" || len(carton.Contents) != 1 ||
 		carton.Contents[0].GTIN != eachGTIN || carton.Contents[0].Qty != 20 || carton.Contents[0].Condition != "Good" {
 		t.Fatalf("ReceiptCartonReceived = %+v", carton)
 	}
 	var dup, missing cartonDiscrepancyData
-	mustDecode(t, string(decodeEnvelope(t, ev[9]).Data), &dup)
-	mustDecode(t, string(decodeEnvelope(t, ev[10]).Data), &missing)
+	mustDecode(t, string(decodeEnvelope(t, ev[8]).Data), &dup)
+	mustDecode(t, string(decodeEnvelope(t, ev[9]).Data), &missing)
 	if dup.Kind != "DuplicateSscc" || dup.SSCC != ssccA || missing.Kind != "MissingCarton" || missing.Expected != ssccB || missing.ReceiptID != w.cartonReceipt {
 		t.Fatalf("CartonDiscrepancyRaised = %+v / %+v", dup, missing)
 	}
