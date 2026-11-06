@@ -6,7 +6,7 @@ sidebar_position: 1
 
 # Downstream consumers
 
-`inbound-receiving` publishes its eleven events on
+`inbound-receiving` publishes its seven events on
 `warehouse.inbound-receiving.events`. None of its consumers calls this service
 at request time: each keeps what it needs from the events (ADR 0001, ADR 0003).
 The table reflects each consumer's code on its `develop` branch.
@@ -14,7 +14,7 @@ The table reflects each consumer's code on its `develop` branch.
 | Consumer | Type consumed | Consumer group env | Mode switch | What it does with it | Its ADR |
 | --- | --- | --- | --- | --- | --- |
 | `inventory-storage` (Core) | `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived` | `INBOUND_RECEIPT_CONSUMER_GROUP` (required, boot error if unset: its ADR 0042) | none | for `condition=Good` runs its existing ReceiveStock use case with `(sku, quantity)`, so the units are staged and Unlocated until stowed; `Damaged` lines are logged and counted (`inventory.inbound_receipt_units{outcome=damaged_not_booked}`), not booked; redelivery is deduped on the CloudEvents id | 0037 |
-| `warehouse-planning` (Core, `wes`) | `...dockappointment.DockAppointmentBooked` and `...DockAppointmentCancelled` | `INBOUND_DEMAND_CONSUMER_GROUP` (required there; warehouse-infra pins `warehouse-planning-inbound-demand`) | none | upserts one `inbound_appointments` row per `appointment_id` at its configured site (`DEMAND_SITE_ID`) as inbound-labour demand; last writer wins on the CloudEvents `time`, a Cancelled wins a tie and a Cancelled that arrives before its Booked is kept as a tombstone; failures are retried 5 times, deterministic ones are dead-lettered to `warehouse.inbound-receiving.events.dlq` | 0017 (warehouse-planning) |
+| `warehouse-planning` (Core, `wes`) | legacy `...inbound-receiving.dockappointment.DockAppointmentBooked` and `...DockAppointmentCancelled` (no longer raised since ADR 0019; moves to dock-scheduling's events at stage D) | `INBOUND_DEMAND_CONSUMER_GROUP` (required there; warehouse-infra pins `warehouse-planning-inbound-demand`) | none | upserts one `inbound_appointments` row per `appointment_id` at its configured site (`DEMAND_SITE_ID`) as inbound-labour demand; last writer wins on the CloudEvents `time`, a Cancelled wins a tie and a Cancelled that arrives before its Booked is kept as a tombstone; failures are retried 5 times, deterministic ones are dead-lettered to `warehouse.inbound-receiving.events.dlq` | 0017 (warehouse-planning) |
 
 Evidence (on the consumer's `develop`): inventory-storage
 `internal/adapters/inbound/kafka/inbound_receipt_consumer.go`,
@@ -69,12 +69,11 @@ inbound process path is superseded by that ADR.
 
 ## Events with no consumer yet
 
-`ASNRegistered`, `ASNCancelled`, `DockAppointmentCheckedIn`,
-`DockAppointmentCompleted`, `ReceiptOpened` and `ReceiptClosed` are published but
-no sibling consumes them on `develop` today (`warehouse-planning` reads only
-`DockAppointmentBooked` and `DockAppointmentCancelled`; its ADR 0017 lists
-`ASNRegistered`, `DockAppointmentCheckedIn` and `DockAppointmentCompleted` as not
-consumed). All eleven events are also copied to
+`ASNRegistered`, `ASNCancelled`, `ReceiptOpened` and `ReceiptClosed` are published but
+no sibling consumes them on `develop` today. The four `DockAppointment*` events
+are no longer raised ([ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling));
+`warehouse-planning` (ADR 0017) reads the legacy `DockAppointmentBooked` and
+`DockAppointmentCancelled` until its stage D switches it to dock-scheduling. All seven events are also copied to
 the internal analytics topic, whose only consumer is this context's own
 `inbound-projector` ([ADR 0006](/docs/adr/0006-analytics-read-side)); it is not
 an integration contract.

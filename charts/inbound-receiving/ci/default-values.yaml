@@ -9,3 +9,4 @@ config:
   productConsumerGroup: "inbound-receiving-product"
   dockDoorConsumerGroup: "inbound-receiving-dock-doors"
   packagingConsumerGroup: "inbound-receiving-packaging"
+  dockAppointmentConsumerGroup: "inbound-receiving-dock-appointments"

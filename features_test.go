@@ -60,6 +60,7 @@ type world struct {
 	outbox *memory.OutboxRepo
 	skus   *memory.KnownSkus
 	doors  *memory.DockDoors
+	appts  *memory.AppointmentRepo
 
 	packaging *memory.PackagingView
 
@@ -76,13 +77,19 @@ type world struct {
 	body   []byte
 
 	appointment, receipt string
-	lpn                  string
-	limits               receipt.CartonLimits
-	listQuery            string
+	// apptSeq numbers the appointment ids dock-scheduling "mints"; apptVersion
+	// is the version of the last announcement of the current appointment.
+	apptSeq     int
+	apptVersion int64
+	lastAppt    apptAnnouncement
+	lpn         string
+	limits      receipt.CartonLimits
+	listQuery   string
 }
 
 func (w *world) start() {
 	asns, appts, receipts := memory.NewAsnRepo(), memory.NewAppointmentRepo(), memory.NewReceiptRepo()
+	w.appts = appts
 	w.skus, w.doors, w.packaging = memory.NewKnownSkus(), memory.NewDockDoors(), memory.NewPackagingView()
 	ob, processed := memory.NewOutboxRepo(), memory.NewProcessedEventRepo()
 	w.outbox, w.processed = ob, processed
@@ -90,7 +97,7 @@ func (w *world) start() {
 	w.skuMode, w.doorMode = usecases.ModePermissive, usecases.ModePermissive
 	w.status, w.header, w.body, w.keys, w.appointment, w.receipt, w.listQuery = 0, nil, nil, 0, "", "", ""
 	w.lpn, w.limits = "", receipt.CartonLimits{}
-	w.wave2 = wave2State{}
+	w.wave2, w.apptSeq, w.apptVersion, w.lastAppt = wave2State{}, 0, 0, apptAnnouncement{}
 	uow := memory.NewUnitOfWork(asns, appts, receipts, w.skus, w.doors, w.packaging, ob, processed)
 	w.uow = uow
 	writer := usecases.Writer{
@@ -102,25 +109,22 @@ func (w *world) start() {
 	// before the first request.
 	w.build = func() *httptest.Server {
 		s := &inboundhttp.Server{
-			RegisterAsn:        &usecases.RegisterAsn{Writer: writer, SkuMode: w.skuMode, Skus: w.skus},
-			CancelAsn:          &usecases.CancelAsn{Writer: writer},
-			GetAsn:             &usecases.GetAsn{Asns: asns},
-			GetAsnCartons:      &usecases.GetAsnCartons{Asns: asns, Receipts: receipts},
-			ListAsns:           &usecases.ListAsns{Asns: asns},
-			BookAppointment:    &usecases.BookAppointment{Writer: writer, DoorMode: w.doorMode, Doors: w.doors},
-			CheckInAppointment: &usecases.CheckInAppointment{Writer: writer},
-			CancelAppointment:  &usecases.CancelAppointment{Writer: writer},
-			GetAppointment:     &usecases.GetAppointment{Appointments: appts},
-			ListAppointments:   &usecases.ListAppointments{Appointments: appts},
-			OpenReceipt:        &usecases.OpenReceipt{Writer: writer},
-			ReceiveLine:        &usecases.ReceiveLine{Writer: writer},
-			ReceiveScan:        &usecases.ReceiveScan{Writer: writer, Packaging: w.packaging, Limits: w.limits},
-			GetCartonLabel:     &usecases.GetCartonLabel{Receipts: receipts},
-			CloseReceipt:       &usecases.CloseReceipt{Writer: writer},
-			GetReceipt:         &usecases.GetReceipt{Receipts: receipts},
-			ListReceipts:       &usecases.ListReceipts{Receipts: receipts},
-			ListDocks:          &usecases.ListDocks{Doors: w.doors, Mode: w.doorMode},
-			Idempotency:        idem,
+			RegisterAsn:      &usecases.RegisterAsn{Writer: writer, SkuMode: w.skuMode, Skus: w.skus},
+			CancelAsn:        &usecases.CancelAsn{Writer: writer},
+			GetAsn:           &usecases.GetAsn{Asns: asns},
+			GetAsnCartons:    &usecases.GetAsnCartons{Asns: asns, Receipts: receipts},
+			ListAsns:         &usecases.ListAsns{Asns: asns},
+			GetAppointment:   &usecases.GetAppointment{Appointments: appts},
+			ListAppointments: &usecases.ListAppointments{Appointments: appts},
+			OpenReceipt:      &usecases.OpenReceipt{Writer: writer},
+			ReceiveLine:      &usecases.ReceiveLine{Writer: writer},
+			ReceiveScan:      &usecases.ReceiveScan{Writer: writer, Packaging: w.packaging, Limits: w.limits},
+			GetCartonLabel:   &usecases.GetCartonLabel{Receipts: receipts},
+			CloseReceipt:     &usecases.CloseReceipt{Writer: writer},
+			GetReceipt:       &usecases.GetReceipt{Receipts: receipts},
+			ListReceipts:     &usecases.ListReceipts{Receipts: receipts},
+			ListDocks:        &usecases.ListDocks{Doors: w.doors, Mode: w.doorMode},
+			Idempotency:      idem,
 		}
 		return httptest.NewServer(inboundhttp.NewRouter(s))
 	}
@@ -252,18 +256,6 @@ func (w *world) asnIsRegistered(number string) error {
 
 func (w *world) asnIsCancelled(number string) error {
 	return w.mustCall(http.MethodPost, "/asns/"+number+"/cancellations", "")
-}
-
-func (w *world) appointmentIsBooked(door, from, to, number string) error {
-	body := fmt.Sprintf(`{"doorCode":%q,"carrier":"ACME Freight","windowStart":%q,"windowEnd":%q,"asnNumbers":[%q]}`, door, from, to, number)
-	if err := w.mustCall(http.MethodPost, "/appointments", body); err != nil {
-		return err
-	}
-	return w.rememberID("appointmentId", &w.appointment)
-}
-
-func (w *world) appointmentIsCheckedIn() error {
-	return w.mustCall(http.MethodPost, "/appointments/{appointment}/check-ins", "")
 }
 
 func (w *world) walkInReceiptIsOpen(number string) error {
@@ -491,8 +483,6 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the clock is at "([^"]*)"$`, w.clockIsAt)
 	sc.Step(`^the ASN "([^"]*)" is registered$`, w.asnIsRegistered)
 	sc.Step(`^the ASN "([^"]*)" is cancelled$`, w.asnIsCancelled)
-	sc.Step(`^an appointment at door "([^"]*)" from "([^"]*)" to "([^"]*)" covers the ASN "([^"]*)"$`, w.appointmentIsBooked)
-	sc.Step(`^the appointment is checked in$`, w.appointmentIsCheckedIn)
 	sc.Step(`^a walk-in receipt is open for the ASN "([^"]*)"$`, w.walkInReceiptIsOpen)
 	sc.Step(`^a receipt is open for the ASN "([^"]*)" on the appointment$`, w.receiptIsOpenOnAppointment)
 	sc.Step(`^the receipt is closed$`, w.receiptIsClosed)
@@ -509,5 +499,6 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the outbox is empty$`, w.theOutboxIsEmpty)
 	sc.Step(`^the listed "([^"]*)" values are "([^"]*)"$`, w.theListedItemsAre)
 	w.registerWave2(sc)
+	w.registerAppointments(sc)
 	w.registerCartons(sc)
 }

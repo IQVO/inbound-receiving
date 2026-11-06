@@ -22,7 +22,7 @@ SAME read use cases the REST adapter calls. Decision record:
   `ListAsns`, `GetAppointment`, `ListAppointments`, `GetReceipt`,
   `ListReceipts`, `ListDocks`); never add a write use case, a repository
   `Save`, the outbox or an encoder to it. Writes (register/cancel an ASN,
-  book/check in/cancel an appointment, open/receive/close a receipt) are
+  open/receive/close a receipt) are
   REST-only because their events feed other contexts and their idempotency and
   version guards live on the REST contract.
 - **No auth of any kind** (fleet-wide revert 2026-09-11).

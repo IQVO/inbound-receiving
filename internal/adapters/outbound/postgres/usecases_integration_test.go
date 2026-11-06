@@ -20,7 +20,6 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
 	"github.com/claudioed/inbound-receiving/internal/application/repository"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
-	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 )
 
@@ -97,84 +96,6 @@ func TestUseCasesCommitStateAndOutboxAtomically(t *testing.T) {
 	}
 	if got := outboxTypes(t, pool); len(got) != 4 {
 		t.Fatalf("the outbox row of a rolled-back unit of work survived: %v", got)
-	}
-}
-
-// TestBookAppointmentOverlapIsAtomicUnderConcurrentBookings fires many
-// bookings of the SAME door window at once: the per-door advisory lock must
-// let exactly one through and refuse the rest as overlaps.
-func TestBookAppointmentOverlapIsAtomicUnderConcurrentBookings(t *testing.T) {
-	ctx := context.Background()
-	pool := startPostgresPool(t)
-	w := newWriter(pool)
-	const bookers = 8
-	for i := 0; i < bookers; i++ {
-		registerAsn(t, w, "ASN-"+string(rune('A'+i)))
-	}
-	start := time.Now().Add(24 * time.Hour).Truncate(time.Minute)
-
-	var wg sync.WaitGroup
-	results := make(chan error, bookers)
-	for i := 0; i < bookers; i++ {
-		wg.Add(1)
-		go func(asnNumber string) {
-			defer wg.Done()
-			_, err := (&usecases.BookAppointment{Writer: w}).Handle(ctx, usecases.BookAppointmentCommand{
-				DoorCode: "DOOR-1", Carrier: "C", WindowStart: start, WindowEnd: start.Add(time.Hour), AsnNumbers: []string{asnNumber},
-			})
-			results <- err
-		}("ASN-" + string(rune('A'+i)))
-	}
-	wg.Wait()
-	close(results)
-
-	booked, overlaps := 0, 0
-	for err := range results {
-		switch {
-		case err == nil:
-			booked++
-		case errors.Is(err, appointment.ErrWindowOverlap):
-			overlaps++
-		default:
-			t.Errorf("unexpected error: %v", err)
-		}
-	}
-	if booked != 1 || overlaps != bookers-1 {
-		t.Fatalf("booked=%d overlaps=%d, want 1 and %d", booked, overlaps, bookers-1)
-	}
-	active, err := w.Appointments.ActiveOnDoor(ctx, "DOOR-1")
-	if err != nil || len(active) != 1 {
-		t.Fatalf("active on door = %d %v", len(active), err)
-	}
-}
-
-// TestBookAppointmentDifferentDoorsDoNotBlockEachOther: the lock is per
-// door, so concurrent bookings of other doors all succeed.
-func TestBookAppointmentDifferentDoorsDoNotBlockEachOther(t *testing.T) {
-	ctx := context.Background()
-	pool := startPostgresPool(t)
-	w := newWriter(pool)
-	registerAsn(t, w, "ASN-1")
-	start := time.Now().Add(24 * time.Hour)
-	doors := []string{"DOOR-1", "DOOR-2", "DOOR-3", "DOOR-4"}
-	var wg sync.WaitGroup
-	errs := make(chan error, len(doors))
-	for _, door := range doors {
-		wg.Add(1)
-		go func(door string) {
-			defer wg.Done()
-			_, err := (&usecases.BookAppointment{Writer: w}).Handle(ctx, usecases.BookAppointmentCommand{
-				DoorCode: door, Carrier: "C", WindowStart: start, WindowEnd: start.Add(time.Hour), AsnNumbers: []string{"ASN-1"},
-			})
-			errs <- err
-		}(door)
-	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Errorf("booking on a free door failed: %v", err)
-		}
 	}
 }
 

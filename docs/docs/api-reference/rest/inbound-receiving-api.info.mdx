@@ -31,20 +31,28 @@ import Export from "@theme/ApiExplorer/Export";
 
 The WMS-tier inbound dock workflow of the warehouse-systems platform
 (ADR 0001): the supplier's advance ship notice (**ASN**), the carrier's
-booked **dock appointment** and the counted **receipt**, with the
+**dock appointment** (a read-only copy: dock-scheduling owns it since ADR 0019) and the counted **receipt**, with the
 discrepancies found when the receipt closes (ADR 0002). It decides nothing
 about where received goods go; Good lines are handed to inventory-storage
 as events (ADR 0003) and stow stays an RF action there.
 
-Every `POST` requires an `Idempotency-Key` header (fleet REST API
-guideline): a missing key is a 400 `idempotency-key-required`, a retry with
+Every `POST` except the three retired appointment writes requires an
+`Idempotency-Key` header (fleet REST API guideline): a missing key is a 400 `idempotency-key-required`, a retry with
 the same key and request (method, path, body) replays the original response
 with `Idempotency-Replayed: true`, the same key with a different request is
 a 409 `idempotency-key-reused`. Lifecycle transitions are transition
-resources: `POST /asns/{asnNumber}/cancellations`,
-`/appointments/{appointmentId}/check-ins`,
-`/appointments/{appointmentId}/cancellations` and
+resources: `POST /asns/{asnNumber}/cancellations` and
 `/receipts/{receiptId}/closures`.
+
+**Appointments moved to dock-scheduling** (ADR 0019, plan YD-0002).
+`POST /appointments`, `POST /appointments/{appointmentId}/check-ins` and
+`POST /appointments/{appointmentId}/cancellations` answer `410 Gone` with
+problem type `appointment-moved`, whose `detail` names the dock-scheduling
+(or yard-management) operation to call. `GET /appointments` and
+`GET /appointments/{appointmentId}` are **deprecated**: they read a local
+copy fed by dock-scheduling's `DockAppointmentBooked` and
+`DockAppointmentCancelled` events (inbound appointments only) and will be
+removed once consumers read dock-scheduling directly.
 
 Mutable resources carry a `version` (starts at 1, +1 per accepted change)
 and a matching strong `ETag: "<version>"` header. A transition `POST` may send
@@ -65,14 +73,13 @@ The slug catalogue: `malformed-request`, `invalid-query`,
 `invalid-supplier-ref`, `asn-requires-lines`, `invalid-line-no`,
 `duplicate-sku`, `invalid-sku`, `invalid-quantity`, `invalid-reason`,
 `invalid-appointment-id`, `invalid-receipt-id`, `invalid-door-code`,
-`invalid-carrier`, `invalid-window`, `window-in-past`,
+`invalid-carrier`, `invalid-window`,
 `appointment-requires-asns`, `duplicate-asn-number`, `invalid-condition`,
 `asn-not-found`, `appointment-not-found`, `receipt-not-found`,
 `asn-already-exists`, `asn-in-progress`, `asn-terminal`,
-`asn-not-receivable`, `appointment-not-booked`,
-`appointment-not-checked-in`, `outside-check-in-window`,
-`door-window-overlap`, `receipt-already-open`, `receipt-closed`,
-`unknown-sku`, `unknown-dock-door`, `unknown-asn`, `unknown-appointment`,
+`asn-not-receivable`, `appointment-cancelled`,
+`receipt-already-open`, `receipt-closed`, `appointment-moved` (410),
+`unknown-sku`, `unknown-asn`, `unknown-appointment`,
 `asn-not-on-appointment`, `line-not-on-asn`, `invalid-owner-ref`,
 `invalid-carton-kind`, `invalid-carton`, `invalid-sscc`, `invalid-gtin`,
 `unsupported-gtin`, `invalid-scan-kind`, `invalid-scan`, `invalid-cases`,

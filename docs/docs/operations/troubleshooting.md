@@ -31,7 +31,7 @@ see [Observability](./observability.md) for their fields.
 
 | Status / slug | Cause | Check | Fix |
 |---|---|---|---|
-| `400 idempotency-key-required` | `POST /asns`, `/appointments`, `/receipts` or `/receipts/{receiptId}/lines` sent without `Idempotency-Key` | request headers | send a unique key (≤ 255 chars) per logical request |
+| `400 idempotency-key-required` | `POST /asns`, `/receipts` or `/receipts/{receiptId}/lines` sent without `Idempotency-Key` | request headers | send a unique key (≤ 255 chars) per logical request |
 | `400 malformed-request` | invalid JSON, unknown field, unparsable `If-Match`, body over the limit, or a key longer than 255 chars | request body/headers | fix the request |
 | `400 idempotency-key-invalid` | the key is not 1-128 printable ASCII characters | the request's `Idempotency-Key` header | send a UUID |
 | `409 idempotency-key-reused` | the same key was used earlier with a different method + path + body (SHA-256 fingerprint) | `idempotency_keys.request_hash` for that key | use a new key for a new request; a true retry must resend identical bytes |
@@ -41,8 +41,8 @@ see [Observability](./observability.md) for their fields.
 | `412 version-mismatch` | `If-Match` carried a stale version | compare with the current `ETag` | re-fetch and resend with the new `ETag` |
 | `409 asn-already-exists` | ASN number already registered | `GET /asns/{asnNumber}` | use a new number, or treat as already done |
 | `409 asn-in-progress`, `asn-terminal`, `asn-not-receivable` | ASN state does not allow the command (cancel while receiving, act on Closed/Cancelled, open a receipt on a non-receivable ASN) | `GET /asns/{asnNumber}` `state` | follow the lifecycle in [Receiving workflow](../overview/receiving-workflow.md) |
-| `409 appointment-not-booked`, `appointment-not-checked-in`, `outside-check-in-window` | appointment state or time does not allow check-in/cancellations/open | `GET /appointments/{appointmentId}` | check in inside the allowed window first |
-| `409 door-window-overlap` | another active (Booked/CheckedIn) appointment overlaps the window on that door | `GET /appointments?door=...` | pick another window or door |
+| `410 appointment-moved` | `POST /appointments`, `/check-ins` or `/cancellations` called: the DockAppointment moved to dock-scheduling (ADR 0019) | the `detail` names the operation | call dock-scheduling (book, cancel) or yard-management (gate check-in) |
+| `409 appointment-cancelled` | `POST /receipts` named an appointment that dock-scheduling cancelled | `GET /appointments/{appointmentId}` (deprecated, local copy) | open the receipt without it or against a live appointment |
 | `409 receipt-already-open` | the ASN already has an open receipt (unique partial index `receipts_one_open_per_asn`) | `GET /receipts?asnNumber=...&state=Open` | continue the open receipt |
 | `409 receipt-closed` | line received on a closed receipt | `GET /receipts/{receiptId}` | open a new receipt only if the ASN is still receivable |
 | `422 unknown-sku` | `PRODUCT_MODE=kafka` and the SKU is not in `known_skus` | `SELECT * FROM known_skus WHERE sku = ...`; product consumer logs | register the product in product-master; wait for the event |

@@ -46,6 +46,8 @@ type Encoder struct {
 	Topic string
 }
 
+var _ ports.LegacyAppointmentEncoder = (*Encoder)(nil)
+
 // NewEncoder returns an Encoder minting random UUID v4 ids.
 func NewEncoder() *Encoder { return &Encoder{NewID: uuid.NewString} }
 
@@ -67,7 +69,9 @@ func (e *Encoder) EncodeAsn(events ...asn.Event) ([]outbox.Message, error) {
 	return encodeAll(e, events, asnRow)
 }
 
-// EncodeAppointment encodes DockAppointment events in order.
+// EncodeAppointment encodes legacy DockAppointment events in order. The
+// service no longer raises them (ADR 0019); only the stage B backfill
+// (republish-appointments) calls this, and only on the integration topic.
 func (e *Encoder) EncodeAppointment(events ...appointment.Event) ([]outbox.Message, error) {
 	return encodeAll(e, events, appointmentRow)
 }

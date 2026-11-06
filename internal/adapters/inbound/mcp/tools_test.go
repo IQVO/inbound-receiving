@@ -123,8 +123,8 @@ func TestListAsns_MalformedQueries(t *testing.T) {
 	}
 }
 
-// seedAppointments books A (DOOR-1 08:00), B (DOOR-2 08:00) and C (DOOR-1
-// 12:00, then cancelled) for ASN-1, ASN-2 and ASN-3.
+// seedAppointments stores A (DOOR-1 08:00), B (DOOR-2 08:00) and C (DOOR-1
+// 12:00, cancelled) for ASN-1, ASN-2 and ASN-3.
 func seedAppointments(t *testing.T, h *harness) (a, b, c string) {
 	t.Helper()
 	for _, n := range []string{"ASN-1", "ASN-2", "ASN-3"} {
@@ -132,10 +132,7 @@ func seedAppointments(t *testing.T, h *harness) (a, b, c string) {
 	}
 	a = h.seedAppointment(t, "DOOR-1", 1, "ASN-1")
 	b = h.seedAppointment(t, "DOOR-2", 1, "ASN-2")
-	c = h.seedAppointment(t, "DOOR-1", 5, "ASN-3")
-	if _, err := h.cancelAp.Handle(context.Background(), usecases.AppointmentActionCommand{AppointmentID: c, Reason: "carrier no-show"}); err != nil {
-		t.Fatal(err)
-	}
+	c = h.seedAppointmentIn(t, appointment.Cancelled, 2, "DOOR-1", 5, "ASN-3")
 	return a, b, c
 }
 
@@ -220,15 +217,12 @@ func TestListAppointments_MalformedQueries(t *testing.T) {
 }
 
 // seedReceipts closes a receipt with a short line and a damaged line (via an
-// appointment, checked in at its window start) and leaves a walk-in one open.
+// appointment) and leaves a walk-in one open.
 func seedReceipts(t *testing.T, h *harness) (closed, open string) {
 	t.Helper()
 	ctx := context.Background()
 	a, _, _ := seedAppointments(t, h)
 	h.clock.set(startOfDay.Add(time.Hour))
-	if _, err := h.checkIn.Handle(ctx, usecases.AppointmentActionCommand{AppointmentID: a}); err != nil {
-		t.Fatalf("check in: %v", err)
-	}
 	closed = h.seedReceipt(t, "ASN-1", a)
 	for _, cmd := range []usecases.ReceiveLineCommand{
 		{ReceiptID: closed, LineNo: 1, Quantity: 38, Condition: "Good"},

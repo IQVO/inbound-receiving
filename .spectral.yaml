@@ -2,6 +2,9 @@ extends: ["spectral:oas"]
 functionsDir: ".spectral/functions"
 functions: [restGuideline]
 rules:
+  # Off: restGuideline checks it instead (R9) so a retired operation (x-retired: true,
+  # ADR 0019), which has only a 410 response, can be told apart.
+  operation-success-response: off
   operation-operationId: error
   operation-description: error
   operation-tags: error

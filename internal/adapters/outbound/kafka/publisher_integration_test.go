@@ -110,12 +110,15 @@ func TestKafkaPublisherCloudEventsContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register asn: %v", err)
 	}
-	booked, apptEvents, err := appointment.Book(
+	// The legacy DockAppointment events exist only to be replayed by the stage
+	// B backfill (ADR 0019): build them the same way it does.
+	booked, err := appointment.Rehydrate(
 		"appt-1b4e28ba-2fa1-4d3c-8f6e-0a1b2c3d4e5f", "DOOR-1", "ACME Freight",
-		at.Add(2*time.Hour), at.Add(3*time.Hour), []string{"ASN-K1"}, at)
+		at.Add(2*time.Hour), at.Add(3*time.Hour), []string{"ASN-K1"}, appointment.Booked, 0)
 	if err != nil {
-		t.Fatalf("book appointment: %v", err)
+		t.Fatalf("appointment: %v", err)
 	}
+	apptEvents := booked.Replay(appointment.Timeline{BookedAt: at, ChangedAt: at})
 	opened, rcptEvents, err := receipt.Open(
 		"rcpt-1b4e28ba-2fa1-4d3c-8f6e-0a1b2c3d4e5f", registered.Snapshot(),
 		"", "", at)

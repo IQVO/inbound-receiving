@@ -37,6 +37,7 @@ GROUPS = [
     "--set", "config.productConsumerGroup=inbound-receiving-product",
     "--set", "config.dockDoorConsumerGroup=inbound-receiving-dock-door",
     "--set", "config.packagingConsumerGroup=inbound-receiving-packaging",
+    "--set", "config.dockAppointmentConsumerGroup=inbound-receiving-dock-appointments",
 ]
 BASE = DB + KAFKA + GROUPS
 ENABLE_EVERYTHING = BASE + [
@@ -103,7 +104,7 @@ def check_a2a(services: dict, deployments: dict, failures: list[str]) -> None:
     env = set(env_names(deployments[a2a]))
     stray = {
         "KAFKA_BROKERS", "EVENT_PUBLISHER", "OUTBOX_RELAY_INTERVAL", "PRODUCT_MODE", "DOCK_DOOR_MODE",
-        "PRODUCT_CONSUMER_GROUP", "DOCK_DOOR_CONSUMER_GROUP", "PACKAGING_CONSUMER_GROUP", "MCP_ADDR",
+        "PRODUCT_CONSUMER_GROUP", "DOCK_DOOR_CONSUMER_GROUP", "PACKAGING_CONSUMER_GROUP", "DOCK_APPOINTMENT_CONSUMER_GROUP", "MCP_ADDR",
     } & env
     if stray:
         failures.append(f"the A2A Deployment is read-only and must not get Kafka/relay/consumer/mcp env: {sorted(stray)}")
@@ -135,7 +136,7 @@ def check_components(docs: list[dict], failures: list[str]) -> None:
         mcp_env = set(env_names(deployments[mcp]))
         stray = {
             "KAFKA_BROKERS", "EVENT_PUBLISHER", "OUTBOX_RELAY_INTERVAL", "PRODUCT_MODE", "PRODUCT_CONSUMER_GROUP",
-            "DOCK_DOOR_CONSUMER_GROUP", "PACKAGING_CONSUMER_GROUP",
+            "DOCK_DOOR_CONSUMER_GROUP", "PACKAGING_CONSUMER_GROUP", "DOCK_APPOINTMENT_CONSUMER_GROUP",
         } & mcp_env
         if stray:
             failures.append(f"the MCP Deployment must not get Kafka/relay/consumer env (it never dials Kafka): {sorted(stray)}")
@@ -191,7 +192,7 @@ def check_components(docs: list[dict], failures: list[str]) -> None:
     for want in (
         "EVENT_PUBLISHER", "KAFKA_BROKERS", "DATABASE_URL", "MIGRATIONS_DATABASE_URL",
         "PRODUCT_MODE", "PRODUCT_CONSUMER_GROUP", "DOCK_DOOR_MODE", "DOCK_DOOR_CONSUMER_GROUP",
-        "PACKAGING_CONSUMER_GROUP",
+        "PACKAGING_CONSUMER_GROUP", "DOCK_APPOINTMENT_CONSUMER_GROUP",
     ):
         if want not in api_env:
             failures.append(f"the api Deployment does not render {want} from its dedicated value")
@@ -248,7 +249,8 @@ def check_refusals(failures: list[str]) -> None:
         ("an unknown PRODUCT_MODE", BASE + ["--set", "config.productMode=strict"], "the only mode is"),
         ("without a product consumer group", DB + KAFKA + GROUPS[2:], "config.productConsumerGroup is required"),
         ("without a dock-door consumer group", DB + KAFKA + GROUPS[:2], "config.dockDoorConsumerGroup is required"),
-        ("without a packaging consumer group", DB + KAFKA + GROUPS[:4], "config.packagingConsumerGroup is required"),
+        ("without a packaging consumer group", DB + KAFKA + GROUPS[:4] + GROUPS[6:], "config.packagingConsumerGroup is required"),
+        ("without a dock-appointment consumer group", DB + KAFKA + GROUPS[:6], "config.dockAppointmentConsumerGroup is required"),
         ("EVENT_PUBLISHER=log through extraEnv",
          BASE + ["--set", "extraEnv[0].name=EVENT_PUBLISHER", "--set", "extraEnv[0].value=log"], "extraEnv sets EVENT_PUBLISHER"),
         ("a *_MODE through extraEnv",

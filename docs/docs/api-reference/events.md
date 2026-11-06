@@ -22,14 +22,13 @@ structured content mode with the Kafka header
 | `specversion` | `1.0` |
 | `id` | UUID minted once per domain event at encode time and persisted with the outbox row; consumers dedupe on it |
 | `source` | `/warehouse/inbound-receiving` |
-| `type` | `com.warehouse.wms.inbound-receiving.<entity>.<EventName>` with `<entity>` one of `asn`, `dockappointment`, `receipt` |
-| `subject` | the aggregate instance id (ASN number, appointment id or receipt id) |
+| `type` | `com.warehouse.wms.inbound-receiving.<entity>.<EventName>` with `<entity>` one of `asn`, `receipt` (the `dockappointment` entity is retired, ADR 0019) |
+| `subject` | the aggregate instance id (ASN number or receipt id) |
 | `time` | domain occurred-at, UTC |
 | `datacontenttype` | `application/json` |
 | `dataschema` | `urn:warehouse:inbound-receiving:events:<EventName>:v1` |
 
-The Kafka key is `asn_number` for `asn.*` and `receipt.*` events and
-`appointment_id` for `dockappointment.*` events. A breaking payload change gets a
+The Kafka key is `asn_number` for `asn.*` and `receipt.*` events. A breaking payload change gets a
 new `.v2` type and dataschema; an existing one is never mutated.
 
 ## Published
@@ -40,10 +39,6 @@ Topic `warehouse.inbound-receiving.events`, written by the outbox relay.
 | --- | --- | --- |
 | `asn.ASNRegistered` | `POST /asns` | `asn_number`, `supplier_ref`, `expected_arrival?`, `lines[]` = `{line_no, sku, expected_qty}` |
 | `asn.ASNCancelled` | `POST /asns/{asnNumber}/cancellations` | `asn_number`, `reason?` |
-| `dockappointment.DockAppointmentBooked` | `POST /appointments` | `appointment_id`, `door_code`, `carrier`, `window_start`, `window_end`, `asn_numbers[]` |
-| `dockappointment.DockAppointmentCheckedIn` | `POST /appointments/{appointmentId}/check-ins` | `appointment_id`, `door_code`, `checked_in_at` |
-| `dockappointment.DockAppointmentCancelled` | `POST /appointments/{appointmentId}/cancellations` | `appointment_id`, `door_code`, `reason?` |
-| `dockappointment.DockAppointmentCompleted` | `POST /receipts/{receiptId}/closures` for a receipt opened from an appointment | `appointment_id`, `door_code`, `completed_at` |
 | `receipt.ReceiptOpened` | `POST /receipts` | `receipt_id`, `asn_number`, `appointment_id?`, `door_code?`, `opened_at` |
 | `receipt.ReceiptLineReceived` | `POST /receipts/{receiptId}/lines` | `receipt_id`, `asn_number`, `line_no`, `sku`, `quantity`, `condition` (`Good` or `Damaged`), `received_at` |
 | `receipt.ReceiptClosed` | `POST /receipts/{receiptId}/closures` | `receipt_id`, `asn_number`, `closed_at`, `discrepancies[]` = `{line_no, sku, kind, expected_qty, received_qty, damaged_qty}` |
@@ -79,9 +74,13 @@ only by this service's `inbound-projector` (group from env
 
 - Dispatch on the **full** `type`; ignore unknown types.
 - Dedupe on the CloudEvents `id` (the same `id` is republished on a relay retry).
-- Do not depend on the order of `DockAppointmentCompleted` relative to
-  `ReceiptClosed`: they are keyed differently.
-- `warehouse-planning` consumes `DockAppointmentBooked` and
+- **Deprecated, no longer raised (ADR 0019).** The four
+  `dockappointment.DockAppointment{Booked,CheckedIn,Cancelled,Completed}` types
+  (key `appointment_id`) moved to dock-scheduling. Only the one-shot
+  `api republish-appointments` command still enqueues them so that
+  dock-scheduling's importer can rebuild its state. `ReceiptClosed` no longer
+  implies a `DockAppointmentCompleted`.
+- `warehouse-planning` consumed the legacy `DockAppointmentBooked` and
   `DockAppointmentCancelled` as inbound-labour demand (its group
   `warehouse-planning-inbound-demand`, [ADR 0017](https://github.com/IQVO/warehouse-planning/blob/develop/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback.md),
   `internal/adapters/inbound/kafka/inbound_demand_consumer.go` there). It keys

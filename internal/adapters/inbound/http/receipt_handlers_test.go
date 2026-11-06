@@ -4,7 +4,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 )
 
 func linePath(id string) string { return "/receipts/" + id + "/lines" }
@@ -32,12 +33,10 @@ func TestOpenWalkInReceipt(t *testing.T) {
 	}
 }
 
-func TestOpenReceiptFromACheckedInAppointment(t *testing.T) {
+func TestOpenReceiptFromAnAppointment(t *testing.T) {
 	f := newFixture(t)
 	f.seedAsn(t, "ASN-1")
 	appt := f.seedAppointment(t, "DOOR-1", 1, "ASN-1")
-	f.clock.set(startOfDay.Add(time.Hour))
-	f.mustPost(t, "/appointments/"+appt+"/check-ins", "", http.StatusOK)
 	r := f.post(t, "/receipts", `{"asnNumber":"ASN-1","appointmentId":"`+appt+`"}`)
 	expectStatus(t, r, http.StatusCreated)
 	if str(r, "appointmentId") != appt || str(r, "doorCode") != "DOOR-1" {
@@ -50,6 +49,7 @@ func TestOpenReceiptRefusals(t *testing.T) {
 	f.seedAsn(t, "ASN-1")
 	f.seedAsn(t, "ASN-2")
 	appt := f.seedAppointment(t, "DOOR-1", 24, "ASN-2")
+	cancelled := f.seedAppointmentIn(t, appointment.Cancelled, 2, "DOOR-1", 30, "ASN-2")
 	cases := []struct {
 		name   string
 		body   string
@@ -62,7 +62,7 @@ func TestOpenReceiptRefusals(t *testing.T) {
 		{"unknown asn", `{"asnNumber":"ASN-404"}`, 422, "unknown-asn"},
 		{"unknown appointment", `{"asnNumber":"ASN-1","appointmentId":"` + missingAppointment + `"}`, 422, "unknown-appointment"},
 		{"asn not on appointment", `{"asnNumber":"ASN-1","appointmentId":"` + appt + `"}`, 422, "asn-not-on-appointment"},
-		{"appointment not checked in", `{"asnNumber":"ASN-2","appointmentId":"` + appt + `"}`, 409, "appointment-not-checked-in"},
+		{"appointment cancelled", `{"asnNumber":"ASN-2","appointmentId":"` + cancelled + `"}`, 409, "appointment-cancelled"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -187,16 +187,22 @@ func TestCloseReceiptRefusals(t *testing.T) {
 	expectProblem(t, f.post(t, "/receipts/"+id+"/closures", ""), http.StatusInternalServerError, "internal-error")
 }
 
-func TestCloseReceiptCompletesTheAppointment(t *testing.T) {
+func TestCloseReceiptLeavesTheAppointmentAlone(t *testing.T) {
 	f := newFixture(t)
 	f.seedAsn(t, "ASN-1")
 	appt := f.seedAppointment(t, "DOOR-1", 1, "ASN-1")
-	f.clock.set(startOfDay.Add(time.Hour))
-	f.mustPost(t, "/appointments/"+appt+"/check-ins", "", http.StatusOK)
 	rcpt := str(f.mustPost(t, "/receipts", `{"asnNumber":"ASN-1","appointmentId":"`+appt+`"}`, http.StatusCreated), "receiptId")
 	f.mustPost(t, "/receipts/"+rcpt+"/closures", "", http.StatusOK)
-	if got := f.get(t, "/appointments/"+appt); str(got, "state") != "Completed" {
-		t.Fatalf("appointment = %s", got.raw)
+	// ADR 0019: the door release in yard-management completes the appointment,
+	// not the receipt close; this context raises no DockAppointmentCompleted.
+	got := f.get(t, "/appointments/"+appt)
+	if str(got, "state") != "Booked" || got.header.Get("ETag") != `"1"` {
+		t.Fatalf("appointment = %v %s", got.header, got.raw)
+	}
+	for _, m := range f.outbox.Messages() {
+		if strings.Contains(m.EventType, "dockappointment") {
+			t.Fatalf("closing a receipt raised %s", m.EventType)
+		}
 	}
 }
 
