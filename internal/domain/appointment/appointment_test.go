@@ -74,6 +74,9 @@ func TestRehydrateRejects(t *testing.T) {
 		{"blank carrier", func() error { _, e := Rehydrate(id1, "D", "  ", start, end, []string{"A"}, Booked, 1); return e }, ErrInvalidCarrier},
 		{"long carrier", func() error { _, e := Rehydrate(id1, "D", long, start, end, []string{"A"}, Booked, 1); return e }, ErrInvalidCarrier},
 		{"control carrier", func() error { _, e := Rehydrate(id1, "D", "A\nB", start, end, []string{"A"}, Booked, 1); return e }, ErrInvalidCarrier},
+		// IndexFunc returns 0 when the control character is the first rune;
+		// only the 0-index case distinguishes >= 0 from > 0.
+		{"leading control carrier", func() error { _, e := Rehydrate(id1, "D", "\nAB", start, end, []string{"A"}, Booked, 1); return e }, ErrInvalidCarrier},
 		{"empty window", func() error { _, e := Rehydrate(id1, "D", "C", start, start, []string{"A"}, Booked, 1); return e }, ErrInvalidWindow},
 		{"inverted window", func() error { _, e := Rehydrate(id1, "D", "C", end, start, []string{"A"}, Booked, 1); return e }, ErrInvalidWindow},
 		{"no asns", func() error { _, e := Rehydrate(id1, "D", "C", start, end, nil, Booked, 1); return e }, ErrNoAsns},
