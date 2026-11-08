@@ -162,8 +162,7 @@ config:
   # refuses an empty one; the binary exits at boot without it).
   productConsumerGroup: ""
   # DOCK_DOOR_MODE (ADR 0003, ADR 0011): "kafka" is the only mode. The local
-  # inbound-door copy, fed from warehouse.facility.events, is always enforced
-  # when an appointment is booked.
+  # inbound-door copy, fed from warehouse.facility.events (GET /docks, ADR 0011).
   dockDoorMode: "kafka"
   # DOCK_DOOR_CONSUMER_GROUP: the dock-door consumer's STABLE group id.
   # REQUIRED, like productConsumerGroup.
@@ -171,6 +170,11 @@ config:
   # PACKAGING_CONSUMER_GROUP (ADR 0012): the PackagingView consumer's STABLE group id
   # (product-master pack-level events). REQUIRED, like productConsumerGroup.
   packagingConsumerGroup: ""
+  # DOCK_APPOINTMENT_CONSUMER_GROUP (ADR 0019): the STABLE group id of the consumer
+  # that feeds the appointments local copy from dock-scheduling's
+  # DockAppointmentBooked / DockAppointmentCancelled (warehouse.dock-scheduling.events).
+  # REQUIRED, like productConsumerGroup.
+  dockAppointmentConsumerGroup: ""
   # CARTON_MAX_GROSS_WEIGHT_G / CARTON_MAX_LONGEST_SIDE_MM (ADR 0014): the
   # CartonOverLimit handling limits, in grams and millimetres, checked against
   # a carton's DECLARED weight and longest side at acceptance. 0 = unchecked.

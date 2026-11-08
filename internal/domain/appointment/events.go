@@ -6,9 +6,11 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 )
 
-// Event is a domain event raised by the DockAppointment aggregate. Every
-// event carries the appointment id (the CloudEvents subject and Kafka key)
-// and when it happened (from the caller's clock).
+// Event is a LEGACY DockAppointment event (ADR 0019). This context no longer
+// raises them: they exist only so DockAppointment.Replay can describe, and
+// the stage B backfill re-emit, the history of an appointment that predates
+// the transfer to dock-scheduling. Every event carries the appointment id
+// (the CloudEvents subject and Kafka key) and when it happened.
 type Event interface {
 	EventName() string
 	AppointmentID() ID
@@ -27,7 +29,7 @@ func (h Header) AppointmentID() ID { return h.ID }
 // OccurredAt returns when the change happened (UTC).
 func (h Header) OccurredAt() time.Time { return h.At }
 
-// DockAppointmentBooked is raised when a window is booked at a door.
+// DockAppointmentBooked: a window was booked at a door.
 type DockAppointmentBooked struct {
 	Header
 	DoorCode   DoorCode
@@ -39,7 +41,7 @@ type DockAppointmentBooked struct {
 // EventName returns "DockAppointmentBooked".
 func (DockAppointmentBooked) EventName() string { return "DockAppointmentBooked" }
 
-// DockAppointmentCheckedIn is raised when the carrier arrives at the door.
+// DockAppointmentCheckedIn: the carrier arrived at the door.
 type DockAppointmentCheckedIn struct {
 	Header
 	DoorCode    DoorCode
@@ -49,7 +51,7 @@ type DockAppointmentCheckedIn struct {
 // EventName returns "DockAppointmentCheckedIn".
 func (DockAppointmentCheckedIn) EventName() string { return "DockAppointmentCheckedIn" }
 
-// DockAppointmentCancelled is raised when a Booked appointment is cancelled.
+// DockAppointmentCancelled: a Booked appointment was cancelled.
 type DockAppointmentCancelled struct {
 	Header
 	DoorCode DoorCode
@@ -60,8 +62,7 @@ type DockAppointmentCancelled struct {
 // EventName returns "DockAppointmentCancelled".
 func (DockAppointmentCancelled) EventName() string { return "DockAppointmentCancelled" }
 
-// DockAppointmentCompleted is raised when the receipt opened from the
-// appointment closes.
+// DockAppointmentCompleted: the receipt opened from the appointment closed.
 type DockAppointmentCompleted struct {
 	Header
 	DoorCode    DoorCode

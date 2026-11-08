@@ -5,20 +5,28 @@ info:
   description: |
     The WMS-tier inbound dock workflow of the warehouse-systems platform
     (ADR 0001): the supplier's advance ship notice (**ASN**), the carrier's
-    booked **dock appointment** and the counted **receipt**, with the
+    **dock appointment** (a read-only copy: dock-scheduling owns it since ADR 0019) and the counted **receipt**, with the
     discrepancies found when the receipt closes (ADR 0002). It decides nothing
     about where received goods go; Good lines are handed to inventory-storage
     as events (ADR 0003) and stow stays an RF action there.
 
-    Every `POST` requires an `Idempotency-Key` header (fleet REST API
-    guideline): a missing key is a 400 `idempotency-key-required`, a retry with
+    Every `POST` except the three retired appointment writes requires an
+    `Idempotency-Key` header (fleet REST API guideline): a missing key is a 400 `idempotency-key-required`, a retry with
     the same key and request (method, path, body) replays the original response
     with `Idempotency-Replayed: true`, the same key with a different request is
     a 409 `idempotency-key-reused`. Lifecycle transitions are transition
-    resources: `POST /asns/{asnNumber}/cancellations`,
-    `/appointments/{appointmentId}/check-ins`,
-    `/appointments/{appointmentId}/cancellations` and
+    resources: `POST /asns/{asnNumber}/cancellations` and
     `/receipts/{receiptId}/closures`.
+
+    **Appointments moved to dock-scheduling** (ADR 0019, plan YD-0002).
+    `POST /appointments`, `POST /appointments/{appointmentId}/check-ins` and
+    `POST /appointments/{appointmentId}/cancellations` answer `410 Gone` with
+    problem type `appointment-moved`, whose `detail` names the dock-scheduling
+    (or yard-management) operation to call. `GET /appointments` and
+    `GET /appointments/{appointmentId}` are **deprecated**: they read a local
+    copy fed by dock-scheduling's `DockAppointmentBooked` and
+    `DockAppointmentCancelled` events (inbound appointments only) and will be
+    removed once consumers read dock-scheduling directly.
 
     Mutable resources carry a `version` (starts at 1, +1 per accepted change)
     and a matching strong `ETag: "<version>"` header. A transition `POST` may send
@@ -39,14 +47,13 @@ info:
     `invalid-supplier-ref`, `asn-requires-lines`, `invalid-line-no`,
     `duplicate-sku`, `invalid-sku`, `invalid-quantity`, `invalid-reason`,
     `invalid-appointment-id`, `invalid-receipt-id`, `invalid-door-code`,
-    `invalid-carrier`, `invalid-window`, `window-in-past`,
+    `invalid-carrier`, `invalid-window`,
     `appointment-requires-asns`, `duplicate-asn-number`, `invalid-condition`,
     `asn-not-found`, `appointment-not-found`, `receipt-not-found`,
     `asn-already-exists`, `asn-in-progress`, `asn-terminal`,
-    `asn-not-receivable`, `appointment-not-booked`,
-    `appointment-not-checked-in`, `outside-check-in-window`,
-    `door-window-overlap`, `receipt-already-open`, `receipt-closed`,
-    `unknown-sku`, `unknown-dock-door`, `unknown-asn`, `unknown-appointment`,
+    `asn-not-receivable`, `appointment-cancelled`,
+    `receipt-already-open`, `receipt-closed`, `appointment-moved` (410),
+    `unknown-sku`, `unknown-asn`, `unknown-appointment`,
     `asn-not-on-appointment`, `line-not-on-asn`, `invalid-owner-ref`,
     `invalid-carton-kind`, `invalid-carton`, `invalid-sscc`, `invalid-gtin`,
     `unsupported-gtin`, `invalid-scan-kind`, `invalid-scan`, `invalid-cases`,
@@ -76,7 +83,9 @@ tags:
   - name: ASNs
     description: Advance ship notices (ADR 0002).
   - name: Appointments
-    description: Dock appointments, one door window covering one or more ASNs (ADR 0002).
+    description: |
+      Dock appointments, one door window covering one or more ASNs (ADR 0002).
+      Owned by dock-scheduling since ADR 0019: writes answer 410, the reads are a deprecated local copy.
   - name: Receipts
     description: Counted receiving of one ASN and its close-time discrepancies (ADR 0002).
   - name: Docks
@@ -297,72 +306,29 @@ paths:
   /appointments:
     post:
       operationId: bookAppointment
-      summary: Book a dock appointment
+      x-retired: true
+      summary: Book a dock appointment (moved to dock-scheduling)
       description: |
-        Books a door window (`windowStart` inclusive, `windowEnd` exclusive,
-        `windowEnd > windowStart`, at most 4 hours, not starting in the past)
-        for a carrier, covering one or more registered ASNs. Two appointments
-        in `Booked` or `CheckedIn` may not overlap on one door: 409
-        `door-window-overlap`. A covered ASN that does not exist is 422
-        `unknown-asn`; one that is `Closed` or `Cancelled` is 409
-        `asn-not-receivable`. A door that is not a known
-        inbound dock is 422 `unknown-dock-door`. Publishes
-        `DockAppointmentBooked`.
+        **Gone.** Appointments are booked in dock-scheduling since ADR 0019
+        (`POST /appointments` on that service). Always `410`
+        `appointment-moved`; the body is not read and no `Idempotency-Key` is
+        required.
       tags: [Appointments]
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/BookAppointmentRequest"
-            example:
-              doorCode: WH1-DOCK-IN-01
-              carrier: ACME Freight
-              windowStart: "2026-10-09T08:00:00Z"
-              windowEnd: "2026-10-09T10:00:00Z"
-              asnNumbers: [ASN-1001]
       responses:
-        "201":
-          description: The appointment was booked.
-          headers:
-            Idempotency-Replayed:
-              $ref: "#/components/headers/IdempotencyReplayed"
-            ETag:
-              $ref: "#/components/headers/ETag"
-            Location:
-              description: URL of the new appointment.
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Appointment"
-              example:
-                appointmentId: appt-123e4567-e89b-12d3-a456-426614174000
-                doorCode: WH1-DOCK-IN-01
-                carrier: ACME Freight
-                windowStart: "2026-10-09T08:00:00Z"
-                windowEnd: "2026-10-09T10:00:00Z"
-                asnNumbers: [ASN-1001]
-                state: Booked
-                version: 1
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "422":
-          $ref: "#/components/responses/Unprocessable"
-        "500":
-          $ref: "#/components/responses/InternalError"
+        "410":
+          $ref: "#/components/responses/AppointmentMoved"
     get:
       operationId: listAppointments
       summary: List dock appointments
+      deprecated: true
       description: |
-        Lists appointments in ascending `windowStart` order (ties by id), a page
-        at a time. `door` and `state` narrow by equality; `from` and `to`
-        narrow to appointments whose window overlaps `[from, to)`.
+        **Deprecated** (ADR 0019): reads the local copy of dock-scheduling's
+        inbound appointments; read dock-scheduling instead. Lists appointments
+        in ascending `windowStart` order (ties by id), a page at a time.
+        `door` and `state` narrow by equality; `from` and `to` narrow to
+        appointments whose window overlaps `[from, to)`. The copy only moves
+        through `Booked` and `Cancelled` (a legacy row may still show
+        `CheckedIn` or `Completed`).
       tags: [Appointments]
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -417,7 +383,12 @@ paths:
     get:
       operationId: getAppointment
       summary: Get a dock appointment
-      description: Returns the appointment with its window, ASN numbers, state and version (also as the `ETag`).
+      deprecated: true
+      description: |
+        **Deprecated** (ADR 0019): returns the local copy of a dock-scheduling
+        appointment with its window, ASN numbers, state and version (also as the
+        `ETag`; the version is dock-scheduling's, `0` for a legacy row not yet
+        refreshed). Read dock-scheduling instead.
       tags: [Appointments]
       responses:
         "200":
@@ -441,83 +412,34 @@ paths:
       - $ref: "#/components/parameters/AppointmentId"
     post:
       operationId: checkInAppointment
-      summary: Check a carrier in
+      x-retired: true
+      summary: Check a carrier in (moved to yard-management)
       description: |
-        Records the carrier's arrival at the door (server clock) and publishes
-        `DockAppointmentCheckedIn`. Only a `Booked` appointment can check in
-        (409 `appointment-not-booked`), and only from 30 minutes before
-        `windowStart` until `windowEnd` (409 `outside-check-in-window`).
+        **Gone.** There is no check-in on appointments any more: the carrier's
+        arrival is recorded at the gate by yard-management (`POST /visits`
+        naming the `appointmentId`) and dock-scheduling derives the
+        appointment's check-in from it (ADR 0019). Always `410`
+        `appointment-moved`.
       tags: [Appointments]
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-        - $ref: "#/components/parameters/IfMatch"
       responses:
-        "200":
-          description: The appointment after the check-in.
-          headers:
-            Idempotency-Replayed:
-              $ref: "#/components/headers/IdempotencyReplayed"
-            ETag:
-              $ref: "#/components/headers/ETag"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Appointment"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "412":
-          $ref: "#/components/responses/VersionMismatch"
-        "500":
-          $ref: "#/components/responses/InternalError"
+        "410":
+          $ref: "#/components/responses/AppointmentMoved"
 
   /appointments/{appointmentId}/cancellations:
     parameters:
       - $ref: "#/components/parameters/AppointmentId"
     post:
       operationId: cancelAppointment
-      summary: Cancel a dock appointment
+      x-retired: true
+      summary: Cancel a dock appointment (moved to dock-scheduling)
       description: |
-        Cancels a `Booked` appointment and publishes `DockAppointmentCancelled`;
-        any other state is 409 `appointment-not-booked`. The body and its
-        `reason` are optional.
+        **Gone.** Appointments are cancelled in dock-scheduling since ADR 0019
+        (`POST /appointments/{appointmentId}/cancellations` on that service).
+        Always `410` `appointment-moved`.
       tags: [Appointments]
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-        - $ref: "#/components/parameters/IfMatch"
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ReasonRequest"
-            example:
-              reason: Carrier delayed
       responses:
-        "200":
-          description: The appointment after the cancellation.
-          headers:
-            Idempotency-Replayed:
-              $ref: "#/components/headers/IdempotencyReplayed"
-            ETag:
-              $ref: "#/components/headers/ETag"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Appointment"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "412":
-          $ref: "#/components/responses/VersionMismatch"
-        "500":
-          $ref: "#/components/responses/InternalError"
+        "410":
+          $ref: "#/components/responses/AppointmentMoved"
 
   /receipts:
     post:
@@ -529,9 +451,11 @@ paths:
         `ReceiptOpened`. The ASN must be `Registered` or `Receiving`
         (409 `asn-not-receivable`) and may have only one open receipt
         (409 `receipt-already-open`). With `appointmentId` the appointment
-        must be `CheckedIn` (409 `appointment-not-checked-in`) and cover the
-        ASN (422 `asn-not-on-appointment`); the receipt takes its door code
-        from it. Without one it is a walk-in delivery with no door. A missing
+        (looked up in the local copy of dock-scheduling's) must exist
+        (422 `unknown-appointment`), cover the ASN (422
+        `asn-not-on-appointment`) and not be cancelled (409
+        `appointment-cancelled`); a check-in is not required (the arrival is a
+        yard-management fact). The receipt takes its door code from it. Without one it is a walk-in delivery with no door. A missing
         ASN or appointment is 422 `unknown-asn` / `unknown-appointment`.
       tags: [Receipts]
       parameters:
@@ -882,9 +806,10 @@ paths:
       summary: Close a receipt
       description: |
         Ends receiving, computes the discrepancies per line (`Short`, `Over`,
-        `Damaged`), completes the ASN and, when the receipt was opened from an
-        appointment, completes that appointment. Publishes `ReceiptClosed` and,
-        with an appointment, `DockAppointmentCompleted`. Closing a receipt that
+        `Damaged`) and completes the ASN. Publishes `ReceiptClosed`. It no
+        longer completes the appointment nor raises `DockAppointmentCompleted`
+        (ADR 0019: the door release recorded by yard-management does, through
+        dock-scheduling). Closing a receipt that
         is already `Closed` is 409 `receipt-closed`. A line nothing was received
         for is `Short`.
       tags: [Receipts]
@@ -1242,7 +1167,7 @@ components:
         parameter (`invalid-query`, `invalid-limit`, `invalid-cursor`,
         `unknown-query-parameter`), a missing or malformed `Idempotency-Key`
         (`idempotency-key-required`, `idempotency-key-invalid`), or a value that breaks a domain rule
-        (the `invalid-*`, `*-requires-*`, `duplicate-*`, `window-in-past` and
+        (the `invalid-*`, `*-requires-*`, `duplicate-*` and
         `invalid-condition`, `invalid-carton*`, `invalid-scan*`, `invalid-counted-contents`, `invalid-cases`,
         `invalid-gtin`, `invalid-sscc` and `invalid-owner-ref` slugs).
       content:
@@ -1282,6 +1207,24 @@ components:
                 status: 400
                 detail: window must end after it starts and last at most 4 hours
                 instance: /appointments
+    AppointmentMoved:
+      description: |
+        The appointment write moved to dock-scheduling (ADR 0019): problem type
+        `appointment-moved`; `detail` names the operation to call there. Sent
+        whatever the request, without an `Idempotency-Key` check.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            book:
+              summary: Booking moved
+              value:
+                type: https://errors.inbound-receiving.warehouse-systems.dev/appointment-moved
+                title: Appointment writes moved to dock-scheduling
+                status: 410
+                detail: "Appointments are booked in dock-scheduling: POST /appointments on that service."
+                instance: /appointments
     NotFound:
       description: |
         The resource in the path does not exist: `asn-not-found`,
@@ -1311,9 +1254,7 @@ components:
       description: |
         The request conflicts with current state: `asn-already-exists`,
         `asn-in-progress`, `asn-terminal`, `asn-not-receivable`,
-        `appointment-not-booked`, `appointment-not-checked-in`,
-        `outside-check-in-window`, `door-window-overlap`,
-        `receipt-already-open`, `receipt-closed`, a write that lost a race
+        `appointment-cancelled`, `receipt-already-open`, `receipt-closed`, a write that lost a race
         (`concurrent-modification`), or an `Idempotency-Key` already used with
         a different request (`idempotency-key-reused`).
       content:
@@ -1455,7 +1396,11 @@ components:
       enum: [Registered, Receiving, Closed, Cancelled]
     AppointmentState:
       type: string
-      description: Appointment lifecycle. `Completed` and `Cancelled` are terminal.
+      description: |
+        Appointment state in the local copy of dock-scheduling's appointments:
+        `Booked` or `Cancelled`. `CheckedIn` and `Completed` only appear on
+        legacy rows from before the cutover (ADR 0019); `Completed` and
+        `Cancelled` are terminal.
       enum: [Booked, CheckedIn, Completed, Cancelled]
     ReceiptState:
       type: string
@@ -1772,36 +1717,6 @@ components:
           type: string
           description: Opaque cursor for the next page; absent on the last page.
 
-    BookAppointmentRequest:
-      type: object
-      additionalProperties: false
-      required: [doorCode, carrier, windowStart, windowEnd, asnNumbers]
-      properties:
-        doorCode:
-          type: string
-          minLength: 1
-          maxLength: 64
-          description: 1 to 64 characters without whitespace, control characters or `/`.
-        carrier:
-          type: string
-          minLength: 1
-          maxLength: 100
-        windowStart:
-          type: string
-          format: date-time
-          description: Inclusive; not in the past.
-        windowEnd:
-          type: string
-          format: date-time
-          description: Exclusive; after `windowStart` and at most 4 hours later.
-        asnNumbers:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          items:
-            type: string
-            minLength: 1
-            maxLength: 64
     Appointment:
       type: object
       required: [appointmentId, doorCode, carrier, windowStart, windowEnd, asnNumbers, state, version]

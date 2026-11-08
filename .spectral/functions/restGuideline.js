@@ -62,7 +62,20 @@ export default function restGuideline(doc) {
       if (!op || typeof op !== "object") continue;
       const at = ["paths", p, m];
 
-      if (m === "post" || m === "patch") {
+      // Success response: every live operation has a 2xx or 3xx response (spectral:oas operation-success-response,
+      // which is off in .spectral.yaml so that a retired operation can be told apart).
+      if (op["x-retired"] !== true && !Object.keys(op.responses || {}).some((c) => /^[23]/.test(c))) {
+        out.push({ message: `[success-response] ${m.toUpperCase()} ${p} must have at least one 2xx or 3xx response`, path: [...at, "responses"] });
+      }
+
+      // A retired operation (x-retired: true) answers 410 whatever the request, before and
+      // without the Idempotency-Key middleware, so R3-R5 have nothing to say about it. It must
+      // document the 410 and no success response.
+      if ((m === "post" || m === "patch") && op["x-retired"] === true) {
+        const rs = op.responses || {};
+        if (!rs["410"]) out.push({ message: `[R3] retired ${m.toUpperCase()} ${p} must document a 410 response`, path: [...at, "responses"] });
+        if (Object.keys(rs).some((c) => /^[23]/.test(c))) out.push({ message: `[R3] retired ${m.toUpperCase()} ${p} must not document a 2xx/3xx response`, path: [...at, "responses"] });
+      } else if (m === "post" || m === "patch") {
         // R3: Idempotency-Key header declared on every POST and PATCH.
         if (!hasParam(op, "Idempotency-Key", "header")) {
           out.push({ message: `[R3] ${m.toUpperCase()} ${p} does not declare the Idempotency-Key header parameter`, path: [...at, "parameters"] });

@@ -14,11 +14,8 @@ var (
 	// ErrUnknownSKU is returned (PRODUCT_MODE=kafka only) for a SKU
 	// product-master never registered.
 	ErrUnknownSKU = errors.New("sku is not known to product-master")
-	// ErrUnknownDockDoor is returned (DOCK_DOOR_MODE=kafka only) for a door
-	// that is not a known inbound dock door.
-	ErrUnknownDockDoor = errors.New("door is not an inbound dock door")
-	// ErrUnknownAsn is returned when a booking or receipt names an ASN that
-	// does not exist.
+	// ErrUnknownAsn is returned when a receipt names an ASN that does not
+	// exist.
 	ErrUnknownAsn = errors.New("asn does not exist")
 	// ErrUnknownAppointment is returned when a receipt names an appointment
 	// that does not exist.
@@ -26,9 +23,9 @@ var (
 	// ErrAsnNotOnAppointment is returned when a receipt names an appointment
 	// that does not cover its ASN.
 	ErrAsnNotOnAppointment = errors.New("asn is not covered by the appointment")
-	// ErrAppointmentNotCheckedIn is returned when a receipt is opened from
-	// an appointment that has not checked in.
-	ErrAppointmentNotCheckedIn = errors.New("appointment is not checked in")
+	// ErrAppointmentCancelled is returned when a receipt is opened from an
+	// appointment dock-scheduling cancelled.
+	ErrAppointmentCancelled = errors.New("appointment is cancelled")
 	// ErrVersionMismatch is returned when the caller's expected version
 	// (If-Match) is not the current one.
 	ErrVersionMismatch = errors.New("expected version does not match the current version")
@@ -78,10 +75,6 @@ func (e *detailed) Unwrap() error { return e.sentinel }
 
 func unknownSKU(sku string) error {
 	return &detailed{sentinel: ErrUnknownSKU, msg: fmt.Sprintf("sku %s is not known to product-master", sku)}
-}
-
-func unknownDoor(door string) error {
-	return &detailed{sentinel: ErrUnknownDockDoor, msg: fmt.Sprintf("door %s is not an inbound dock door", door)}
 }
 
 func unknownAsn(number string) error {

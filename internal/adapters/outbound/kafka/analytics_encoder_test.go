@@ -24,32 +24,37 @@ func analyticsEnvelope(entity, eventName, subject, timeStr, data string) string 
 // (the integration payload, which the analytics payload equals: ADR 0006).
 type goldenCase struct {
 	entity, name, subject, key, time, data string
-	encode                                 func(e interface {
-		EncodeAsn(...asn.Event) ([]outbox.Message, error)
-		EncodeAppointment(...appointment.Event) ([]outbox.Message, error)
-		EncodeReceipt(...receipt.Event) ([]outbox.Message, error)
-	}) ([]outbox.Message, error)
+	encode                                 func(e any) ([]outbox.Message, error)
 }
 
-type encoderAPI = interface {
-	EncodeAsn(...asn.Event) ([]outbox.Message, error)
-	EncodeAppointment(...appointment.Event) ([]outbox.Message, error)
-	EncodeReceipt(...receipt.Event) ([]outbox.Message, error)
-}
+// The three encoder families a golden case is run through. The FanoutEncoder
+// (the running service's encoder) has no DockAppointment method since ADR
+// 0019, so the legacy appointment cases are skipped for it.
+type (
+	asnEncoder = interface {
+		EncodeAsn(...asn.Event) ([]outbox.Message, error)
+	}
+	appointmentEncoder = interface {
+		EncodeAppointment(...appointment.Event) ([]outbox.Message, error)
+	}
+	receiptEncoder = interface {
+		EncodeReceipt(...receipt.Event) ([]outbox.Message, error)
+	}
+)
 
 func asnCase(name, time, data string, ev asn.Event) goldenCase {
 	return goldenCase{"asn", name, "ASN-1001", "ASN-1001", time, data,
-		func(e encoderAPI) ([]outbox.Message, error) { return e.EncodeAsn(ev) }}
+		func(e any) ([]outbox.Message, error) { return e.(asnEncoder).EncodeAsn(ev) }}
 }
 
 func apptCase(name, time, data string, ev appointment.Event) goldenCase {
 	return goldenCase{"dockappointment", name, apptID, apptID, time, data,
-		func(e encoderAPI) ([]outbox.Message, error) { return e.EncodeAppointment(ev) }}
+		func(e any) ([]outbox.Message, error) { return e.(appointmentEncoder).EncodeAppointment(ev) }}
 }
 
 func rcptCase(name, time, data string, ev receipt.Event) goldenCase {
 	return goldenCase{"receipt", name, rcptID, "ASN-1001", time, data,
-		func(e encoderAPI) ([]outbox.Message, error) { return e.EncodeReceipt(ev) }}
+		func(e any) ([]outbox.Message, error) { return e.(receiptEncoder).EncodeReceipt(ev) }}
 }
 
 func goldenEvents(t *testing.T) []goldenCase {
@@ -123,11 +128,27 @@ func TestAnalyticsEncoder_GoldenWireFormat(t *testing.T) {
 	}
 }
 
+// TestFanoutEncoder_HasNoAppointmentMethod pins ADR 0019: the running
+// service's encoder cannot encode the legacy DockAppointment events.
+func TestFanoutEncoder_HasNoAppointmentMethod(t *testing.T) {
+	var f any = NewFanoutEncoder()
+	if _, ok := f.(appointmentEncoder); ok {
+		t.Fatal("the FanoutEncoder must not encode DockAppointment events any more (ADR 0019)")
+	}
+	var e any = NewEncoder()
+	if _, ok := e.(appointmentEncoder); !ok {
+		t.Fatal("the plain Encoder keeps the legacy mapping for the republish-appointments backfill")
+	}
+}
+
 // TestFanoutEncoder_TwoRowsOneID: integration row first (byte-identical to
 // Encoder's), analytics row second, the same id and type on both, for every
-// one of the nine types.
+// one of the five types the service still raises.
 func TestFanoutEncoder_TwoRowsOneID(t *testing.T) {
 	for _, tc := range goldenEvents(t) {
+		if tc.entity == "dockappointment" {
+			continue // no longer raised by the service (ADR 0019): the fanout cannot encode it
+		}
 		t.Run(tc.name, func(t *testing.T) {
 			const id = "11111111-1111-4111-8111-111111111111"
 			f := &FanoutEncoder{Integration: &Encoder{}, Analytics: &AnalyticsEncoder{}, NewID: func() string { return id }}
@@ -201,9 +222,6 @@ func TestFanoutEncoder_RejectsAnUnpublishedEvent(t *testing.T) {
 	f := NewFanoutEncoder()
 	if msgs, err := f.EncodeAsn(registeredAsn(t, time.Time{}), unknownAsnEvent{asn.Header{Number: "A", At: at(8, 1, 0)}}); err == nil || msgs != nil {
 		t.Fatalf("asn: got %v, %v; want an error and no messages", msgs, err)
-	}
-	if msgs, err := f.EncodeAppointment(unknownAppointmentEvent{apptHeader(at(8, 1, 0))}); err == nil || msgs != nil {
-		t.Fatalf("appointment: got %v, %v", msgs, err)
 	}
 	if msgs, err := f.EncodeReceipt(unknownReceiptEvent{receiptHeader(at(8, 1, 0))}); err == nil || msgs != nil {
 		t.Fatalf("receipt: got %v, %v", msgs, err)

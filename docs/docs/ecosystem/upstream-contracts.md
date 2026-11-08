@@ -6,7 +6,8 @@ sidebar_position: 2
 
 # Upstream contracts
 
-`inbound-receiving` consumes **two** upstream contracts, both to build local
+`inbound-receiving` consumes **three** upstream contracts (the third, dock-scheduling, since
+[ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling)), all to build local
 copies so it never calls a sibling at request time
 ([ADR 0003](/docs/adr/0003-local-copies-and-handover)). Each was read from the
 producer's `apis/asyncapi.yaml` on `origin/develop` on 2026-10-08 and no contract
@@ -38,8 +39,23 @@ unknown types are ignored.
 | Local copy | `dock_doors` (`door_code`, `dock_flow`, `updated_at`) |
 | Rule | `LocationSlotRegistered` with `role=Dock` and `dockFlow` `Inbound` or `Both` upserts a row. Any other registration (including an absent `role`, which means `Storage`, and `Dock` with `dockFlow=Outbound`) is ignored. `LocationSlotDecommissioned` deletes the row for that code |
 | Idempotency | claim of the CloudEvents `id` under consumer `dock-door-registry`, in the same unit of work |
-| Effect | `BookAppointment` rejects a door not in `dock_doors` with `422 unknown-dock-door`, only in `kafka` mode; `GET /docks` lists the known doors |
+| Effect | `GET /docks` lists the known doors; `OpenReceipt` keeps the door code of its appointment |
 | Invalid input | WARN and commit past |
+
+## dock-scheduling: appointments
+
+| Item | Value |
+| --- | --- |
+| Topic | `warehouse.dock-scheduling.events` (`DockSchedulingTopic` in `dock_appointment_consumer.go`) |
+| Types | `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked` and `...DockAppointmentCancelled` only; every other type on the topic (`Rescheduled`, `NoShow`, closures) is committed past. Pinned from the contract; re-check against dock-scheduling's AsyncAPI when it lands on `develop` |
+| Consumer group | env `DOCK_APPOINTMENT_CONSUMER_GROUP`; the consumer always runs; unset is a boot error |
+| Fields used | `appointment_id`, `direction` (only `INBOUND` is copied), `door_code`, `carrier`, `window_start`, `window_end`, `asn_numbers[]`, `version` (snake_case; key = `appointment_id`) |
+| Local copy | `appointments` + `appointment_asns` |
+| Rule | an event applies only when its `version` is greater than the stored one (legacy rows are version 0, so any dock-scheduling version wins); a later Booked never revives a cancelled appointment |
+| Idempotency | claim of the CloudEvents `id` under consumer `dock-appointment-copy`, in the same unit of work as the upsert |
+| No loop | applying an event writes nothing to the outbox |
+| Effect | `OpenReceipt` with an `appointmentId` requires it to exist (`422 unknown-appointment`), to cover the ASN (`422 asn-not-on-appointment`) and not be cancelled (`409 appointment-cancelled`); deprecated `GET /appointments` reads the copy |
+| Invalid input | WARN and commit past; transient failures retry |
 
 ## Modes
 
@@ -47,6 +63,7 @@ unknown types are ignored.
 | --- | --- | --- | --- |
 | `known_skus` | `PRODUCT_MODE` = `kafka` (only value) | `PRODUCT_CONSUMER_GROUP` (required) | `kafka` |
 | `dock_doors` | `DOCK_DOOR_MODE` = `kafka` (only value) | `DOCK_DOOR_CONSUMER_GROUP` (required) | `kafka` |
+| `appointments` | none (always on) | `DOCK_APPOINTMENT_CONSUMER_GROUP` (required) | n/a |
 
 The consumers always run and the copies are always consulted: `permissive` and
 `off` are boot errors since [ADR 0011](/docs/adr/0011-postgres-and-kafka-are-the-only-runtime).

@@ -45,11 +45,12 @@ func registeredAsn(t *testing.T, arrival time.Time) asn.Event {
 
 func bookedEvent(t *testing.T) appointment.Event {
 	t.Helper()
-	_, events, err := appointment.Book(apptID, "WH1-DOCK-IN-01", "ACME Freight", at(9, 8, 0), at(9, 10, 0), []string{"ASN-1001"}, at(8, 12, 5))
+	d, err := appointment.Rehydrate(apptID, "WH1-DOCK-IN-01", "ACME Freight", at(9, 8, 0), at(9, 10, 0), []string{"ASN-1001"}, appointment.Booked, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return events[0]
+	// The first event of the legacy history the republish backfill replays.
+	return d.Replay(appointment.Timeline{BookedAt: at(8, 12, 5), ChangedAt: at(8, 12, 5)})[0]
 }
 
 func apptHeader(h time.Time) appointment.Header { return appointment.Header{ID: apptID, At: h} }

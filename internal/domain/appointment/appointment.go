@@ -1,8 +1,14 @@
-// Package appointment holds the DockAppointment aggregate: a carrier's
-// booked time window at a dock door, covering one or more ASNs (ADR 0002).
-// The aggregate guards its own lifecycle and window; the rule that two
-// appointments must not overlap on one door spans aggregates and lives in
-// the Schedule domain service.
+// Package appointment holds the DockAppointment: a carrier's booked time
+// window at a dock door, covering one or more ASNs.
+//
+// Since ADR 0019 (the DockAppointment ownership transfer to dock-scheduling,
+// plan YD-0002) this context no longer decides anything about appointments.
+// The type is the read model of dock-scheduling's appointments: it is rebuilt
+// from that context's events (and, for rows that predate the transfer, from
+// the legacy aggregate's last state) and answers "does this appointment
+// exist, which door, which ASNs, is it cancelled" for Receipt.Open. It has no
+// commands; the only behaviour is Replay, the legacy event history the stage B
+// backfill re-emits.
 package appointment
 
 import (
@@ -14,17 +20,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
-	"github.com/claudioed/inbound-receiving/internal/domain/shared"
 )
 
 const (
-	// MaxWindow is the longest bookable window: 4 hours. It is written in
-	// nanoseconds (not `4 * time.Hour`) so the mutation gate has no
-	// uncoverable constant arithmetic; a test pins the value.
-	MaxWindow time.Duration = 14_400_000_000_000
-	// CheckInLeadTime is how long before the window opens a carrier may
-	// already check in: 30 minutes, in nanoseconds for the same reason.
-	CheckInLeadTime time.Duration = 1_800_000_000_000
 	// MaxDoorCodeLength is the longest door code, in characters.
 	MaxDoorCodeLength = 64
 	// MaxCarrierLength is the longest carrier name, in characters.
@@ -41,31 +39,18 @@ var (
 	// contains a control character.
 	ErrInvalidCarrier = errors.New("carrier must be 1..100 non-blank characters without control characters")
 	// ErrInvalidWindow is returned when the window does not end after it
-	// starts or lasts longer than MaxWindow.
-	ErrInvalidWindow = errors.New("window must end after it starts and last at most 4 hours")
-	// ErrWindowInPast is returned when booking a window that starts before
-	// the clock's now.
-	ErrWindowInPast = errors.New("window must not start in the past")
+	// starts. dock-scheduling owns the longest bookable window (a per-site
+	// setting), so the copy imposes no upper bound.
+	ErrInvalidWindow = errors.New("window must end after it starts")
 	// ErrNoAsns is returned when an appointment covers no ASN.
 	ErrNoAsns = errors.New("appointment must cover at least one asn")
 	// ErrDuplicateAsn is returned when an ASN number is listed twice.
 	ErrDuplicateAsn = errors.New("appointment asn numbers must be distinct")
 	// ErrInvalidState is returned when a persisted state is not a known one.
 	ErrInvalidState = errors.New("unknown appointment state")
-	// ErrInvalidVersion is returned when a persisted version is below 1.
-	ErrInvalidVersion = errors.New("appointment version must be at least 1")
-	// ErrNotBooked is returned when checking in or cancelling an
-	// appointment that is not Booked.
-	ErrNotBooked = errors.New("appointment is not booked")
-	// ErrNotCheckedIn is returned when completing an appointment that is not
-	// CheckedIn.
-	ErrNotCheckedIn = errors.New("appointment is not checked in")
-	// ErrOutsideCheckInWindow is returned when checking in earlier than
-	// CheckInLeadTime before the window or after it ended.
-	ErrOutsideCheckInWindow = errors.New("check-in is only allowed from 30 minutes before the window until it ends")
-	// ErrWindowOverlap is returned by Schedule when a door is already booked
-	// in an overlapping window.
-	ErrWindowOverlap = errors.New("door is already booked in an overlapping window")
+	// ErrInvalidVersion is returned when a version is negative. Version 0 is a
+	// row that predates the transfer: any dock-scheduling version wins over it.
+	ErrInvalidVersion = errors.New("appointment version must not be negative")
 )
 
 var idPattern = regexp.MustCompile(`^appt-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -104,10 +89,12 @@ func NewDoorCode(value string) (DoorCode, error) {
 // String returns the door code text.
 func (d DoorCode) String() string { return string(d) }
 
-// State is the appointment lifecycle state.
+// State is the appointment's lifecycle state as last seen here.
 type State string
 
-// The lifecycle: Booked -> CheckedIn -> Completed, or Booked -> Cancelled.
+// The states of the legacy lifecycle (Booked -> CheckedIn -> Completed, or
+// Booked -> Cancelled). A row fed by dock-scheduling is Booked or Cancelled:
+// check-in, completion, no-show and reschedule are not consumed (ADR 0019).
 const (
 	Booked    State = "Booked"
 	CheckedIn State = "CheckedIn"
@@ -119,10 +106,6 @@ func (s State) valid() bool {
 	return s == Booked || s == CheckedIn || s == Completed || s == Cancelled
 }
 
-// Active reports whether an appointment in this state still occupies its
-// door (Booked or CheckedIn).
-func (s State) Active() bool { return s == Booked || s == CheckedIn }
-
 // Window is the half-open interval [start, end) a door is booked for.
 type Window struct {
 	start time.Time
@@ -131,7 +114,7 @@ type Window struct {
 
 // NewWindow validates a window and normalises it to UTC.
 func NewWindow(start, end time.Time) (Window, error) {
-	if !end.After(start) || end.Sub(start) > MaxWindow {
+	if !end.After(start) {
 		return Window{}, ErrInvalidWindow
 	}
 	return Window{start: start.UTC(), end: end.UTC()}, nil
@@ -143,25 +126,12 @@ func (w Window) Start() time.Time { return w.start }
 // End returns the exclusive end.
 func (w Window) End() time.Time { return w.end }
 
-// Overlaps reports whether the two half-open windows share any instant.
-func (w Window) Overlaps(other Window) bool {
-	return w.start.Before(other.end) && other.start.Before(w.end)
-}
-
-// allowsCheckIn reports whether at lies in [start - CheckInLeadTime, end].
-func (w Window) allowsCheckIn(at time.Time) bool {
-	return !at.Before(w.start.Add(-CheckInLeadTime)) && !at.After(w.end)
-}
-
-// DockAppointment is the aggregate root.
+// DockAppointment is the local copy of one dock-scheduling appointment.
 //
 // Invariants: the id and door code are valid; the carrier is non-blank; the
-// window ends after it starts and lasts at most MaxWindow; a booking window
-// does not start in the past; at least one ASN is covered and none twice;
-// only a Booked appointment can be checked in or cancelled and only a
-// CheckedIn one completed; check-in is allowed from CheckInLeadTime before
-// the window starts until it ends; Version starts at 1 and increases by one
-// per accepted change.
+// window ends after it starts; at least one ASN is covered and none twice;
+// Version is the dock-scheduling aggregate version of the last event applied,
+// 0 for a row that predates the transfer (any new version wins over it).
 type DockAppointment struct {
 	id         ID
 	doorCode   DoorCode
@@ -172,34 +142,13 @@ type DockAppointment struct {
 	version    int64
 }
 
-// Book creates a Booked appointment at version 1 and raises
-// DockAppointmentBooked. now is the injected clock: the window may start at
-// now but not before it. Door availability is checked by Schedule.
-func Book(id, doorCode, carrier string, start, end time.Time, asnNumbers []string, now time.Time) (*DockAppointment, []Event, error) {
-	d, err := build(id, doorCode, carrier, start, end, asnNumbers, Booked, 1)
-	if err != nil {
-		return nil, nil, err
-	}
-	if d.window.start.Before(now) {
-		return nil, nil, ErrWindowInPast
-	}
-	booked := DockAppointmentBooked{
-		Header:     d.header(now),
-		DoorCode:   d.doorCode,
-		Carrier:    d.carrier,
-		Window:     d.window,
-		AsnNumbers: d.AsnNumbers(),
-	}
-	return d, []Event{booked}, nil
-}
-
-// Rehydrate rebuilds a persisted appointment, re-validating every invariant
-// except that the window may be in the past.
+// Rehydrate rebuilds a stored appointment, re-validating every invariant
+// (the window may be in the past).
 func Rehydrate(id, doorCode, carrier string, start, end time.Time, asnNumbers []string, state State, version int64) (*DockAppointment, error) {
 	if !state.valid() {
 		return nil, ErrInvalidState
 	}
-	if version < 1 {
+	if version < 0 {
 		return nil, ErrInvalidVersion
 	}
 	return build(id, doorCode, carrier, start, end, asnNumbers, state, version)
@@ -283,82 +232,69 @@ func (d *DockAppointment) AsnNumbers() []asn.Number {
 	return append([]asn.Number(nil), d.asnNumbers...)
 }
 
+// Covers reports whether the appointment lists the ASN.
+func (d *DockAppointment) Covers(number asn.Number) bool {
+	for _, n := range d.asnNumbers {
+		if n == number {
+			return true
+		}
+	}
+	return false
+}
+
 // State returns the lifecycle state.
 func (d *DockAppointment) State() State { return d.state }
 
-// Version returns the current version.
+// Version returns the dock-scheduling version of the last applied event (0
+// for a row that predates the transfer).
 func (d *DockAppointment) Version() int64 { return d.version }
 
-// CheckIn records the carrier's arrival at the door and raises
-// DockAppointmentCheckedIn. Only a Booked appointment can check in, and only
-// from CheckInLeadTime before the window starts until it ends (inclusive).
-func (d *DockAppointment) CheckIn(at time.Time) ([]Event, error) {
-	if d.state != Booked {
-		return nil, ErrNotBooked
-	}
-	if !d.window.allowsCheckIn(at) {
-		return nil, ErrOutsideCheckInWindow
-	}
-	d.state = CheckedIn
-	d.version++
-	checkedIn := DockAppointmentCheckedIn{Header: d.header(at), DoorCode: d.doorCode, CheckedInAt: at.UTC()}
-	return []Event{checkedIn}, nil
+// Timeline carries the moments a stored appointment's state implies; the
+// store keeps no per-transition history, so they are the row's own
+// timestamps (see Replay).
+type Timeline struct {
+	// BookedAt is when the row was created.
+	BookedAt time.Time
+	// ChangedAt is when the row last changed: the cancellation, the
+	// completion, or the check-in of a CheckedIn row.
+	ChangedAt time.Time
+	// CheckedInAt is the best known check-in moment of a Completed row (the
+	// opening of its first receipt); zero means "use ChangedAt".
+	CheckedInAt time.Time
 }
 
-// Cancel cancels a Booked appointment and raises DockAppointmentCancelled.
-// The reason is optional.
-func (d *DockAppointment) Cancel(reason string, now time.Time) ([]Event, error) {
-	if d.state != Booked {
-		return nil, ErrNotBooked
+// Replay returns the legacy event history that leads to the stored state, in
+// order: DockAppointmentBooked, then CheckedIn (CheckedIn, Completed),
+// Completed (Completed) or Cancelled (Cancelled). Only the stage B backfill
+// uses it, so that dock-scheduling's importer can rebuild the current state
+// of an appointment that predates the transfer. A later moment is never
+// before an earlier one.
+func (d *DockAppointment) Replay(t Timeline) []Event {
+	booked := t.BookedAt.UTC()
+	changed := t.ChangedAt.UTC()
+	if changed.Before(booked) {
+		changed = booked
 	}
-	if err := shared.ValidateReason(reason); err != nil {
-		return nil, err
+	events := []Event{DockAppointmentBooked{
+		Header: Header{ID: d.id, At: booked}, DoorCode: d.doorCode, Carrier: d.carrier,
+		Window: d.window, AsnNumbers: d.AsnNumbers(),
+	}}
+	switch d.state {
+	case CheckedIn:
+		events = append(events, d.checkedInEvent(changed))
+	case Completed:
+		in := t.CheckedInAt.UTC()
+		if in.IsZero() || in.Before(booked) || in.After(changed) {
+			in = changed
+		}
+		events = append(events, d.checkedInEvent(in),
+			DockAppointmentCompleted{Header: Header{ID: d.id, At: changed}, DoorCode: d.doorCode, CompletedAt: changed})
+	case Cancelled:
+		events = append(events, DockAppointmentCancelled{Header: Header{ID: d.id, At: changed}, DoorCode: d.doorCode})
 	}
-	d.state = Cancelled
-	d.version++
-	cancelled := DockAppointmentCancelled{Header: d.header(now), DoorCode: d.doorCode, Reason: reason}
-	return []Event{cancelled}, nil
+	return events
 }
 
-// Complete finishes a CheckedIn appointment (its receipt closed) and raises
-// DockAppointmentCompleted.
-func (d *DockAppointment) Complete(at time.Time) ([]Event, error) {
-	if d.state != CheckedIn {
-		return nil, ErrNotCheckedIn
-	}
-	d.state = Completed
-	d.version++
-	completed := DockAppointmentCompleted{Header: d.header(at), DoorCode: d.doorCode, CompletedAt: at.UTC()}
-	return []Event{completed}, nil
-}
-
-func (d *DockAppointment) header(at time.Time) Header {
-	return Header{ID: d.id, At: at.UTC()}
-}
-
-// Schedule is the domain service guarding the cross-aggregate rule that no
-// two appointments in Booked or CheckedIn may overlap on the same door.
-type Schedule struct{}
-
-// CheckNoOverlap returns ErrWindowOverlap when candidate's window overlaps
-// the window of any other active appointment on its door. activeOnSameDoor
-// is what the repository found for candidate's door; the candidate itself,
-// appointments on another door and appointments that no longer occupy a door
-// are ignored defensively.
-func (Schedule) CheckNoOverlap(candidate *DockAppointment, activeOnSameDoor []*DockAppointment) error {
-	for _, other := range activeOnSameDoor {
-		if other.id == candidate.id {
-			continue
-		}
-		if other.doorCode != candidate.doorCode {
-			continue
-		}
-		if !other.state.Active() {
-			continue
-		}
-		if candidate.window.Overlaps(other.window) {
-			return ErrWindowOverlap
-		}
-	}
-	return nil
+func (d *DockAppointment) checkedInEvent(at time.Time) Event {
+	return DockAppointmentCheckedIn{Header: Header{ID: d.id, At: at}, DoorCode: d.doorCode, CheckedInAt: at}
 }

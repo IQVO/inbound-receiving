@@ -111,14 +111,6 @@ type reasonRequest struct {
 	Reason string `json:"reason"`
 }
 
-type bookAppointmentRequest struct {
-	DoorCode    string    `json:"doorCode"`
-	Carrier     string    `json:"carrier"`
-	WindowStart time.Time `json:"windowStart"`
-	WindowEnd   time.Time `json:"windowEnd"`
-	AsnNumbers  []string  `json:"asnNumbers"`
-}
-
 type openReceiptRequest struct {
 	AsnNumber     string `json:"asnNumber"`
 	AppointmentID string `json:"appointmentId"`

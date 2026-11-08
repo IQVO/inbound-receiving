@@ -241,11 +241,11 @@ func (h *anHarness) run(t *testing.T, values ...[]byte) *fakeReader {
 
 func anBooked(t *testing.T, id string, at time.Time) []byte {
 	t.Helper()
-	_, events, err := appointment.Book(anAppt, "D1", "ACME", at.Add(time.Hour), at.Add(2*time.Hour), []string{"ASN-1"}, at)
+	d, err := appointment.Rehydrate(anAppt, "D1", "ACME", at.Add(time.Hour), at.Add(2*time.Hour), []string{"ASN-1"}, appointment.Booked, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return anApptEvent(t, id, events[0])
+	return anApptEvent(t, id, d.Replay(appointment.Timeline{BookedAt: at, ChangedAt: at})[0])
 }
 
 // anLifecycle is a full receiving lifecycle encoded by the real encoder:

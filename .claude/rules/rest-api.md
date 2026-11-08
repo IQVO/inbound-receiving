@@ -14,11 +14,9 @@ path prefix: `/api/inbound-receiving`.
 - `GET  /asns?limit=&cursor=&state=`        -> `ListAsns`
 - `GET  /asns/{asnNumber}`                  -> `GetAsn`
 - `POST /asns/{asnNumber}/cancellations`     -> `CancelAsn` (200; keyed)
-- `POST /appointments`                      -> `BookAppointment` (201; `Idempotency-Key` required)
-- `GET  /appointments?door=&state=&from=&to=&limit=&cursor=` -> `ListAppointments`
-- `GET  /appointments/{appointmentId}`      -> `GetAppointment`
-- `POST /appointments/{appointmentId}/check-ins` -> `CheckInAppointment` (200; keyed)
-- `POST /appointments/{appointmentId}/cancellations` -> `CancelAppointment` (200; keyed)
+- `GET  /appointments?door=&state=&from=&to=&limit=&cursor=` -> `ListAppointments` (**deprecated**, ADR 0019: the local copy of dock-scheduling's appointments)
+- `GET  /appointments/{appointmentId}`      -> `GetAppointment` (**deprecated**, same)
+- `POST /appointments`, `POST /appointments/{appointmentId}/check-ins`, `POST /appointments/{appointmentId}/cancellations` -> **410** problem `appointment-moved` (retired, `x-retired: true`; no use case; the detail names dock-scheduling / yard-management)
 - `POST /receipts`                          -> `OpenReceipt` (201; body `{asnNumber, appointmentId?}`; `Idempotency-Key` required)
 - `GET  /receipts?asnNumber=&state=&limit=&cursor=` -> `ListReceipts`
 - `GET  /receipts/{receiptId}`              -> `GetReceipt`

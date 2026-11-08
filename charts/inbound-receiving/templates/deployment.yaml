@@ -94,6 +94,9 @@ spec:
             # PackagingView (ADR 0012): local copy of product-master pack levels, always on.
             - name: PACKAGING_CONSUMER_GROUP
               value: {{ .Values.config.packagingConsumerGroup | quote }}
+            # ADR 0019: local copy of dock-scheduling's appointments, always on.
+            - name: DOCK_APPOINTMENT_CONSUMER_GROUP
+              value: {{ .Values.config.dockAppointmentConsumerGroup | quote }}
             # ADR 0014: CartonOverLimit handling limits (0 = unchecked).
             - name: CARTON_MAX_GROSS_WEIGHT_G
               value: {{ .Values.config.cartonMaxGrossWeightG | int64 | quote }}

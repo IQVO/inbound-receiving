@@ -2,6 +2,7 @@ package mcp_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/memory"
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
+	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 )
 
 // startOfDay is the fixture's fixed "now".
@@ -34,12 +36,11 @@ type harness struct {
 	clock   *mutableClock
 	outbox  *memory.OutboxRepo
 	doors   *memory.DockDoors
+	appts   *memory.AppointmentRepo
+	apptSeq int
 
 	register *usecases.RegisterAsn
 	cancel   *usecases.CancelAsn
-	book     *usecases.BookAppointment
-	checkIn  *usecases.CheckInAppointment
-	cancelAp *usecases.CancelAppointment
 	open     *usecases.OpenReceipt
 	receive  *usecases.ReceiveLine
 	closeRc  *usecases.CloseReceipt
@@ -91,12 +92,9 @@ func newHarness(t *testing.T) *harness {
 	}
 	return &harness{
 		session: connectSession(t, depsFor(asns, appts, receipts, doors, usecases.ModeKafka)),
-		clock:   clock, outbox: ob, doors: doors,
+		clock:   clock, outbox: ob, doors: doors, appts: appts,
 		register: &usecases.RegisterAsn{Writer: w},
 		cancel:   &usecases.CancelAsn{Writer: w},
-		book:     &usecases.BookAppointment{Writer: w},
-		checkIn:  &usecases.CheckInAppointment{Writer: w},
-		cancelAp: &usecases.CancelAppointment{Writer: w},
 		open:     &usecases.OpenReceipt{Writer: w},
 		receive:  &usecases.ReceiveLine{Writer: w},
 		closeRc:  &usecases.CloseReceipt{Writer: w},
@@ -115,18 +113,29 @@ func (h *harness) seedAsn(t *testing.T, number string) {
 	}
 }
 
-// seedAppointment books a 2 h window starting hour hours after the fixture
-// clock and returns the appointment id.
+// seedAppointment stores a Booked copy (version 1) of a 2 h dock-scheduling
+// appointment starting hour hours after the fixture clock and returns its id.
+// This context has no way to book one (ADR 0019): the copy is fed by the
+// dock-appointment consumer, so the harness feeds the store directly.
 func (h *harness) seedAppointment(t *testing.T, door string, hour int, asns ...string) string {
 	t.Helper()
+	return h.seedAppointmentIn(t, appointment.Booked, 1, door, hour, asns...)
+}
+
+// seedAppointmentIn is seedAppointment with an explicit state and version.
+func (h *harness) seedAppointmentIn(t *testing.T, state appointment.State, version int64, door string, hour int, asns ...string) string {
+	t.Helper()
 	start := startOfDay.Add(time.Duration(hour) * time.Hour)
-	a, err := h.book.Handle(context.Background(), usecases.BookAppointmentCommand{
-		DoorCode: door, Carrier: "ACME Freight", WindowStart: start, WindowEnd: start.Add(2 * time.Hour), AsnNumbers: asns,
-	})
+	h.apptSeq++
+	id := fmt.Sprintf("appt-00000000-0000-4000-8000-%012d", h.apptSeq)
+	d, err := appointment.Rehydrate(id, door, "ACME Freight", start, start.Add(2*time.Hour), asns, state, version)
 	if err != nil {
-		t.Fatalf("book %s: %v", door, err)
+		t.Fatalf("appointment %s: %v", id, err)
 	}
-	return string(a.ID())
+	if _, err := h.appts.ApplyBooked(context.Background(), d); err != nil {
+		t.Fatalf("store %s: %v", id, err)
+	}
+	return id
 }
 
 // seedReceipt opens a receipt for number (walk-in when appointmentID is "").

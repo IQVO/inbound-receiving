@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
 	"github.com/claudioed/inbound-receiving/internal/application/repository"
@@ -22,8 +21,10 @@ type OpenReceiptCommand struct {
 
 // OpenReceipt starts receiving an ASN: it opens a receipt against a snapshot
 // of the ASN's lines, moves the ASN to Receiving and, with an appointment,
-// takes the door from it. One open receipt per ASN is enforced here and by a
-// partial unique index.
+// takes the door from it. The appointment is validated against the local
+// copy of dock-scheduling's appointments (ADR 0019): it must exist, cover the
+// ASN and not be cancelled. One open receipt per ASN is enforced here and by
+// a partial unique index.
 type OpenReceipt struct {
 	Writer
 }
@@ -94,8 +95,10 @@ func (uc *OpenReceipt) beginReceiving(ctx context.Context, a *asn.Asn) error {
 	return uc.saveAsn(ctx, a, loaded, nil)
 }
 
-// checkAppointment validates the optional appointment and returns its door
-// ("" without one).
+// checkAppointment validates the optional appointment against the local
+// copy and returns its door ("" without one). It is not required to be
+// checked in: the arrival is a yard-management fact this context does not
+// see (ADR 0019).
 func (uc *OpenReceipt) checkAppointment(ctx context.Context, id appointment.ID, number asn.Number) (appointment.DoorCode, error) {
 	if id == "" {
 		return "", nil
@@ -107,15 +110,11 @@ func (uc *OpenReceipt) checkAppointment(ctx context.Context, id appointment.ID, 
 	if err != nil {
 		return "", err
 	}
-	covered := false
-	for _, n := range d.AsnNumbers() {
-		covered = covered || n == number
-	}
-	if !covered {
+	if !d.Covers(number) {
 		return "", ErrAsnNotOnAppointment
 	}
-	if d.State() != appointment.CheckedIn {
-		return "", ErrAppointmentNotCheckedIn
+	if d.State() == appointment.Cancelled {
+		return "", ErrAppointmentCancelled
 	}
 	return d.DoorCode(), nil
 }
@@ -202,9 +201,10 @@ type CloseReceiptCommand struct {
 	ExpectedVersion int64
 }
 
-// CloseReceipt ends receiving. The receipt close, the ASN completion and,
-// when the receipt came from an appointment, the appointment completion are
-// ONE unit of work, so their events reach the outbox together.
+// CloseReceipt ends receiving. The receipt close and the ASN completion are
+// ONE unit of work, so their events reach the outbox together. It no longer
+// completes the appointment: the door release recorded by yard-management
+// does, through dock-scheduling (ADR 0019).
 type CloseReceipt struct {
 	Writer
 }
@@ -233,9 +233,6 @@ func (uc *CloseReceipt) Handle(ctx context.Context, cmd CloseReceiptCommand) (*r
 		if err := uc.completeAsn(ctx, r.AsnNumber()); err != nil {
 			return err
 		}
-		if err := uc.completeAppointment(ctx, r.AppointmentID(), now); err != nil {
-			return err
-		}
 		if err := uc.saveReceipt(ctx, r, loaded, events); err != nil {
 			return err
 		}
@@ -258,20 +255,4 @@ func (uc *CloseReceipt) completeAsn(ctx context.Context, number asn.Number) erro
 		return err
 	}
 	return uc.saveAsn(ctx, a, loaded, nil)
-}
-
-func (uc *CloseReceipt) completeAppointment(ctx context.Context, id appointment.ID, now time.Time) error {
-	if id == "" {
-		return nil
-	}
-	d, err := uc.Appointments.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	loaded := d.Version()
-	events, err := d.Complete(now)
-	if err != nil {
-		return err
-	}
-	return uc.saveAppointment(ctx, d, loaded, events)
 }

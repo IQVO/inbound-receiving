@@ -162,6 +162,9 @@ from its committed offsets.
 {{- if not .Values.config.packagingConsumerGroup -}}
 {{- fail "config.packagingConsumerGroup is required (PACKAGING_CONSUMER_GROUP): the packaging consumer always runs on real Kafka and cmd/api exits at boot without a group. Use a STABLE id (ADR 0012)." -}}
 {{- end -}}
+{{- if not .Values.config.dockAppointmentConsumerGroup -}}
+{{- fail "config.dockAppointmentConsumerGroup is required (DOCK_APPOINTMENT_CONSUMER_GROUP): the dock-appointment consumer (local copy of dock-scheduling's appointments) always runs on real Kafka and cmd/api exits at boot without a group. Use a STABLE id (ADR 0019)." -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

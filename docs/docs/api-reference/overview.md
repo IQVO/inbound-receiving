@@ -34,14 +34,14 @@ sidebar_position: 1
   `idempotency-key-required`, `idempotency-key-reused`, the `invalid-*` slugs for
   ASN number, supplier ref, line number, SKU, quantity, reason, appointment id,
   receipt id, door code, carrier, window and condition, `asn-requires-lines`,
-  `duplicate-sku`, `window-in-past`, `appointment-requires-asns`,
+  `duplicate-sku`, `appointment-requires-asns`,
   `duplicate-asn-number`, `asn-not-found`, `appointment-not-found`,
   `receipt-not-found`, `asn-already-exists`, `asn-in-progress`, `asn-terminal`,
-  `asn-not-receivable`, `appointment-not-booked`, `appointment-not-checked-in`,
-  `outside-check-in-window`, `door-window-overlap`, `receipt-already-open`,
-  `receipt-closed`, `unknown-sku`, `unknown-dock-door`, `unknown-asn`,
+  `asn-not-receivable`, `appointment-cancelled`, `receipt-already-open`,
+  `receipt-closed`, `unknown-sku`, `unknown-asn`,
   `unknown-appointment`, `asn-not-on-appointment`, `line-not-on-asn`,
-  `version-mismatch`, `concurrent-modification` and `internal-error`. The
+  `version-mismatch`, `concurrent-modification`, `internal-error` and the
+  `410` `appointment-moved` of the retired appointment writes (ADR 0019). The
   reports binary adds `invalid-report-range` (400) and `report-store-error`
   (500).
 - **Request bodies** reject unknown fields; JSON field names are camelCase on REST
@@ -59,7 +59,7 @@ sidebar_position: 1
 | Tag | Endpoints |
 | --- | --- |
 | `ASNs` | `POST /asns`, `GET /asns`, `GET /asns/{asnNumber}`, `POST /asns/{asnNumber}/cancellations` |
-| `Appointments` | `POST /appointments`, `GET /appointments`, `GET /appointments/{appointmentId}`, `POST /appointments/{appointmentId}/check-ins`, `POST /appointments/{appointmentId}/cancellations` |
+| `Appointments` | **deprecated** (ADR 0019): `GET /appointments`, `GET /appointments/{appointmentId}` from the local copy; the three write routes `POST /appointments`, `POST /appointments/{appointmentId}/check-ins` and `POST /appointments/{appointmentId}/cancellations` answer `410 appointment-moved` |
 | `Receipts` | `POST /receipts`, `GET /receipts`, `GET /receipts/{receiptId}`, `POST /receipts/{receiptId}/lines`, `POST /receipts/{receiptId}/closures` |
 | `Docks` | `GET /docks` |
 | `Reports` | `GET /reports/receiving-performance`, `GET /reports/freshness` (served by the separate `inbound-reports` binary on `:8092` from the analytical database, server `http://localhost:8092` in the spec, ADR 0006) |

@@ -36,32 +36,29 @@ Supplier reference: non-blank, at most 64 characters, no control characters
 (`ErrInvalidSupplierRef`). `Snapshot()` returns the read-only copy a receipt is
 opened against.
 
-## DockAppointment
+## DockAppointment (moved to dock-scheduling, ADR 0019)
 
-Package `internal/domain/appointment` (`appointment.go`, `events.go`).
+The dock appointment is **no longer an aggregate of this context**:
+dock-scheduling owns it and decides booking, rescheduling, check-in,
+cancellation and door overlap. Here the `appointments` table (and its
+`appointment_asns` coverage table) is a read-only **local copy**, fed by the
+dock-appointment consumer from dock-scheduling's `DockAppointmentBooked` and
+`DockAppointmentCancelled`, applied only when the event `version` is greater than
+the stored one, and raising no event.
+
+Package `internal/domain/appointment` keeps the type only to hold that copy:
 
 - **Identity**: `ID`, `appt-` followed by a lowercase UUID.
-- **State**: `Booked -> CheckedIn -> Completed`, or `Booked -> Cancelled`.
+- **State**: `Booked` or `Cancelled` for copied rows; rows that predate the
+  transfer may still be `CheckedIn` or `Completed` (version 0).
+- `Rehydrate` rebuilds a row; `Covers(asn)` answers whether the appointment
+  carries an ASN (what `OpenReceipt` asks).
+- `Replay(timeline)` rebuilds the legacy event sequence of a stored row
+  (`Booked`, then `CheckedIn` / `Cancelled` / `Completed`) for the stage B
+  backfill `api republish-appointments`. Both go at stage E.
 
-| Method | Raises | Rule |
-| --- | --- | --- |
-| `Book(id, door, carrier, start, end, asnNumbers, now)` | `DockAppointmentBooked` (version 1) | window `[start, end)`, `end > start`, at most `MaxWindow` (4 h); `start` not before the injected clock's now (`ErrWindowInPast`); at least one ASN, none twice |
-| `CheckIn(at)` | `DockAppointmentCheckedIn` | only from `Booked` (`ErrNotBooked`), only from `start - CheckInLeadTime` (30 min) to `end`, both inclusive (`ErrOutsideCheckInWindow`) |
-| `Cancel(reason, now)` | `DockAppointmentCancelled` | only from `Booked` |
-| `Complete(at)` | `DockAppointmentCompleted` | only from `CheckedIn` (`ErrNotCheckedIn`); called when the receipt opened from the appointment closes |
-
-Door code: 1..64 characters, no whitespace, control characters or `/`.
-Carrier: non-blank, at most 100 characters. Rehydrating a past window is
-allowed.
-
-**`Schedule.CheckNoOverlap(candidate, activeOnSameDoor)`** is a domain service:
-no two appointments in `Booked` or `CheckedIn` may overlap on one door. Windows
-are half-open, so `[10:00, 12:00)` and `[12:00, 14:00)` are compatible.
-Cancelled and Completed appointments, other doors and the candidate itself are
-ignored. The rule spans aggregates, so the book use case calls it with what the
-repository found for that door; races between concurrent bookings are closed by
-a per-door Postgres advisory lock taken around the check and the insert
-(`pg_advisory_xact_lock` in `appointment_repository.go`), not by the domain.
+`Book`, `CheckIn`, `Cancel`, `Complete` and `Schedule.CheckNoOverlap` (and the
+per-door advisory lock) are deleted.
 
 ## Receipt
 
@@ -105,11 +102,10 @@ never nil: an empty list means everything matched.
 | Invariant | Enforced by |
 | --- | --- |
 | One open receipt per ASN | the open-receipt use case (`requireNoOpenReceipt`, `409 receipt-already-open`) and the partial unique index `receipts_one_open_per_asn ON receipts (asn_number) WHERE state = 'Open'` |
-| No door double-booking | `Schedule` plus the per-door advisory lock in the book use case |
-| Closing a receipt completes the ASN and the appointment | `CloseReceipt` runs the three changes and their outbox rows in one unit of work |
+| An appointment on a receipt exists, covers the ASN and is not cancelled | `OpenReceipt` against the local copy (ADR 0019) |
+| Closing a receipt completes the ASN | `CloseReceipt` runs the two changes and their outbox rows in one unit of work (it no longer completes an appointment: dock-scheduling does, from yard-management's door release) |
 
-The tolerances are named constants, not configuration: `appointment.MaxWindow`,
-`appointment.CheckInLeadTime` and `receipt.Kind*`. A tolerance policy (accept up
+The tolerances are named constants, not configuration: `receipt.Kind*`. A tolerance policy (accept up
 to x % over-receipt silently) is a later, separately decided change; v1 reports
 every difference.
 

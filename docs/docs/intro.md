@@ -48,8 +48,8 @@ Besides the REST service, `develop` ships the read-only MCP server
 image (`Dockerfile`) and the Helm chart `charts/inbound-receiving`.
 `warehouse-infra` deploys all of it on its `develop`. The pages of this site
 describe what the code on `develop` does today. Every edge in the context map
-is built; the dock-appointment feed into `warehouse-planning` is consumed there
-since its ADR 0017.
+is built, except that the dock-appointment source of `warehouse-planning` moves
+to dock-scheduling (ADR 0019, stage D).
 :::
 
 ## What this context owns
@@ -60,10 +60,10 @@ Three aggregates, each its own consistency boundary
 - **Asn** (identity: ASN number): the supplier's announcement. Lines
   `[{lineNo, sku, expectedQty}]`, numbered `1..n`, unique SKUs. State
   `Registered -> Receiving -> Closed`, or `Registered -> Cancelled`.
-- **DockAppointment** (identity: `appt-<uuid>`): a carrier's half-open door
-  window of at most four hours covering one or more ASNs. State
-  `Booked -> CheckedIn -> Completed`, or `Booked -> Cancelled`. No two active
-  appointments may overlap on one door (the `Schedule` domain service).
+- **DockAppointment** (identity: `appt-<uuid>`): a carrier's door window
+  covering one or more ASNs. Owned by dock-scheduling since ADR 0019; here a
+  read-only local copy (`Booked` / `Cancelled`) that `OpenReceipt` validates
+  against.
 - **Receipt** (identity: `rcpt-<uuid>`): the counted receiving of one ASN,
   opened against a snapshot of the ASN. Per line it counts Good and Damaged
   units; closing it computes the `Short`, `Over` and `Damaged` discrepancies.

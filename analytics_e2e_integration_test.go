@@ -34,6 +34,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/postgres"
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
+	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 )
 
 // The whole analytics read side (ADR 0006) against real infrastructure, all
@@ -144,6 +145,11 @@ type e2eWrites struct {
 	t     *testing.T
 	w     usecases.Writer
 	clock *settableClock
+	// appts is the appointments local copy (fed by dock-scheduling's events in
+	// production, ADR 0019) and history encodes the legacy DockAppointment
+	// events that were already on the analytics stream before the cutover.
+	appts   *postgres.AppointmentRepo
+	history *outboundkafka.AnalyticsEncoder
 }
 
 func (e e2eWrites) at(when time.Time, what string, run func(ctx context.Context) error) {
@@ -208,7 +214,7 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 	// ---- OLTP writes: both topics' rows in ONE transaction per change ----
 	ob := postgres.NewOutboxRepo(oltp)
 	clock := &settableClock{}
-	writes := e2eWrites{t: t, clock: clock, w: usecases.Writer{
+	writes := e2eWrites{t: t, clock: clock, appts: postgres.NewAppointmentRepo(oltp), history: &outboundkafka.AnalyticsEncoder{Topic: analyticsTopic}, w: usecases.Writer{
 		Asns: postgres.NewAsnRepo(oltp), Appointments: postgres.NewAppointmentRepo(oltp), Receipts: postgres.NewReceiptRepo(oltp),
 		Outbox: ob, UoW: postgres.NewUnitOfWork(oltp), Clock: clock, IDs: idgen.UUID{},
 		Encoder: &outboundkafka.FanoutEncoder{
@@ -218,11 +224,13 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 		},
 	}}
 	e2eScenario(t, writes)
+	// 10 events raised by the service (both topics) + the 3 legacy
+	// DockAppointment events of the pre-cutover history (analytics stream only).
 	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, analyticsTopic); n != 13 {
-		t.Fatalf("analytics outbox rows = %d, want 13 (one per event)", n)
+		t.Fatalf("analytics outbox rows = %d, want 13 (10 raised + 3 legacy appointment events)", n)
 	}
-	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, integrationTopic); n != 13 {
-		t.Fatalf("integration outbox rows = %d, want 13", n)
+	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, integrationTopic); n != 10 {
+		t.Fatalf("integration outbox rows = %d, want 10 (this service raises no appointment event any more)", n)
 	}
 
 	// ---- the topic also carries messages the projector must survive ----
@@ -313,27 +321,25 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 // e2eScenario is the receiving story the report is asserted against.
 //
 //	day 5: ASN-1 (10 x SKU-1, 5 x SKU-2) expected day 6 08:00; ASN-2 (4 x SKU-3) expected day 6 09:00;
-//	       ASN-3 expected day 6 11:00 and cancelled; one appointment booked for ASN-1 (day 6 08:00-10:00).
-//	day 6: the carrier checks in 07:50, ASN-1's receipt opens 08:05, receives 8 good + 1 damaged of line 1
-//	       and 7 good of line 2, closes 09:30 (Short + Damaged on line 1, Over on line 2; the appointment
-//	       completes); ASN-2 is received as a walk-in from 11:00 and is still open.
+//	       ASN-3 expected day 6 11:00 and cancelled; dock-scheduling's booking of ASN-1 (day 6 08:00-10:00) reaches
+//	       the local copy.
+//	day 6: ASN-1's receipt opens 08:05 on that appointment, receives 8 good + 1 damaged of line 1
+//	       and 7 good of line 2, closes 09:30 (Short + Damaged on line 1, Over on line 2); ASN-2 is received as a
+//	       walk-in from 11:00 and is still open. The appointment's legacy history (booked day 5 09:30, checked in
+//	       day 6 07:50, completed 09:30) is the stage B replay of what the analytics stream held before the cutover.
 func e2eScenario(t *testing.T, w e2eWrites) {
 	t.Helper()
 	w.registerAsn("ASN-1", e2eAt(6, 8, 0), e2eAt(5, 8, 0), lineOf(1, "SKU-1", 10), lineOf(2, "SKU-2", 5))
 	w.registerAsn("ASN-2", e2eAt(6, 9, 0), e2eAt(5, 8, 5), lineOf(1, "SKU-3", 4))
 	w.registerAsn("ASN-3", e2eAt(6, 11, 0), e2eAt(5, 8, 10), lineOf(1, "SKU-4", 1))
 	w.cancelAsn("ASN-3", e2eAt(5, 9, 0))
-	var apptID string
-	w.at(e2eAt(5, 9, 30), "book", func(ctx context.Context) error {
-		d, err := (&usecases.BookAppointment{Writer: w.w}).Handle(ctx, usecases.BookAppointmentCommand{
-			DoorCode: "D1", Carrier: "ACME Freight", WindowStart: e2eAt(6, 8, 0), WindowEnd: e2eAt(6, 10, 0), AsnNumbers: []string{"ASN-1"}})
-		if d != nil {
-			apptID = string(d.ID())
+	const apptID = "appt-00000000-0000-4000-8000-000000000001"
+	w.at(e2eAt(5, 9, 30), "dock-scheduling books", func(ctx context.Context) error {
+		d, err := appointment.Rehydrate(apptID, "D1", "ACME Freight", e2eAt(6, 8, 0), e2eAt(6, 10, 0), []string{"ASN-1"}, appointment.Booked, 1)
+		if err != nil {
+			return err
 		}
-		return err
-	})
-	w.at(e2eAt(6, 7, 50), "check in", func(ctx context.Context) error {
-		_, err := (&usecases.CheckInAppointment{Writer: w.w}).Handle(ctx, usecases.AppointmentActionCommand{AppointmentID: apptID})
+		_, err = w.appts.ApplyBooked(ctx, d)
 		return err
 	})
 	var receiptID string
@@ -361,6 +367,19 @@ func e2eScenario(t *testing.T, w e2eWrites) {
 	w.at(e2eAt(6, 9, 30), "close receipt", func(ctx context.Context) error {
 		_, err := (&usecases.CloseReceipt{Writer: w.w}).Handle(ctx, usecases.CloseReceiptCommand{ReceiptID: receiptID, ExpectedVersion: version})
 		return err
+	})
+	w.at(e2eAt(6, 9, 30), "legacy appointment history", func(ctx context.Context) error {
+		d, err := appointment.Rehydrate(apptID, "D1", "ACME Freight", e2eAt(6, 8, 0), e2eAt(6, 10, 0), []string{"ASN-1"}, appointment.Completed, 0)
+		if err != nil {
+			return err
+		}
+		msgs, err := w.history.EncodeAppointment(d.Replay(appointment.Timeline{
+			BookedAt: e2eAt(5, 9, 30), ChangedAt: e2eAt(6, 9, 30), CheckedInAt: e2eAt(6, 7, 50),
+		})...)
+		if err != nil {
+			return err
+		}
+		return w.w.Outbox.Insert(ctx, msgs...)
 	})
 	w.at(e2eAt(6, 11, 0), "walk-in receipt", func(ctx context.Context) error {
 		_, err := (&usecases.OpenReceipt{Writer: w.w}).Handle(ctx, usecases.OpenReceiptCommand{AsnNumber: "ASN-2"})

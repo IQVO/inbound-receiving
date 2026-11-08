@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -43,6 +44,7 @@ type fixture struct {
 	outbox   *memory.OutboxRepo
 	clock    *testClock
 	w        usecases.Writer
+	apptSeq  int
 }
 
 func newFixture() *fixture {
@@ -79,16 +81,26 @@ func (f *fixture) seedAsn(t *testing.T, number string) {
 	}
 }
 
+// seedAppointment stores a Booked copy (version 1) of a dock-scheduling
+// appointment; this context has no way to book one (ADR 0019).
 func (f *fixture) seedAppointment(t *testing.T, door string, hour int, asnNumber string) string {
 	t.Helper()
+	return f.seedAppointmentIn(t, appointment.Booked, 1, door, hour, asnNumber)
+}
+
+func (f *fixture) seedAppointmentIn(t *testing.T, state appointment.State, version int64, door string, hour int, asnNumber string) string {
+	t.Helper()
 	start := startOfDay.Add(time.Duration(hour) * time.Hour)
-	a, err := (&usecases.BookAppointment{Writer: f.w}).Handle(context.Background(), usecases.BookAppointmentCommand{
-		DoorCode: door, Carrier: "ACME Freight", WindowStart: start, WindowEnd: start.Add(2 * time.Hour), AsnNumbers: []string{asnNumber},
-	})
+	f.apptSeq++
+	id := fmt.Sprintf("appt-00000000-0000-4000-8000-%012d", f.apptSeq)
+	d, err := appointment.Rehydrate(id, door, "ACME Freight", start, start.Add(2*time.Hour), []string{asnNumber}, state, version)
 	if err != nil {
-		t.Fatalf("book %s: %v", door, err)
+		t.Fatalf("appointment %s: %v", id, err)
 	}
-	return string(a.ID())
+	if _, err := f.appts.ApplyBooked(context.Background(), d); err != nil {
+		t.Fatalf("store %s: %v", id, err)
+	}
+	return id
 }
 
 func (f *fixture) openReceipt(t *testing.T, number, appointmentID string) string {
@@ -109,9 +121,6 @@ func (f *fixture) seedReceivedAsn(t *testing.T) string {
 	f.seedAsn(t, "ASN-1")
 	appt := f.seedAppointment(t, "DOOR-1", 1, "ASN-1")
 	f.clock.now = startOfDay.Add(time.Hour)
-	if _, err := (&usecases.CheckInAppointment{Writer: f.w}).Handle(ctx, usecases.AppointmentActionCommand{AppointmentID: appt}); err != nil {
-		t.Fatalf("check in: %v", err)
-	}
 	id := f.openReceipt(t, "ASN-1", appt)
 	for _, cmd := range []usecases.ReceiveLineCommand{
 		{ReceiptID: id, LineNo: 1, Quantity: 38, Condition: "Good"},
@@ -354,10 +363,7 @@ func TestWireDockScheduleFiltersAndOrders(t *testing.T) {
 	}
 	a := f.seedAppointment(t, "DOOR-1", 1, "ASN-1")
 	b := f.seedAppointment(t, "DOOR-2", 1, "ASN-2")
-	c := f.seedAppointment(t, "DOOR-1", 5, "ASN-3")
-	if _, err := (&usecases.CancelAppointment{Writer: f.w}).Handle(context.Background(), usecases.AppointmentActionCommand{AppointmentID: c, Reason: "carrier no-show"}); err != nil {
-		t.Fatal(err)
-	}
+	c := f.seedAppointmentIn(t, appointment.Cancelled, 2, "DOOR-1", 5, "ASN-3")
 	w := newWire(t, f.deps())
 
 	if all := scheduleIDs(t, w, map[string]any{}); len(all) != 3 || all[2] != c {

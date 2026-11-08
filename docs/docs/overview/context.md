@@ -33,13 +33,15 @@ flowchart LR
   FL["facility-layout<br/>Supporting"]
   INV["inventory-storage<br/>Core"]
   WP["warehouse-planning<br/>Core"]
+  DS["dock-scheduling"]
   OPS["warehouse-ops-agent"]
   CON["warehouse-console<br/>shell"]
 
   PM -- "ProductRegistered" --> IR
   FL -- "LocationSlotRegistered / Decommissioned" --> IR
   IR -- "ReceiptLineReceived" --> INV
-  IR -- "DockAppointmentBooked / Cancelled" --> WP
+  DS -- "DockAppointmentBooked / Cancelled" --> IR
+  DS -- "DockAppointmentBooked / Cancelled (stage D)" --> WP
   IR -- "MCP read tools" --> OPS
   IR -- "web remote inbound_mfe, REST through Kong" --> CON
 ```
@@ -56,12 +58,13 @@ and its ADR 0017, warehouse-ops-agent ADR 0021 (`INBOUND_RECEIVING_MCP_ENDPOINT`
 and warehouse-console `vite.config.ts` (remote `inbound_mfe`).
 Omits: the Kafka broker, the internal analytics stream (consumed only by this
 context's own projector) and the patterns on each edge (see the
-[context map](/docs/ddd/context-map) for those). The edge to
-`warehouse-planning` is built and live: its `inbound-demand` consumer
-(`warehouse-planning-inbound-demand`, ADR 0017) reads `DockAppointmentBooked`
-and `DockAppointmentCancelled` from `warehouse.inbound-receiving.events` into
-its local `inbound_appointments` read model as inbound-labour demand. This
-repository never calls it and does not depend on it being up.
+[context map](/docs/ddd/context-map) for those). The dock appointment moved to
+dock-scheduling (ADR 0019): this context no longer raises `DockAppointment*`
+events and consumes dock-scheduling's `DockAppointmentBooked` /
+`DockAppointmentCancelled` into a read-only local copy. `warehouse-planning`
+switches its inbound-demand source to dock-scheduling (stage D); until then it
+still reads the legacy events this context published before the cutover. This
+repository never calls either and does not depend on them being up.
 
 ## No live cross-context lookup, in either direction
 

@@ -38,6 +38,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/idgen"
 	outboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/outbound/kafka"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/postgres"
+	"github.com/claudioed/inbound-receiving/internal/application/repository"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 )
 
@@ -161,9 +162,9 @@ func (c fixedClock) Now() time.Time { return c.now }
 type wired struct {
 	register     *usecases.RegisterAsn
 	cancelAsn    *usecases.CancelAsn
-	book         *usecases.BookAppointment
-	checkIn      *usecases.CheckInAppointment
-	cancelAppt   *usecases.CancelAppointment
+	apptBooked   *usecases.ApplyDockAppointmentBooked
+	apptCancel   *usecases.ApplyDockAppointmentCancelled
+	getAppt      *usecases.GetAppointment
 	openReceipt  *usecases.OpenReceipt
 	receiveLine  *usecases.ReceiveLine
 	closeReceipt *usecases.CloseReceipt
@@ -192,11 +193,13 @@ func newWiredUsecases(t *testing.T) *wired {
 		IDs:          idgen.UUID{},
 	}
 	return &wired{
-		register:     &usecases.RegisterAsn{Writer: w},
-		cancelAsn:    &usecases.CancelAsn{Writer: w},
-		book:         &usecases.BookAppointment{Writer: w},
-		checkIn:      &usecases.CheckInAppointment{Writer: w},
-		cancelAppt:   &usecases.CancelAppointment{Writer: w},
+		register:  &usecases.RegisterAsn{Writer: w},
+		cancelAsn: &usecases.CancelAsn{Writer: w},
+		apptBooked: &usecases.ApplyDockAppointmentBooked{
+			UoW: w.UoW, ProcessedEvents: postgres.NewProcessedEventRepo(pool), Appointments: postgres.NewAppointmentRepo(pool)},
+		apptCancel: &usecases.ApplyDockAppointmentCancelled{
+			UoW: w.UoW, ProcessedEvents: postgres.NewProcessedEventRepo(pool), Appointments: postgres.NewAppointmentRepo(pool)},
+		getAppt:      &usecases.GetAppointment{Appointments: postgres.NewAppointmentRepo(pool)},
 		openReceipt:  &usecases.OpenReceipt{Writer: w},
 		receiveLine:  &usecases.ReceiveLine{Writer: w},
 		closeReceipt: &usecases.CloseReceipt{Writer: w},
@@ -290,40 +293,41 @@ func TestUsecasesAsnLifecycle(t *testing.T) {
 	}
 }
 
-// TestUsecasesAppointmentToClosedReceipt walks the aggregate lifecycle the
-// service exists for: register -> book a door window -> check in -> open the
-// receipt against the appointment -> receive a short line -> close. Every
-// state change must be persisted (read model) and published (outbox), and
-// the close must complete the ASN and the appointment in the SAME unit of
-// work (their events land together).
-func TestUsecasesAppointmentToClosedReceipt(t *testing.T) {
+const itApptID = "appt-00000000-0000-4000-8000-0000000000a1"
+
+// dockSchedulingBooked is the DockAppointmentBooked dock-scheduling publishes,
+// as the consumer hands it to the use case.
+func dockSchedulingBooked(door string, version int64, asns ...string) usecases.DockAppointmentBooked {
+	start := wiredClock.now.Add(15 * time.Minute)
+	return usecases.DockAppointmentBooked{
+		AppointmentID: itApptID, Direction: "INBOUND", DoorCode: door, Carrier: "ACME Freight",
+		WindowStart: start, WindowEnd: start.Add(45 * time.Minute), AsnNumbers: asns, Version: version,
+	}
+}
+
+// TestUsecasesAppointmentCopyToClosedReceipt walks the lifecycle the service
+// exists for since the DockAppointment moved to dock-scheduling (ADR 0019):
+// register -> dock-scheduling's booking reaches the local copy -> open the
+// receipt against it (no check-in is needed or seen) -> receive a short line
+// -> close. Every state change is persisted and published, the close completes
+// the ASN only, and neither applying the booking nor closing the receipt
+// raises an appointment event.
+func TestUsecasesAppointmentCopyToClosedReceipt(t *testing.T) {
 	wd := newWiredUsecases(t)
 	ctx := context.Background()
 	mustRegisterAsn(t, wd, "ASN-ITCOV-2",
 		usecases.AsnLineInput{LineNo: 1, SKU: "SKU-C", ExpectedQty: 10})
 
-	// Window 12:15-13:00 at fixed now 12:00: bookable (starts after now) and
-	// check-in-able (from 30 minutes before the window starts).
-	windowStart := wiredClock.now.Add(15 * time.Minute)
-	appt, err := wd.book.Handle(ctx, usecases.BookAppointmentCommand{
-		DoorCode: "DOOR-1", Carrier: "ACME Freight",
-		WindowStart: windowStart, WindowEnd: windowStart.Add(45 * time.Minute),
-		AsnNumbers: []string{"ASN-ITCOV-2"},
-	})
-	if err != nil {
-		t.Fatalf("book appointment: %v", err)
+	if out, err := wd.apptBooked.Handle(ctx, "ev-book-1", dockSchedulingBooked("DOOR-1", 1, "ASN-ITCOV-2")); err != nil || out != usecases.Applied {
+		t.Fatalf("apply booked = %s, %v", out, err)
 	}
-	if appt.State() != "Booked" || appt.Version() != 1 || appt.DoorCode() != "DOOR-1" {
-		t.Fatalf("after book: %+v", appt)
-	}
-
-	if _, err := wd.checkIn.Handle(ctx, usecases.AppointmentActionCommand{
-		AppointmentID: string(appt.ID())}); err != nil {
-		t.Fatalf("check in: %v", err)
+	appt, err := wd.getAppt.Handle(ctx, itApptID)
+	if err != nil || appt.State() != "Booked" || appt.Version() != 1 || appt.DoorCode() != "DOOR-1" {
+		t.Fatalf("after the booking: %+v, %v", appt, err)
 	}
 
 	rcpt, err := wd.openReceipt.Handle(ctx, usecases.OpenReceiptCommand{
-		AsnNumber: "ASN-ITCOV-2", AppointmentID: string(appt.ID())})
+		AsnNumber: "ASN-ITCOV-2", AppointmentID: itApptID})
 	if err != nil {
 		t.Fatalf("open receipt: %v", err)
 	}
@@ -358,7 +362,7 @@ func TestUsecasesAppointmentToClosedReceipt(t *testing.T) {
 		t.Fatalf("discrepancies = %+v, want one Short (received 8 of 10)", closed.Discrepancies())
 	}
 
-	// The close completed the whole chain: ASN Closed, appointment Completed.
+	// The close completed the ASN; the appointment is dock-scheduling's.
 	a, err = wd.getAsn.Handle(ctx, "ASN-ITCOV-2")
 	if err != nil {
 		t.Fatalf("get asn after close: %v", err)
@@ -366,15 +370,16 @@ func TestUsecasesAppointmentToClosedReceipt(t *testing.T) {
 	if a.State() != "Closed" {
 		t.Fatalf("asn state after close = %s, want Closed", a.State())
 	}
+	appt, _ = wd.getAppt.Handle(ctx, itApptID)
+	if appt.State() != "Booked" || appt.Version() != 1 {
+		t.Fatalf("appointment after the close = %s v%d, want untouched (Booked v1)", appt.State(), appt.Version())
+	}
 
 	got := wd.outboxEventTypes(t)
 	want := []string{
 		cloudevents.Type(outboundkafka.EntityAsn, "ASNRegistered"),
-		cloudevents.Type(outboundkafka.EntityAppointment, "DockAppointmentBooked"),
-		cloudevents.Type(outboundkafka.EntityAppointment, "DockAppointmentCheckedIn"),
 		cloudevents.Type(outboundkafka.EntityReceipt, "ReceiptOpened"),
 		cloudevents.Type(outboundkafka.EntityReceipt, "ReceiptLineReceived"),
-		cloudevents.Type(outboundkafka.EntityAppointment, "DockAppointmentCompleted"),
 		cloudevents.Type(outboundkafka.EntityReceipt, "ReceiptClosed"),
 	}
 	if len(got) != len(want) {
@@ -387,61 +392,62 @@ func TestUsecasesAppointmentToClosedReceipt(t *testing.T) {
 	}
 }
 
-// TestUsecasesBookAppointmentRejectsOverlapAndUnknownAsn pins the two
-// domain policies a booking must enforce against real Postgres: a door is
-// never double-booked in an overlapping window, and a covered ASN must
-// exist and still be receivable.
-func TestUsecasesBookAppointmentRejectsOverlapAndUnknownAsn(t *testing.T) {
+// TestUsecasesAppointmentConsumersAgainstRealPostgres pins the consumer rules
+// on the real stack: id claim and effect in one transaction, version guard
+// (legacy rows are version 0), a cancelled appointment refuses a receipt, an
+// outbound appointment is not copied, and NOTHING reaches the outbox (no loop).
+func TestUsecasesAppointmentConsumersAgainstRealPostgres(t *testing.T) {
 	wd := newWiredUsecases(t)
 	ctx := context.Background()
 	mustRegisterAsn(t, wd, "ASN-ITCOV-3",
 		usecases.AsnLineInput{LineNo: 1, SKU: "SKU-D", ExpectedQty: 1})
+	outboxBefore := len(wd.outboxEventTypes(t))
 
-	windowStart := wiredClock.now.Add(2 * time.Hour)
-	base := usecases.BookAppointmentCommand{
-		DoorCode: "DOOR-2", Carrier: "ACME Freight",
-		WindowStart: windowStart, WindowEnd: windowStart.Add(time.Hour),
-		AsnNumbers: []string{"ASN-ITCOV-3"},
+	// A legacy row (version 0) is overwritten by dock-scheduling's version 1.
+	if _, err := wd.pool.Exec(ctx, `INSERT INTO appointments (id, door_code, carrier, window_start, window_end, state, version)
+		VALUES ($1, 'DOOR-OLD', 'Old Carrier', $2, $3, 'Booked', 0)`, itApptID, wiredClock.now, wiredClock.now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := wd.book.Handle(ctx, base); err != nil {
-		t.Fatalf("first booking: %v", err)
+	if _, err := wd.pool.Exec(ctx, `INSERT INTO appointment_asns (appointment_id, position, asn_number) VALUES ($1, 1, 'ASN-OLD')`, itApptID); err != nil {
+		t.Fatal(err)
 	}
-
-	// Same door, overlapping window: rejected, nothing persisted.
-	overlap := base
-	overlap.WindowStart = windowStart.Add(30 * time.Minute)
-	overlap.WindowEnd = windowStart.Add(90 * time.Minute)
-	if _, err := wd.book.Handle(ctx, overlap); err == nil {
-		t.Fatal("overlapping booking of one door must be rejected")
+	if out, err := wd.apptBooked.Handle(ctx, "ev-1", dockSchedulingBooked("DOOR-2", 1, "ASN-ITCOV-3")); err != nil || out != usecases.Applied {
+		t.Fatalf("version 1 over a legacy row = %s, %v", out, err)
 	}
-
-	// An unknown ASN is a domain rejection, not a 500.
-	unknown := base
-	unknown.DoorCode = "DOOR-3"
-	unknown.AsnNumbers = []string{"ASN-DOES-NOT-EXIST"}
-	if _, err := wd.book.Handle(ctx, unknown); !errors.Is(err, usecases.ErrUnknownAsn) {
-		t.Fatalf("booking an unknown ASN = %v, want ErrUnknownAsn", err)
+	appt, _ := wd.getAppt.Handle(ctx, itApptID)
+	if appt.DoorCode() != "DOOR-2" || appt.Carrier() != "ACME Freight" || !appt.Covers("ASN-ITCOV-3") || appt.Covers("ASN-OLD") || appt.Version() != 1 {
+		t.Fatalf("copy = %s %s v%d %v", appt.DoorCode(), appt.Carrier(), appt.Version(), appt.AsnNumbers())
 	}
 
-	// Only the first booking (plus its ASN registration) hit the outbox.
-	events := wd.outboxEventTypes(t)
-	booked := 0
-	for _, e := range events {
-		if e == cloudevents.Type(outboundkafka.EntityAppointment, "DockAppointmentBooked") {
-			booked++
-		}
+	// Redelivery of the same CloudEvents id and an older version change nothing.
+	if out, _ := wd.apptBooked.Handle(ctx, "ev-1", dockSchedulingBooked("DOOR-X", 9, "ASN-ITCOV-3")); out != usecases.Duplicate {
+		t.Fatalf("redelivery = %s, want duplicate", out)
 	}
-	if booked != 1 {
-		t.Fatalf("booked events = %d, want exactly 1 (events: %v)", booked, events)
+	stale := dockSchedulingBooked("DOOR-STALE", 1, "ASN-ITCOV-3")
+	if out, _ := wd.apptBooked.Handle(ctx, "ev-2", stale); out != usecases.Ignored {
+		t.Fatalf("same version = %s, want ignored", out)
 	}
 
-	// ...and the read model agrees: one appointment on DOOR-2.
-	var count int
-	if err := wd.pool.QueryRow(ctx,
-		`SELECT count(*) FROM appointments WHERE door_code = 'DOOR-2'`).Scan(&count); err != nil {
-		t.Fatalf("count appointments: %v", err)
+	// Outbound appointments are not copied.
+	outbound := dockSchedulingBooked("DOOR-9", 1)
+	outbound.AppointmentID, outbound.Direction = "appt-00000000-0000-4000-8000-0000000000b2", "OUTBOUND"
+	if out, _ := wd.apptBooked.Handle(ctx, "ev-3", outbound); out != usecases.Ignored {
+		t.Fatalf("outbound = %s, want ignored", out)
 	}
-	if count != 1 {
-		t.Fatalf("appointments on DOOR-2 = %d, want 1", count)
+	if _, err := wd.getAppt.Handle(ctx, outbound.AppointmentID); !errors.Is(err, repository.ErrAppointmentNotFound) {
+		t.Fatalf("an outbound appointment must not be stored: %v", err)
+	}
+
+	// Cancelled by dock-scheduling: the copy is cancelled and refuses a receipt.
+	if out, err := wd.apptCancel.Handle(ctx, "ev-4", itApptID, 2); err != nil || out != usecases.Applied {
+		t.Fatalf("cancel = %s, %v", out, err)
+	}
+	if _, err := wd.openReceipt.Handle(ctx, usecases.OpenReceiptCommand{AsnNumber: "ASN-ITCOV-3", AppointmentID: itApptID}); !errors.Is(err, usecases.ErrAppointmentCancelled) {
+		t.Fatalf("open receipt on a cancelled appointment = %v, want ErrAppointmentCancelled", err)
+	}
+
+	// NO-LOOP: none of this raised an event.
+	if after := len(wd.outboxEventTypes(t)); after != outboxBefore {
+		t.Fatalf("applying dock-scheduling's events enqueued %d message(s) in the outbox", after-outboxBefore)
 	}
 }

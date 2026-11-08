@@ -28,7 +28,7 @@ func newAsn(t *testing.T, number string) *asn.Asn {
 
 func newAppointment(t *testing.T, id, door string, start time.Time) *appointment.DockAppointment {
 	t.Helper()
-	d, _, err := appointment.Book(id, door, "C", start, start.Add(time.Hour), []string{"ASN-1"}, t0)
+	d, err := appointment.Rehydrate(id, door, "C", start, start.Add(time.Hour), []string{"ASN-1"}, appointment.Booked, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,39 +140,60 @@ func TestAsnRepoListPagesAndFilters(t *testing.T) {
 	}
 }
 
-func TestAppointmentRepoVersionGuardAndActive(t *testing.T) {
+// requireApplied fails unless an Apply* call returned no error and the
+// expected applied flag.
+func requireApplied(t *testing.T, what string, applied bool, err error, want bool) {
+	t.Helper()
+	if err != nil || applied != want {
+		t.Fatalf("%s: applied=%v err=%v, want applied=%v", what, applied, err, want)
+	}
+}
+
+func TestAppointmentRepoApplyIsVersionGuarded(t *testing.T) {
 	ctx := context.Background()
 	r := memory.NewAppointmentRepo()
-	d := newAppointment(t, apptID(1), "DOOR-1", t0.Add(time.Hour))
-	if err := r.Save(ctx, d, 0); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.Save(ctx, d, 0); !errors.Is(err, repository.ErrConcurrentModification) {
-		t.Fatalf("duplicate insert: %v", err)
-	}
-	got, err := r.Get(ctx, d.ID())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := got.Cancel("", t0); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.Save(ctx, got, 1); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.Save(ctx, got, 1); !errors.Is(err, repository.ErrConcurrentModification) {
-		t.Fatalf("stale update: %v", err)
-	}
-	if _, err := r.Get(ctx, appointment.ID(apptID(9))); !errors.Is(err, repository.ErrAppointmentNotFound) {
-		t.Fatalf("missing: %v", err)
-	}
-	active, err := r.ActiveOnDoor(ctx, "DOOR-1")
-	if err != nil || len(active) != 0 {
-		t.Fatalf("a cancelled appointment is not active: %v %v", active, err)
-	}
-	if err := r.LockDoor(ctx, "DOOR-1"); err != nil {
-		t.Fatal(err)
-	}
+	d := newAppointment(t, apptID(1), "DOOR-1", t0.Add(time.Hour)) // version 1, Booked
+	applied, err := r.ApplyBooked(ctx, d)
+	requireApplied(t, "insert", applied, err, true)
+	applied, err = r.ApplyBooked(ctx, d)
+	requireApplied(t, "the same version must not apply again", applied, err, false)
+
+	t.Run("a newer Booked replaces the copy", func(t *testing.T) {
+		newer, err := appointment.Rehydrate(apptID(1), "DOOR-2", "C", t0.Add(2*time.Hour), t0.Add(3*time.Hour), []string{"ASN-1", "ASN-2"}, appointment.Booked, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		applied, err := r.ApplyBooked(ctx, newer)
+		requireApplied(t, "newer version", applied, err, true)
+		got, err := r.Get(ctx, d.ID())
+		if err != nil || got.DoorCode() != "DOOR-2" || got.Version() != 3 || !got.Covers("ASN-2") {
+			t.Fatalf("stored = %+v, %v", got, err)
+		}
+	})
+
+	t.Run("a cancel applies only above the stored version", func(t *testing.T) {
+		applied, err := r.ApplyCancelled(ctx, d.ID(), 3)
+		requireApplied(t, "a cancel at the stored version must not apply", applied, err, false)
+		applied, err = r.ApplyCancelled(ctx, d.ID(), 4)
+		requireApplied(t, "cancel", applied, err, true)
+		applied, err = r.ApplyCancelled(ctx, appointment.ID(apptID(9)), 4)
+		requireApplied(t, "cancelling an unknown appointment must not apply", applied, err, false)
+	})
+
+	t.Run("a later Booked keeps the cancellation", func(t *testing.T) {
+		later, _ := appointment.Rehydrate(apptID(1), "DOOR-2", "C", t0.Add(2*time.Hour), t0.Add(3*time.Hour), []string{"ASN-1"}, appointment.Booked, 6)
+		applied, err := r.ApplyBooked(ctx, later)
+		requireApplied(t, "later booked", applied, err, true)
+		if got, _ := r.Get(ctx, d.ID()); got.State() != appointment.Cancelled || got.Version() != 6 {
+			t.Fatalf("stored = %s v%d, want Cancelled v6", got.State(), got.Version())
+		}
+	})
+
+	t.Run("an unknown appointment is not found", func(t *testing.T) {
+		if _, err := r.Get(ctx, appointment.ID(apptID(9))); !errors.Is(err, repository.ErrAppointmentNotFound) {
+			t.Fatalf("missing: %v", err)
+		}
+	})
 }
 
 func TestAppointmentRepoListOrdersByWindowStartThenID(t *testing.T) {
@@ -188,7 +209,7 @@ func TestAppointmentRepoListOrdersByWindowStartThenID(t *testing.T) {
 		{apptID(1), "DOOR-1", t0.Add(time.Hour)},
 	}
 	for _, s := range seed {
-		if err := r.Save(ctx, newAppointment(t, s.id, s.door, s.start), 0); err != nil {
+		if _, err := r.ApplyBooked(ctx, newAppointment(t, s.id, s.door, s.start)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -326,7 +347,7 @@ func TestUnitOfWorkRollsBackEveryParticipant(t *testing.T) {
 	boom := errors.New("boom")
 	err := uow.Do(ctx, func(ctx context.Context) error {
 		_ = asns.Save(ctx, newAsn(t, "ASN-1"), 0)
-		_ = appts.Save(ctx, newAppointment(t, apptID(1), "DOOR-1", t0.Add(time.Hour)), 0)
+		_, _ = appts.ApplyBooked(ctx, newAppointment(t, apptID(1), "DOOR-1", t0.Add(time.Hour)))
 		_ = receipts.Save(ctx, newReceipt(t, rcptID(1), "ASN-9"), 0)
 		_ = skus.Upsert(ctx, "SKU-1")
 		_ = doors.Upsert(ctx, repository.DockDoor{Code: "D", Flow: repository.DockFlowBoth})
