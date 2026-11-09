@@ -18,7 +18,7 @@ import (
 // appointments and appointment_asns (ADR 0019): the read side
 // (ports.AppointmentRepository), the consumer's write side
 // (ports.AppointmentStore) and the stage B backfill's reader
-// (ports.AppointmentHistory). Both writes are version-guarded: a change
+// (ports.AppointmentHistory). Every write is version-guarded: a change
 // applies only when its version is greater than the stored one.
 type AppointmentRepo struct {
 	pool *pgxpool.Pool
@@ -138,6 +138,30 @@ func (r *AppointmentRepo) ApplyCancelled(ctx context.Context, id appointment.ID,
 		WHERE id = $1 AND version < $2`, string(id), version)
 	if err != nil {
 		return false, fmt.Errorf("cancel appointment %s: %w", id, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ApplyRescheduled implements ports.AppointmentStore (ADR 0020): door and
+// window follow a newer version; state, carrier and ASNs are kept, and an
+// unknown id matches no row.
+func (r *AppointmentRepo) ApplyRescheduled(ctx context.Context, id appointment.ID, door appointment.DoorCode, window appointment.Window, version int64) (bool, error) {
+	tag, err := queryFor(ctx, r.pool).Exec(ctx, `UPDATE appointments
+		SET door_code = $2, window_start = $3, window_end = $4, version = $5, updated_at = now()
+		WHERE id = $1 AND version < $5`, string(id), string(door), window.Start(), window.End(), version)
+	if err != nil {
+		return false, fmt.Errorf("reschedule appointment %s: %w", id, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ApplyDoorReassigned implements ports.AppointmentStore (ADR 0020): only the
+// door follows a newer version.
+func (r *AppointmentRepo) ApplyDoorReassigned(ctx context.Context, id appointment.ID, door appointment.DoorCode, version int64) (bool, error) {
+	tag, err := queryFor(ctx, r.pool).Exec(ctx, `UPDATE appointments SET door_code = $2, version = $3, updated_at = now()
+		WHERE id = $1 AND version < $3`, string(id), string(door), version)
+	if err != nil {
+		return false, fmt.Errorf("reassign appointment door %s: %w", id, err)
 	}
 	return tag.RowsAffected() == 1, nil
 }
