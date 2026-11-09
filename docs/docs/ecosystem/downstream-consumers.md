@@ -6,26 +6,40 @@ sidebar_position: 1
 
 # Downstream consumers
 
-`inbound-receiving` publishes its seven events on
-`warehouse.inbound-receiving.events`. None of its consumers calls this service
-at request time: each keeps what it needs from the events (ADR 0001, ADR 0003).
-The table reflects each consumer's code on its `develop` branch.
+`inbound-receiving` publishes on `warehouse.inbound-receiving.events`: seven
+current types (`ASNRegistered`, `ASNCancelled`, `ReceiptOpened`,
+`ReceiptLineReceived`, `ReceiptCartonReceived`, `CartonDiscrepancyRaised`,
+`ReceiptClosed`) plus the four legacy `DockAppointment*` types, which it no
+longer raises ([ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling))
+except through the one-shot `api republish-appointments` backfill. None of its
+consumers calls this service at request time: each keeps what it needs from
+the events (ADR 0001, ADR 0003). The table reflects each consumer's code on its
+`develop` branch (verified 2026-11-09 by a literal scan of every fleet repo's
+non-test Go for `com.warehouse.wms.inbound-receiving.*` types).
 
-| Consumer | Type consumed | Consumer group env | Mode switch | What it does with it | Its ADR |
-| --- | --- | --- | --- | --- | --- |
-| `inventory-storage` (Core) | `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived` | `INBOUND_RECEIPT_CONSUMER_GROUP` (required, boot error if unset: its ADR 0042) | none | for `condition=Good` runs its existing ReceiveStock use case with `(sku, quantity)`, so the units are staged and Unlocated until stowed; `Damaged` lines are logged and counted (`inventory.inbound_receipt_units{outcome=damaged_not_booked}`), not booked; redelivery is deduped on the CloudEvents id | 0037 |
-| `warehouse-planning` (Core, `wes`) | legacy `...inbound-receiving.dockappointment.DockAppointmentBooked` and `...DockAppointmentCancelled` (no longer raised since ADR 0019; moves to dock-scheduling's events at stage D) | `INBOUND_DEMAND_CONSUMER_GROUP` (required there; warehouse-infra pins `warehouse-planning-inbound-demand`) | none | upserts one `inbound_appointments` row per `appointment_id` at its configured site (`DEMAND_SITE_ID`) as inbound-labour demand; last writer wins on the CloudEvents `time`, a Cancelled wins a tie and a Cancelled that arrives before its Booked is kept as a tombstone; failures are retried 5 times, deterministic ones are dead-lettered to `warehouse.inbound-receiving.events.dlq` | 0017 (warehouse-planning) |
+| Consumer | Types consumed | Consumer group env | What it does with them | Its ADR |
+| --- | --- | --- | --- | --- |
+| `inventory-storage` (Core) | `receipt.ReceiptLineReceived`, `receipt.ReceiptCartonReceived` | `INBOUND_RECEIPT_CONSUMER_GROUP` (required, boot error if unset: its ADR 0042; warehouse-infra pins `inventory-storage-inbound-receipts`) | for `condition=Good` lines runs its ReceiveStock use case, so the units are staged and Unlocated until stowed; `Damaged` lines are counted (`inventory.inbound_receipt_units{outcome=damaged_not_booked}`), not booked; an accepted carton becomes a sealed container (LPN) with its cases; redelivery is deduped on the CloudEvents id | 0037, 0045, 0046 |
+| `network-fulfillment` (fleet side of the retail network) | `receipt.ReceiptCartonReceived`, `receipt.CartonDiscrepancyRaised`, `receipt.ReceiptClosed` | `INBOUND_RECEIPT_CONSUMER_GROUP` (warehouse-infra pins `network-fulfillment-inbound-receiving`) | closes the seller inbound loop: the receipt of a seller shipment (cartons accepted, their findings, the closing line kinds) goes back to the vendor as the shipment's receipt with its discrepancies | 0028 |
+| `exception-management` | `receipt.CartonDiscrepancyRaised` | `CARTON_DISCREPANCY_CONSUMER_GROUP` | opens and routes one exception case per carton finding | 0006 |
+| `yard-management` | `asn.ASNRegistered`, `asn.ASNCancelled`, `receipt.ReceiptOpened`, `receipt.ReceiptClosed` | `INBOUND_RECEIVING_CONSUMER_GROUP` | keeps a local copy of expected inbound ASNs and of receipts per door; a closed receipt auto-completes the unload at the door (AutoCompleteUnload) | 0003, 0009 |
+| `dock-scheduling` | `asn.ASNRegistered`, `asn.ASNCancelled`; legacy `dockappointment.DockAppointmentBooked` / `CheckedIn` / `Cancelled` / `Completed` | `ASN_CONSUMER_GROUP`; `DOCK_LEGACY_IMPORT_CONSUMER_GROUP` | ASN copy (an appointment can only cover a known, not-cancelled ASN; CANCELLED is sticky); the legacy importer rebuilds the appointments this context owned before ADR 0019 (strangler stage A, removed at stage E) | 0003, 0009 |
 
-Evidence (on the consumer's `develop`): inventory-storage
-`internal/adapters/inbound/kafka/inbound_receipt_consumer.go`,
-`internal/application/usecases/book_inbound_receipt_line.go`,
-`cmd/inventory/config.go` and `cmd/inventory/consumers.go`; warehouse-planning
-`internal/adapters/inbound/kafka/inbound_demand_consumer.go`,
-`cmd/api/runtime.go` and `docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback.md`.
-The inventory-storage consumer reads `receipt_id`, `asn_number`,
-`line_no`, `sku`, `quantity` and `condition` and ignores `received_at`
-(inventory-storage stamps with its own clock). A brand-new group starts at the
-earliest offset. Every other type on the topic is committed past untouched.
+`warehouse-planning` no longer reads this topic: its inbound labour demand
+comes from dock-scheduling's appointments (its ADR 0020, strangler stage D),
+and warehouse-infra retired its old `INBOUND_DEMAND_CONSUMER_GROUP`.
+
+Evidence (each consumer's `develop`): inventory-storage
+`internal/adapters/inbound/kafka/inbound_receipt_consumer.go`; network-fulfillment
+`internal/adapters/inbound/kafka/receipt_consumer.go`; exception-management
+`internal/adapters/inbound/kafka/carton_discrepancy_consumer.go` and
+`internal/application/usecases/carton_discrepancy.go`; yard-management
+`internal/adapters/inbound/kafka/inbound_receiving_consumer.go`; dock-scheduling
+`internal/adapters/inbound/kafka/asn_consumer.go` and
+`internal/adapters/inbound/kafka/legacy_import_consumer.go`; warehouse-planning
+`internal/adapters/inbound/kafka/dock_appointment_consumer.go`. A brand-new
+group starts at the earliest offset. Every consumer commits past the types it
+does not act on.
 
 Every message also carries the optional W3C `traceparent` (and `tracestate` /
 `baggage` when present) of the request that wrote the outbox row
@@ -52,28 +66,25 @@ Classifications of neighbours come from the warehouse-docs contexts table.
 
 | Consumer | Surface | State | Evidence (on its `develop`) |
 | --- | --- | --- | --- |
-| `warehouse-ops-agent` | The seven read-only MCP tools of `cmd/mcp` ([ADR 0005](/docs/adr/0005-mcp-server-adoption)) | **Live**, opt-in by `INBOUND_RECEIVING_MCP_ENDPOINT` on the agent side (unset = disabled, fail-open) | its ADR 0021, `cmd/agent/main.go` |
+| `warehouse-ops-agent` | The seven read-only MCP tools of `cmd/mcp` ([ADR 0005](/docs/adr/0005-mcp-server-adoption), authority L1 per [ADR 0018](/docs/adr/0018-agent-authority-levels-and-complete-mcp-surface)) | **Live**, opt-in by `INBOUND_RECEIVING_MCP_ENDPOINT` on the agent side (unset = disabled, fail-open) | its ADR 0021, `cmd/agent/main.go`; its pinned copy of this context's tool registry golden |
 | `warehouse-console` | The `inbound_mfe` remote from `web/`, mounted at `/inbound-receiving/*`, calling REST through Kong | **Live** | its `vite.config.ts` (remote `inbound_mfe`, dev port 5193) and `src/App.tsx` |
+| `warehouse-floor-client` | REST: `GET /receipts`, `GET /receipts/{receiptId}`, `POST /receipts/{receiptId}/scans`, `POST /receipts/{receiptId}/closures`, `GET /receipts/{receiptId}/cartons/{lpn}/label` (the RF receiving screens) | **Live** | its `src/api/inboundReceiving.ts` and `src/features/receiving/` |
 
-These read this context; they do not consume its events.
+These read this context (the floor client also drives receipts); they do not
+consume its events.
 
 ## Nothing is planned and unbuilt
 
-There is no candidate consumer left. The `warehouse-planning` edge that earlier
-versions of this page listed as planned (ADR 0001, ADR 0003) is built, merged
-and running: warehouse-planning ADR 0017 added the consumer
-(`internal/adapters/inbound/kafka/inbound_demand_consumer.go`) and
-`helm-values/warehouse-planning.yaml` in warehouse-infra sets
-`inbound.consumerGroup`. The earlier statement that its CapacityPlan had no
-inbound process path is superseded by that ADR.
+There is no candidate consumer left that has an ADR. Business follow-ups
+(trailer holds and seal exceptions gating a receipt, inbound KPIs on the
+dock-scheduling and yard facts) are planned in the fleet's inbound evolution
+plan, not here.
 
 ## Events with no consumer yet
 
-`ASNRegistered`, `ASNCancelled`, `ReceiptOpened` and `ReceiptClosed` are published but
-no sibling consumes them on `develop` today. The four `DockAppointment*` events
-are no longer raised ([ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling));
-`warehouse-planning` (ADR 0017) reads the legacy `DockAppointmentBooked` and
-`DockAppointmentCancelled` until its stage D switches it to dock-scheduling. All seven events are also copied to
-the internal analytics topic, whose only consumer is this context's own
-`inbound-projector` ([ADR 0006](/docs/adr/0006-analytics-read-side)); it is not
-an integration contract.
+Every current type has at least one consumer. The four `DockAppointment*`
+types are read only by dock-scheduling's legacy importer and go at stage E.
+All types are also copied to the internal analytics topic, whose only consumer
+is this context's own `inbound-projector`
+([ADR 0006](/docs/adr/0006-analytics-read-side)); it is not an integration
+contract.
