@@ -1,10 +1,11 @@
 package main_test
 
-// Appointment step definitions (ADR 0019). The appointments of this context
-// are a local copy of dock-scheduling's: they arrive over Kafka as
-// DockAppointmentBooked / DockAppointmentCancelled, so the steps drive the
-// same consumer use cases the Kafka adapter calls, and the effects are
-// asserted through REST (the deprecated GETs), the receipts and the outbox.
+// Appointment step definitions (ADR 0019, 0020). The appointments of this
+// context are a local copy of dock-scheduling's: they arrive over Kafka as
+// DockAppointmentBooked / Cancelled / Rescheduled / DoorReassigned, so the
+// steps drive the same consumer use cases the Kafka adapter calls, and the
+// effects are asserted through REST (the deprecated GETs), the receipts and
+// the outbox.
 
 import (
 	"context"
@@ -99,10 +100,51 @@ func (w *world) dockSchedulingAnnouncesOutbound(ctx context.Context, door string
 	return nil
 }
 
+// dockSchedulingReschedules feeds a DockAppointmentRescheduled at the next
+// version (ADR 0020).
+func (w *world) dockSchedulingReschedules(ctx context.Context, door, from, to string) error {
+	start, err := time.Parse(time.RFC3339, from)
+	if err != nil {
+		return err
+	}
+	end, err := time.Parse(time.RFC3339, to)
+	if err != nil {
+		return err
+	}
+	w.apptVersion++
+	uc := &usecases.ApplyDockAppointmentRescheduled{UoW: w.uow, ProcessedEvents: w.processed, Appointments: w.appts}
+	w.wave2.outcome, w.wave2.err = uc.Handle(ctx, w.nextEventID("bdd-appt-reschedule"), usecases.DockAppointmentRescheduled{
+		AppointmentID: w.appointment, DoorCode: door, WindowStart: start, WindowEnd: end, Version: w.apptVersion,
+	})
+	return nil
+}
+
+// theYardReassignsTheDoor feeds a DockAppointmentDoorReassigned at the next
+// version (ADR 0020).
+func (w *world) theYardReassignsTheDoor(ctx context.Context, door string) error {
+	w.apptVersion++
+	uc := &usecases.ApplyDockAppointmentDoorReassigned{UoW: w.uow, ProcessedEvents: w.processed, Appointments: w.appts}
+	w.wave2.outcome, w.wave2.err = uc.Handle(ctx, w.nextEventID("bdd-appt-door"), usecases.DockAppointmentDoorReassigned{
+		AppointmentID: w.appointment, ToDoorCode: door, Version: w.apptVersion,
+	})
+	return nil
+}
+
+// dockSchedulingReschedulesANeverCopiedAppointment is the reschedule of an
+// appointment this context never stored (an OUTBOUND one, say).
+func (w *world) dockSchedulingReschedulesANeverCopiedAppointment(ctx context.Context) error {
+	w.apptSeq++
+	w.appointment, w.apptVersion = fmt.Sprintf("appt-00000000-0000-4000-8000-%012d", w.apptSeq), 1
+	return w.dockSchedulingReschedules(ctx, "DOOR-4", "2026-10-09T12:00:00Z", "2026-10-09T13:00:00Z")
+}
+
 func (w *world) registerAppointments(sc *godog.ScenarioContext) {
 	sc.Step(`^an appointment at door "([^"]*)" from "([^"]*)" to "([^"]*)" covers the ASN "([^"]*)"$`, w.anAppointmentExists)
 	sc.Step(`^dock-scheduling cancels the appointment$`, w.dockSchedulingCancels)
 	sc.Step(`^dock-scheduling announces the appointment again at door "([^"]*)" with version (\d+)$`, w.dockSchedulingAnnouncesAgain)
 	sc.Step(`^dock-scheduling redelivers the last appointment announcement$`, w.dockSchedulingRedelivers)
 	sc.Step(`^dock-scheduling announces an outbound appointment at door "([^"]*)"$`, w.dockSchedulingAnnouncesOutbound)
+	sc.Step(`^dock-scheduling reschedules the appointment to door "([^"]*)" from "([^"]*)" to "([^"]*)"$`, w.dockSchedulingReschedules)
+	sc.Step(`^the yard reassigns the appointment to door "([^"]*)"$`, w.theYardReassignsTheDoor)
+	sc.Step(`^dock-scheduling reschedules an appointment this service never copied$`, w.dockSchedulingReschedulesANeverCopiedAppointment)
 }

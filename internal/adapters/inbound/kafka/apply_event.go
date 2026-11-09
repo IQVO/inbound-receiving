@@ -18,6 +18,9 @@ type eventSpec[T any] struct {
 	processed string
 	// attrs are the log attributes identifying the payload.
 	attrs func(T) []any
+	// quietIgnored logs an Ignored outcome at DEBUG instead of INFO, for
+	// types where ignoring is the normal case (ADR 0020).
+	quietIgnored bool
 }
 
 // applyEvent is the shared tail of every consumer case: decode the payload
@@ -40,6 +43,11 @@ func applyEvent[T any](ctx context.Context, logger *slog.Logger, id string, spec
 	if err != nil {
 		return err
 	}
-	logger.InfoContext(ctx, spec.processed, append(attrs, "outcome", string(outcome))...)
+	attrs = append(attrs, "outcome", string(outcome))
+	if spec.quietIgnored && outcome == usecases.Ignored {
+		logger.DebugContext(ctx, spec.processed, attrs...)
+		return nil
+	}
+	logger.InfoContext(ctx, spec.processed, attrs...)
 	return nil
 }

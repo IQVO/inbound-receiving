@@ -63,7 +63,8 @@ Three aggregates, each its own consistency boundary
 - **DockAppointment** (identity: `appt-<uuid>`): a carrier's door window
   covering one or more ASNs. Owned by dock-scheduling since ADR 0019; here a
   read-only local copy (`Booked` / `Cancelled`) that `OpenReceipt` validates
-  against.
+  against. The copy follows dock-scheduling's reschedules and door
+  reassignments (ADR 0020), so a new receipt takes the current door.
 - **Receipt** (identity: `rcpt-<uuid>`): the counted receiving of one ASN,
   opened against a snapshot of the ASN. Per line it counts Good and Damaged
   units; closing it computes the `Short`, `Over` and `Damaged` discrepancies.
