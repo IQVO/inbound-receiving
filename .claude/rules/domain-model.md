@@ -16,7 +16,10 @@ paths:
 - **SKU**: 1..64 characters, no whitespace, control characters or `/` (a
   reference to product-master; this context never owns a product).
 - **Dock appointment**: a carrier's booked door window covering >= 1 ASNs.
-  Aggregate root `DockAppointment`, identity = `appt-<uuid>`.
+  Owned by dock-scheduling since ADR 0019: here it is a read-only LOCAL COPY
+  (`appointments`, identity `appt-<uuid>`) fed by `DockAppointmentConsumer`;
+  the `DockAppointment` type in `internal/domain/appointment` survives only to
+  hold that copy and to replay legacy rows for `api republish-appointments`.
 - **Door code**: the code of an inbound dock door (a facility-layout slot with
   role `Dock`), 1..64 chars, no whitespace, control characters or `/`.
 - **Window**: `[start, end)`, `end > start`, at most 4 hours
@@ -40,12 +43,12 @@ paths:
   (`ErrAsnInProgress` from `Receiving`, `ErrAsnTerminal` from terminal states).
   `BeginReceiving` / `Complete` are internal transitions driven by the receipt
   use case and raise no event.
-- **DockAppointment** (`internal/domain/appointment`): state `Booked ->
-  CheckedIn -> Completed`, or `Booked -> Cancelled`. `CheckIn` only from
-  `Booked` and only from `start - 30 min` to `end` inclusive
-  (`ErrOutsideCheckInWindow`); `Cancel` only from `Booked`; `Complete` only
-  from `CheckedIn`. Domain service **`Schedule.CheckNoOverlap`**: no two
-  appointments in `Booked|CheckedIn` overlap on one door (half-open windows).
+- **DockAppointment** (`internal/domain/appointment`, ADR 0019): no longer an
+  aggregate this context drives. It is rehydrated from the local copy
+  (`Booked` or `Cancelled`; legacy rows may still be `CheckedIn|Completed`),
+  answers `Covers(asn)` for `OpenReceipt`, and `Replay` rebuilds a legacy
+  row's events for the backfill. The booking, check-in, cancel, complete
+  commands and `Schedule.CheckNoOverlap` are gone: dock-scheduling enforces them.
 - **Receipt** (`internal/domain/receipt`, the richest aggregate): `Open` needs
   an ASN snapshot in `Registered|Receiving` (`ErrAsnNotReceivable`).
   `ReceiveLine` only while `Open` (`ErrReceiptClosed`), the line must exist
@@ -64,9 +67,8 @@ packages and the standard library.
 ## Domain events
 
 - `asn`: `ASNRegistered` (supplier, expected arrival, lines), `ASNCancelled` (reason).
-- `appointment`: `DockAppointmentBooked`, `DockAppointmentCheckedIn`,
-  `DockAppointmentCancelled`, `DockAppointmentCompleted` (raised when the
-  receipt opened from the appointment closes).
+- `appointment`: the four legacy `DockAppointment*` events are no longer raised
+  (ADR 0019); they exist only as the backfill's `Replay` output.
 - `receipt`: `ReceiptOpened`, `ReceiptLineReceived` (the handover event),
   `ReceiptClosed` (discrepancies).
 
@@ -74,12 +76,14 @@ packages and the standard library.
 
 - `RegisterAsn`, `CancelAsn`: SKU check against `known_skus` when
   `PRODUCT_MODE=kafka`.
-- `BookAppointment`, `CheckInAppointment`, `CancelAppointment`: door check
-  against `dock_doors` when `DOCK_DOOR_MODE=kafka`, `Schedule.CheckNoOverlap`
-  under a per-door lock.
+- `ApplyDockAppointmentBooked`, `ApplyDockAppointmentCancelled` (consumers of
+  dock-scheduling, version-guarded, NO outbox: applying raises no event) and
+  `RepublishAppointments` (the `api republish-appointments` backfill).
 - `OpenReceipt`, `ReceiveLine`, `CloseReceipt`: `OpenReceipt` also calls
-  `Asn.BeginReceiving`; `CloseReceipt` also calls `Asn.Complete` and
-  `DockAppointment.Complete`, all in ONE unit of work with the outbox rows.
+  `Asn.BeginReceiving` and, with an `appointmentId`, validates it against the
+  local copy (exists, covers the ASN, not cancelled); `CloseReceipt` also calls
+  `Asn.Complete` (it no longer completes an appointment), all in ONE unit of
+  work with the outbox rows.
 - `Get*` / `List*` reads (cursor pagination), `ListDocks`.
 
 Every write: load, apply the command, save with the loaded version as the

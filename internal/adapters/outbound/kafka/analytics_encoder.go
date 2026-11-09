@@ -37,7 +37,10 @@ func (e *AnalyticsEncoder) EncodeAsn(events ...asn.Event) ([]outbox.Message, err
 	return encodeStream(e.NewID, e.Topic, AnalyticsTopic, cloudevents.StreamAnalytics, events, asnRow)
 }
 
-// EncodeAppointment encodes DockAppointment events in order.
+// EncodeAppointment encodes legacy DockAppointment events in order. The
+// service no longer raises them (ADR 0019); the projector still ingests the
+// ones already on the stream, and this encoder builds their fixtures. The
+// running service's FanoutEncoder has no such method.
 func (e *AnalyticsEncoder) EncodeAppointment(events ...appointment.Event) ([]outbox.Message, error) {
 	return encodeStream(e.NewID, e.Topic, AnalyticsTopic, cloudevents.StreamAnalytics, events, appointmentRow)
 }
@@ -47,7 +50,8 @@ func (e *AnalyticsEncoder) EncodeReceipt(events ...receipt.Event) ([]outbox.Mess
 	return encodeStream(e.NewID, e.Topic, AnalyticsTopic, cloudevents.StreamAnalytics, events, receiptRow)
 }
 
-// FanoutEncoder is the encoder the use cases get: every domain event becomes
+// FanoutEncoder is the encoder the use cases get (ASN and receipt events; it
+// has no DockAppointment method since ADR 0019): every domain event becomes
 // TWO outbox messages, the integration one first and the analytics one
 // second, carrying the SAME CloudEvents id (minted once here, persisted with
 // both rows) and the same `type`. Both rows are inserted by the use case's
@@ -73,11 +77,6 @@ var _ ports.EventEncoder = (*FanoutEncoder)(nil)
 // do not publish.
 func (f *FanoutEncoder) EncodeAsn(events ...asn.Event) ([]outbox.Message, error) {
 	return fanout(f, events, asnRow)
-}
-
-// EncodeAppointment encodes DockAppointment events, two messages per event.
-func (f *FanoutEncoder) EncodeAppointment(events ...appointment.Event) ([]outbox.Message, error) {
-	return fanout(f, events, appointmentRow)
 }
 
 // EncodeReceipt encodes Receipt events, two messages per event.

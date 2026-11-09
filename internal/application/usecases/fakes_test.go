@@ -68,14 +68,19 @@ func (w *world) registerAsn(number string, skus ...string) *asn.Asn {
 	return a
 }
 
+// book stores a Booked copy of a dock-scheduling appointment (version 1).
 func (w *world) book(door string, start time.Time, asns ...string) *appointment.DockAppointment {
-	uc := &usecases.BookAppointment{Writer: w.writer}
-	d, err := uc.Handle(context.Background(), usecases.BookAppointmentCommand{
-		DoorCode: door, Carrier: "ACME Freight", WindowStart: start, WindowEnd: start.Add(2 * time.Hour), AsnNumbers: asns,
-	})
+	return w.seedAppointment(appointment.Booked, 1, door, start, asns...)
+}
+
+// seedAppointment stores a copy of an appointment in the given state, as the
+// dock-appointment consumer (or a legacy row) would have left it.
+func (w *world) seedAppointment(state appointment.State, version int64, door string, start time.Time, asns ...string) *appointment.DockAppointment {
+	d, err := appointment.Rehydrate(w.ids.NewAppointmentID(), door, "ACME Freight", start, start.Add(2*time.Hour), asns, state, version)
 	if err != nil {
 		panic(err)
 	}
+	w.appointments.items[d.ID()] = d
 	return d
 }
 
@@ -151,10 +156,17 @@ func (fakeEncoder) EncodeAsn(events ...asn.Event) ([]outbox.Message, error) {
 	return out, nil
 }
 
-func (fakeEncoder) EncodeAppointment(events ...appointment.Event) ([]outbox.Message, error) {
+// fakeLegacyEncoder is the encoder of the legacy appointment events the
+// republish backfill uses.
+type fakeLegacyEncoder struct{ err error }
+
+func (e fakeLegacyEncoder) EncodeAppointment(events ...appointment.Event) ([]outbox.Message, error) {
+	if e.err != nil {
+		return nil, e.err
+	}
 	out := make([]outbox.Message, 0, len(events))
-	for _, e := range events {
-		out = append(out, outbox.Message{EventType: "dockappointment." + e.EventName(), Subject: string(e.AppointmentID())})
+	for _, ev := range events {
+		out = append(out, outbox.Message{EventType: "dockappointment." + ev.EventName(), Subject: string(ev.AppointmentID())})
 	}
 	return out, nil
 }
@@ -269,9 +281,12 @@ func (r *fakeAsns) ExistingSsccs(_ context.Context, ssccs []gs1.SSCC) ([]gs1.SSC
 // ---- fakeAppointments -----------------------------------------------------------
 
 type fakeAppointments struct {
-	items map[appointment.ID]*appointment.DockAppointment
-	locks []appointment.DoorCode
+	items    map[appointment.ID]*appointment.DockAppointment
+	applyErr error
+	listErr  error
 }
+
+var bookedAt = time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
 
 func cloneAppt(d *appointment.DockAppointment) *appointment.DockAppointment {
 	numbers := make([]string, 0, len(d.AsnNumbers()))
@@ -293,13 +308,117 @@ func (r *fakeAppointments) Get(_ context.Context, id appointment.ID) (*appointme
 	return cloneAppt(d), nil
 }
 
-func (r *fakeAppointments) Save(_ context.Context, d *appointment.DockAppointment, loaded int64) error {
-	cur, ok := r.items[d.ID()]
-	if (loaded == 0 && ok) || (loaded != 0 && (!ok || cur.Version() != loaded)) {
-		return repository.ErrConcurrentModification
+// ApplyBooked mirrors the Postgres adapter: a newer version refreshes the
+// stored row and keeps its state.
+func (r *fakeAppointments) ApplyBooked(_ context.Context, d *appointment.DockAppointment) (bool, error) {
+	if r.applyErr != nil {
+		return false, r.applyErr
 	}
-	r.items[d.ID()] = cloneAppt(d)
-	return nil
+	cur, ok := r.items[d.ID()]
+	if ok && cur.Version() >= d.Version() {
+		return false, nil
+	}
+	state := d.State()
+	if ok {
+		state = cur.State()
+	}
+	numbers := make([]string, 0, len(d.AsnNumbers()))
+	for _, n := range d.AsnNumbers() {
+		numbers = append(numbers, string(n))
+	}
+	c, err := appointment.Rehydrate(string(d.ID()), string(d.DoorCode()), d.Carrier(), d.Window().Start(), d.Window().End(), numbers, state, d.Version())
+	if err != nil {
+		panic(err)
+	}
+	r.items[d.ID()] = c
+	return true, nil
+}
+
+func (r *fakeAppointments) ApplyCancelled(_ context.Context, id appointment.ID, version int64) (bool, error) {
+	if r.applyErr != nil {
+		return false, r.applyErr
+	}
+	cur, ok := r.items[id]
+	if !ok || cur.Version() >= version {
+		return false, nil
+	}
+	numbers := make([]string, 0, len(cur.AsnNumbers()))
+	for _, n := range cur.AsnNumbers() {
+		numbers = append(numbers, string(n))
+	}
+	c, err := appointment.Rehydrate(string(id), string(cur.DoorCode()), cur.Carrier(), cur.Window().Start(), cur.Window().End(), numbers, appointment.Cancelled, version)
+	if err != nil {
+		panic(err)
+	}
+	r.items[id] = c
+	return true, nil
+}
+
+// ApplyRescheduled mirrors the Postgres adapter: a newer version moves the
+// door and window of a stored row and keeps its state; an unknown id or a
+// version that is not newer changes nothing.
+func (r *fakeAppointments) ApplyRescheduled(_ context.Context, id appointment.ID, door appointment.DoorCode, window appointment.Window, version int64) (bool, error) {
+	if r.applyErr != nil {
+		return false, r.applyErr
+	}
+	cur, ok := r.items[id]
+	if !ok || cur.Version() >= version {
+		return false, nil
+	}
+	r.items[id] = rebuildAppt(cur, door, window, version)
+	return true, nil
+}
+
+// ApplyDoorReassigned moves only the door, with the same guard.
+func (r *fakeAppointments) ApplyDoorReassigned(_ context.Context, id appointment.ID, door appointment.DoorCode, version int64) (bool, error) {
+	if r.applyErr != nil {
+		return false, r.applyErr
+	}
+	cur, ok := r.items[id]
+	if !ok || cur.Version() >= version {
+		return false, nil
+	}
+	r.items[id] = rebuildAppt(cur, door, cur.Window(), version)
+	return true, nil
+}
+
+func rebuildAppt(cur *appointment.DockAppointment, door appointment.DoorCode, window appointment.Window, version int64) *appointment.DockAppointment {
+	numbers := make([]string, 0, len(cur.AsnNumbers()))
+	for _, n := range cur.AsnNumbers() {
+		numbers = append(numbers, string(n))
+	}
+	c, err := appointment.Rehydrate(string(cur.ID()), string(door), cur.Carrier(), window.Start(), window.End(), numbers, cur.State(), version)
+	if err != nil {
+		panic(err)
+	}
+	return c
+}
+
+// ListRecords serves the republish backfill: ascending id, the fixed timeline
+// of the fake (booked at bookedAt, changed an hour later).
+func (r *fakeAppointments) ListRecords(_ context.Context, after appointment.ID, limit int) ([]repository.AppointmentRecord, error) {
+	if r.listErr != nil {
+		return nil, r.listErr
+	}
+	ids := make([]string, 0, len(r.items))
+	for id := range r.items {
+		if id > after {
+			ids = append(ids, string(id))
+		}
+	}
+	sort.Strings(ids)
+	var out []repository.AppointmentRecord
+	for _, id := range ids {
+		if len(out) == limit {
+			break
+		}
+		d := r.items[appointment.ID(id)]
+		out = append(out, repository.AppointmentRecord{
+			Appointment: cloneAppt(d),
+			Timeline:    appointment.Timeline{BookedAt: bookedAt, ChangedAt: bookedAt.Add(time.Hour)},
+		})
+	}
+	return out, nil
 }
 
 func (r *fakeAppointments) List(_ context.Context, f repository.AppointmentFilter, after repository.AppointmentCursor, limit int) ([]*appointment.DockAppointment, error) {
@@ -346,21 +465,6 @@ func matchesAppointment(d *appointment.DockAppointment, f repository.Appointment
 		return false
 	}
 	return f.To.IsZero() || d.Window().Start().Before(f.To)
-}
-
-func (r *fakeAppointments) ActiveOnDoor(_ context.Context, door appointment.DoorCode) ([]*appointment.DockAppointment, error) {
-	var out []*appointment.DockAppointment
-	for _, d := range r.items {
-		if d.DoorCode() == door && d.State().Active() {
-			out = append(out, cloneAppt(d))
-		}
-	}
-	return out, nil
-}
-
-func (r *fakeAppointments) LockDoor(_ context.Context, door appointment.DoorCode) error {
-	r.locks = append(r.locks, door)
-	return nil
 }
 
 // ---- fakeReceipts ---------------------------------------------------------------

@@ -37,7 +37,7 @@ pending step fails the suite.
 | Feature file | Feature | Scenarios |
 |---|---|---|
 | `register_asn.feature` | Register an ASN | 11 |
-| `dock_appointments.feature` | Book and manage dock appointments | 13 |
+| `dock_appointments.feature` | Appointment writes answer 410; the appointments local copy fed by dock-scheduling (ADR 0019) | 10 |
 | `receiving.feature` | Receive goods against an ASN | 12 |
 | `idempotent_replays.feature` | Idempotent creating requests | 5 |
 | `list_receipts_and_docks.feature` | Listing receipts, appointments and dock doors | 17 |

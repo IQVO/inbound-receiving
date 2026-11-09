@@ -33,21 +33,47 @@ type AsnRepository interface {
 	ExistingSsccs(ctx context.Context, ssccs []gs1.SSCC) ([]gs1.SSCC, error)
 }
 
-// AppointmentRepository persists DockAppointment aggregates by id.
+// AppointmentRepository reads the appointments local copy: dock-scheduling's
+// appointments as this context last saw them (ADR 0019). It has no write
+// side here; the dock-appointment consumer writes through AppointmentStore.
 type AppointmentRepository interface {
 	// Get returns the appointment, or repository.ErrAppointmentNotFound.
 	Get(ctx context.Context, id appointment.ID) (*appointment.DockAppointment, error)
-	// Save persists d with the same version guard as AsnRepository.Save.
-	Save(ctx context.Context, d *appointment.DockAppointment, loadedVersion int64) error
 	// List returns up to limit appointments after the cursor, ascending by
 	// (window start, id), narrowed by filter.
 	List(ctx context.Context, filter repository.AppointmentFilter, after repository.AppointmentCursor, limit int) ([]*appointment.DockAppointment, error)
-	// ActiveOnDoor returns the Booked and CheckedIn appointments of a door.
-	ActiveOnDoor(ctx context.Context, door appointment.DoorCode) ([]*appointment.DockAppointment, error)
-	// LockDoor serialises concurrent bookings of one door until the
-	// surrounding unit of work ends, so Schedule.CheckNoOverlap and the
-	// following Save are atomic per door.
-	LockDoor(ctx context.Context, door appointment.DoorCode) error
+}
+
+// AppointmentStore writes the appointments local copy; only the
+// dock-appointment consumer uses it. Every method applies a change only when
+// its version is greater than the stored one (a legacy row stores 0, so any
+// dock-scheduling version wins), keeps the stored state, and never raises an
+// event: applying a sibling's events must not loop (ADR 0019, 0020).
+type AppointmentStore interface {
+	// ApplyBooked inserts the appointment, or refreshes door, carrier, window,
+	// ASNs and version of a stored one; the stored state is kept, so a Booked
+	// event never revives a Cancelled row. It reports false (and changes
+	// nothing) for a version that is not newer than the stored one.
+	ApplyBooked(ctx context.Context, d *appointment.DockAppointment) (applied bool, err error)
+	// ApplyCancelled marks a stored appointment Cancelled at the version. It
+	// reports false for an unknown id or a version that is not newer.
+	ApplyCancelled(ctx context.Context, id appointment.ID, version int64) (applied bool, err error)
+	// ApplyRescheduled moves a stored appointment to door and window at the
+	// version (ADR 0020). It never creates a row: it reports false for an
+	// unknown id or a version that is not newer.
+	ApplyRescheduled(ctx context.Context, id appointment.ID, door appointment.DoorCode, window appointment.Window, version int64) (applied bool, err error)
+	// ApplyDoorReassigned moves a stored appointment to door at the version,
+	// keeping its window (ADR 0020); false for an unknown id or a version
+	// that is not newer.
+	ApplyDoorReassigned(ctx context.Context, id appointment.ID, door appointment.DoorCode, version int64) (applied bool, err error)
+}
+
+// AppointmentHistory reads every stored appointment with the moments its
+// state implies; only the stage B backfill (republish-appointments) uses it.
+type AppointmentHistory interface {
+	// ListRecords returns up to limit appointments with id > after, ascending
+	// by id (byte order).
+	ListRecords(ctx context.Context, after appointment.ID, limit int) ([]repository.AppointmentRecord, error)
 }
 
 // ReceiptRepository persists Receipt aggregates by id.

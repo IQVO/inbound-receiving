@@ -7,6 +7,10 @@ sidebar_position: 17
 
 # Class diagrams
 
+:::caution[DockAppointment moved (ADR 0019)]
+The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (only the one-shot `api republish-appointments` backfill does). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
+:::
+
 UML class diagrams of the domain model and of the hexagonal ports with their
 adapters. Type and method names are the real ones; unexported fields are shown
 only where they carry an invariant. The domain is split in two diagrams to keep

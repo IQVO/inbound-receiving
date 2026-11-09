@@ -65,6 +65,13 @@ type AppointmentCursor struct {
 	ID          appointment.ID
 }
 
+// AppointmentRecord is one stored appointment together with the moments the
+// stage B backfill replays its legacy history at.
+type AppointmentRecord struct {
+	Appointment *appointment.DockAppointment
+	Timeline    appointment.Timeline
+}
+
 // ReceiptFilter narrows ReceiptRepository.List. The zero value means no
 // filter.
 type ReceiptFilter struct {

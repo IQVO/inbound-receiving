@@ -35,6 +35,7 @@ import (
 	outboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/outbound/kafka"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/postgres"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
+	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 )
 
 // One Postgres container serves the whole package, migrated once into a
@@ -182,12 +183,15 @@ func newMCPHarness(t *testing.T) *mcpHarness {
 		t.Fatalf("seed register ASN-2: %v", err)
 	}
 	start := time.Now().Add(48 * time.Hour).Truncate(time.Hour)
-	appt, err := (&usecases.BookAppointment{Writer: w}).Handle(ctx, usecases.BookAppointmentCommand{
-		DoorCode: "DOOR-1", Carrier: "ACME Freight",
-		WindowStart: start, WindowEnd: start.Add(2 * time.Hour), AsnNumbers: []string{"ASN-1"},
-	})
+	// This context books nothing (ADR 0019): seed the local copy as the
+	// dock-appointment consumer would.
+	appt, err := appointment.Rehydrate("appt-00000000-0000-4000-8000-000000000001", "DOOR-1", "ACME Freight",
+		start, start.Add(2*time.Hour), []string{"ASN-1"}, appointment.Booked, 1)
 	if err != nil {
-		t.Fatalf("seed book appointment: %v", err)
+		t.Fatalf("seed appointment: %v", err)
+	}
+	if _, err := postgres.NewAppointmentRepo(pool).ApplyBooked(ctx, appt); err != nil {
+		t.Fatalf("seed store appointment: %v", err)
 	}
 	rcpt, err := (&usecases.OpenReceipt{Writer: w}).Handle(ctx, usecases.OpenReceiptCommand{
 		AsnNumber: "ASN-2"})

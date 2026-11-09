@@ -8,13 +8,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// UUID mints `appt-<uuid>` and `rcpt-<uuid>` identities from random
-// (version 4) UUIDs; the lowercase hex form matches the domain's id
-// patterns. Its license plates are `LPN-<ulid>`.
+// UUID mints `rcpt-<uuid>` identities from random (version 4) UUIDs; the
+// lowercase hex form matches the domain's id pattern. Its license plates are
+// `LPN-<ulid>`. Appointment ids are minted by dock-scheduling (ADR 0019).
 type UUID struct{}
-
-// NewAppointmentID implements ports.IDGenerator.
-func (UUID) NewAppointmentID() string { return "appt-" + uuid.NewString() }
 
 // NewReceiptID implements ports.IDGenerator.
 func (UUID) NewReceiptID() string { return "rcpt-" + uuid.NewString() }

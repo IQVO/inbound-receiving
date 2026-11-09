@@ -96,9 +96,9 @@ Every write use case (`internal/application/usecases/writer.go`) runs inside one
 guarded by the version that was loaded, encode the raised events
 (`EventEncoder`) and insert them into `outbox_events`. With Postgres the unit of
 work is one transaction (`postgres/unit_of_work.go`); the in-memory adapters are
-test doubles only (ADR 0011). `CloseReceipt` saves the receipt,
-the ASN and the appointment in a single unit of work, so their events reach the
-outbox together.
+test doubles only (ADR 0011). `CloseReceipt` saves the receipt
+and the ASN in a single unit of work, so their events reach the outbox together
+(the appointment moved to dock-scheduling, ADR 0019).
 
 ## Publishing: transactional outbox
 

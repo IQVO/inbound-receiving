@@ -7,6 +7,10 @@ sidebar_position: 10
 
 # DDD artifacts (ddd-crew)
 
+:::caution[DockAppointment moved (ADR 0019)]
+The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (only the one-shot `api republish-appointments` backfill does). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
+:::
+
 The strategic and tactical design of `inbound-receiving`, drawn with the
 [ddd-crew](https://github.com/ddd-crew) tools plus UML and ER diagrams. Every
 diagram is Mermaid, derived from the code on `develop`, and carries a

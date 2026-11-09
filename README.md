@@ -4,7 +4,8 @@
 
 Inbound Receiving is the WMS-tier bounded context of the warehouse-systems
 fleet that owns the inbound dock workflow: the supplier's advance ship notice
-(ASN), the carrier's dock appointment and the counted receipt, with the
+(ASN), a read-only copy of dock-scheduling's dock appointment (ADR 0019,
+0020) and the counted receipt, with the
 short / over / damaged discrepancies found when a receipt closes. It does
 **not** own the product catalogue (`product-master`), the warehouse map
 (`facility-layout`) or putaway — stock hands over to `inventory-storage`
@@ -43,7 +44,7 @@ Published site: **<https://iqvo.github.io/inbound-receiving/>** (built from
 | MCP & A2A | [MCP tools](docs/docs/mcp/tools.md), [A2A skills (ADR 0016)](docs/adr/0016-a2a-inbound-adapter.md) |
 | Ecosystem | [Upstream contracts](docs/docs/ecosystem/upstream-contracts.md), [Downstream consumers](docs/docs/ecosystem/downstream-consumers.md) |
 | DDD | [Use cases](docs/docs/ddd/use-cases.md), [Subdomain classification](docs/docs/ddd/subdomain-classification.md), [DDD artifacts (ddd-crew pack)](docs/docs/ddd/ddd-artifacts.md) |
-| Decisions | [ADR index](docs/adr/index.md) — 16 decisions |
+| Decisions | [ADR index](docs/adr/index.md) — 19 decisions |
 
 ---
 
@@ -86,7 +87,7 @@ The domain aggregates:
 | Package | Aggregate | Highlights |
 |---|---|---|
 | `asn` | `Asn` | lines numbered `1..n`, unique SKUs; `Registered -> Receiving -> Closed` or `Cancelled` |
-| `appointment` | `DockAppointment` | window <= 4 h, no overlap per door (`Schedule`), check-in from 30 min before the window |
+| `appointment` | `DockAppointment` (legacy; moved to dock-scheduling, ADR 0019) | kept for the local copy and the `republish-appointments` backfill; this context no longer decides appointments |
 | `receipt` | `Receipt` | Good / Damaged counts per line, over-receipt allowed, discrepancies on close |
 | `shared` | value types | SKU, quantity, reason |
 
@@ -106,17 +107,16 @@ convention is `com.warehouse.wms.inbound-receiving.<entity>.<EventName>` (the
 transaction** (`FanoutEncoder`): to the integration topic and, under the same
 CloudEvents id, to the analytics topic (ADR 0004, ADR 0006).
 
-**Publishes** — 11 events on `warehouse.inbound-receiving.events` (each with
+**Publishes** — 7 events on `warehouse.inbound-receiving.events` (each with
 an `…Analytics` twin on `warehouse.inbound-receiving.analytics`):
 
 | Entity | Events |
 |---|---|
 | `asn` | `ASNRegistered`, `ASNCancelled` |
-| `dockappointment` | `DockAppointmentBooked`, `DockAppointmentCheckedIn`, `DockAppointmentCompleted`, `DockAppointmentCancelled` |
+| `dockappointment` | *(deprecated, no longer raised, ADR 0019)* `DockAppointmentBooked`, `DockAppointmentCheckedIn`, `DockAppointmentCompleted`, `DockAppointmentCancelled`; only `api republish-appointments` still enqueues them (stage B backfill) |
 | `receipt` | `ReceiptOpened`, `ReceiptLineReceived`, `ReceiptCartonReceived`, `ReceiptClosed`, `CartonDiscrepancyRaised` |
 
 Real types: `com.warehouse.wms.inbound-receiving.asn.ASNRegistered`,
-`com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked`,
 `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived`.
 
 **Consumes** (local copies, ADR 0003; every other type ignored):
@@ -125,6 +125,7 @@ Real types: `com.warehouse.wms.inbound-receiving.asn.ASNRegistered`,
 |---|---|---|
 | `warehouse.product-master.events` | `ProductRegistered` (known SKUs), `ProductPackLevelDeclared` / `ProductPackLevelRetired` (packaging view: pack level → eaches factor for case-level scans) | `PRODUCT_CONSUMER_GROUP` (SKUs), `PACKAGING_CONSUMER_GROUP` (packaging view) |
 | `warehouse.facility.events` | `LocationSlotRegistered`, `LocationSlotDecommissioned` (known inbound doors) | `DOCK_DOOR_CONSUMER_GROUP` |
+| `warehouse.dock-scheduling.events` | `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked` / `DockAppointmentCancelled` (the `appointments` local copy, ADR 0019) and `DockAppointmentRescheduled` / `DockAppointmentDoorReassigned` (keep the copy's door and window current; open receipts keep their door, ADR 0020); version-guarded, raises no event | `DOCK_APPOINTMENT_CONSUMER_GROUP` |
 
 ---
 
@@ -141,7 +142,8 @@ export DATABASE_URL='postgres://postgres:***@localhost:5437/postgres?sslmode=dis
 export KAFKA_BROKERS='localhost:9092'
 export PRODUCT_CONSUMER_GROUP=inbound-product \
        DOCK_DOOR_CONSUMER_GROUP=inbound-doors \
-       PACKAGING_CONSUMER_GROUP=inbound-packaging
+       PACKAGING_CONSUMER_GROUP=inbound-packaging \
+       DOCK_APPOINTMENT_CONSUMER_GROUP=inbound-appointments
 go run ./cmd/api               # REST on :8080
 ```
 
@@ -164,6 +166,7 @@ returns 503 while draining. `/healthz` is liveness only.
 | `DOCK_DOOR_MODE` | *(unset = `kafka`)* | Only `kafka`; `permissive`/`off` are boot errors |
 | `DOCK_DOOR_CONSUMER_GROUP` | **required** | Stable group of the dock-door consumer |
 | `PACKAGING_CONSUMER_GROUP` | **required** | Stable group of the packaging-view consumer |
+| `DOCK_APPOINTMENT_CONSUMER_GROUP` | **required** | Stable group of the dock-appointment consumer (appointments local copy fed by dock-scheduling, ADR 0019); there is no off switch |
 | `OUTBOX_RELAY_INTERVAL` | `1s` | Relay poll interval (Go duration or seconds) |
 | `OUTBOX_MAX_ATTEMPTS` | `20` | Failures before the relay excludes a row (`0` = unlimited) |
 | `CARTON_MAX_GROSS_WEIGHT_G` | `0` (unchecked) | CartonOverLimit weight limit in grams (ADR 0014) |
@@ -230,9 +233,9 @@ over 19 paths:
 | GET | `/asns/{asnNumber}` | GetAsn |
 | GET | `/asns/{asnNumber}/cartons` | the ASN's carton tree (ADR 0012) |
 | POST | `/asns/{asnNumber}/cancellations` | CancelAsn |
-| POST, GET | `/appointments` | BookAppointment, ListAppointments |
-| GET | `/appointments/{appointmentId}` | GetAppointment |
-| POST | `/appointments/{appointmentId}/check-ins`, `/cancellations` | CheckInAppointment, CancelAppointment |
+| GET | `/appointments` | ListAppointments (**deprecated**: served from the local copy, ADR 0019) |
+| GET | `/appointments/{appointmentId}` | GetAppointment (**deprecated**, same) |
+| POST | `/appointments`, `/appointments/{appointmentId}/check-ins`, `/appointments/{appointmentId}/cancellations` | retired: **410** problem `appointment-moved` naming dock-scheduling (ADR 0019) |
 | POST, GET | `/receipts` | OpenReceipt, ListReceipts |
 | GET | `/receipts/{receiptId}` | GetReceipt |
 | POST | `/receipts/{receiptId}/lines` | ReceiveLine |
@@ -351,7 +354,7 @@ message:
 | Skill | Arguments | Answers |
 |---|---|---|
 | `asn_receiving_status` | `asnNumber` | the ASN (state, lines) with its receipts and their Short / Over / Damaged discrepancies |
-| `dock_schedule` | optional `door`, `state`, `from`, `to` (RFC 3339), `limit` (1..100) | dock appointments in window order, `truncated` when more exist |
+| `dock_schedule` | optional `door`, `state`, `from`, `to` (RFC 3339), `limit` (1..100) | dock appointments (the local copy of dock-scheduling's, ADR 0019) in window order, `truncated` when more exist |
 
 Domain rejections come back in-band as an RFC 7807 `problem` with the REST
 adapter's type namespace and statuses (`asn-not-found` 404,
@@ -411,7 +414,7 @@ make integration  # go test -tags=integration ./... -race -count=1 (needs only D
 
 | Suite | What it proves against real infrastructure |
 |---|---|
-| `internal/application/usecases/usecases_wiring_integration_test.go` | the write use cases wired exactly like `cmd/api` (Postgres repos, UnitOfWork, CloudEvents encoder into the outbox): ASN lifecycle, appointment to closed receipt, door-overlap and unknown-ASN refusals |
+| `internal/application/usecases/usecases_wiring_integration_test.go` | the write use cases wired exactly like `cmd/api` (Postgres repos, UnitOfWork, CloudEvents encoder into the outbox): ASN lifecycle, appointment to closed receipt, the appointment copy following a reschedule and a door reassignment (ADR 0020), door-overlap and unknown-ASN refusals |
 | `internal/adapters/outbound/postgres/pgtx/pgtx_integration_test.go` | the pgx transaction carried through `pgtx`: save + outbox commit together, roll back together, nested `Do` joins via a savepoint |
 | `internal/adapters/outbound/postgres/*_integration_test.go` | repositories (version guards, paging, one open receipt per ASN), use-case atomicity, concurrent bookings, the idempotency store, and the analytics fanout (both topics' rows under one id in one transaction) |
 | `internal/adapters/outbound/kafka/publisher_integration_test.go` | the production `Encoder` + `RelaySink` publish the CloudEvents 1.0 contract to a real broker |
@@ -441,8 +444,8 @@ regenerated from `apis/openapi.yaml` and must match what is committed),
 
 ## Architecture Decision Records
 
-The ADR index lives at [docs/adr/index.md](docs/adr/index.md) — 16
-decisions (0001–0016). Key ones: the
+The ADR index lives at [docs/adr/index.md](docs/adr/index.md) — 19
+decisions (0001–0019). Key ones: the
 [bounded context](docs/adr/0001-inbound-receiving-bounded-context.md),
 [aggregates and invariants](docs/adr/0002-aggregates-and-invariants.md),
 [local copies and the handover to inventory-storage](docs/adr/0003-local-copies-and-handover.md),

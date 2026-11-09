@@ -100,6 +100,43 @@ already-lived incident, not a hypothetical:
   fails CI on any envelope toggle identifier or a struct declaring both
   the flat `event_id` and `event_type` JSON tags.
 
+## Agent authority declarations
+
+The sensors in `internal/architecture/mcp_authority_fitness_test.go` check, by
+static AST scan of `internal/adapters/inbound/mcp` and `.../a2a`:
+
+- **Every MCP tool declares its level.** The pinned shape (the one
+  workforce-management ships) is `Meta: authorityMeta(authorityL3)` with
+  `const authorityMetaKey = "com.warehouse/authority"`, the constants
+  `authorityL1`..`authorityL4` and
+  `func authorityMeta(level string) mcp.Meta { return mcp.Meta{authorityMetaKey: level} }`
+  in the adapter package. A string literal argument, and an inline
+  `mcp.Meta{"com.warehouse/authority": "L3"}` literal, are accepted as the same
+  thing; a level computed at run time is rejected because the sensor cannot
+  read it.
+- **Write tools are at least L3.** A tool whose `Annotations` do not set
+  `ReadOnlyHint: true` (a literal, or a local variable assigned the literal
+  `true`) must not be L1/L2.
+- **L4 needs an ADR.** Put a comment in the same file:
+  `//authority:L4 ADR-0042 <one-line envelope>`. Without an ADR reference the
+  test fails.
+- **A2A skills** carry the tag `authority:L1`..`authority:L4`; a skill tagged
+  `write` is L3/L4 (L4 with the same comment).
+- **Resources and prompts.** The MCP adapter calls `AddResource` or
+  `AddResourceTemplate` at least once and `AddPrompt` at least once.
+
+Rollout is phased, so the resource/prompt test has an explicit allow marker:
+create `internal/adapters/inbound/mcp/.agent-surface-pending` holding ONE line
+saying why (and who adds them). The test then skips and prints
+`agent surface pending: <reason>`, so the repo is not red but visibly pending;
+an empty marker fails, and a marker on an already complete surface says to
+delete it. The marker only parks the resource/prompt test, never the authority
+tests. Delete it when the surface lands.
+
+These tests ship as UNMANAGED copies (not in `tools/migrate_v3.py` `MANAGED`):
+a repo adopts them in a rollout wave together with the declarations, otherwise
+its next sync would turn it red.
+
 ## Mutation testing: what it catches that coverage doesn't
 
 `go test -cover` measures whether a line EXECUTED during a test run.
@@ -149,6 +186,28 @@ bounded-context segment of its CloudEvents `type`) — generates
 manual content (the `.claude/rules/*.md` skeletons, `.gremlins.yaml`'s
 measured thresholds). See `scripts/new-service.sh`'s own header comment for
 the full instantiation checklist.
+
+## Shared domain code: the GS1 identification package
+
+`internal/domain/shared/gs1` is the one piece of **domain code** the template carries: the GTIN and
+SSCC value objects (8/12/13/14-digit GTIN normalised to 14 digits, mod-10 check digit, indicator
+digit, variable-measure refusal, 18-digit SSCC), `Mod10CheckDigit`, and `ParseScan` for what a
+scanner returns (`]E0` EAN/UPC, `]I1` ITF-14, `]C1` GS1-128 with AIs 00, 01, 02, 10, 17, 37 and the
+GS/FNC1 separator; AI 01 and AI 02 never together, AI 02 needs AI 00 and AI 37). Standard library
+only, no I/O, so validation is identical in every service without a runtime dependency.
+
+How it reaches a service and stays identical:
+
+| Step | Mechanism |
+|---|---|
+| Template gate | Lives in the template tree, so `make check` / the `selftest` workflow build, lint and test it (100% line coverage and mutation efficacy; `FuzzParseScan` asserts the parser never panics). |
+| New service | NOT in a default scaffold. `WITH_GS1=1 bash scripts/new-service.sh ...` keeps it; otherwise `new-service.sh` removes it. `scaffold-selftest.sh` proves both. |
+| Existing service | `python3 tools/migrate_v3.py --repo <svc> --with-gs1` installs it. Without the flag the tool only **refreshes** a copy that already exists (so the weekly sync never pushes it into a repo that did not ask for it). The file list is `GS1_PACKAGE` in `tools/migrate_v3.py`. |
+| Drift | `scripts/harness-health.py` reads `GS1_PACKAGE` and flags a service copy that differs from the template (a repo without the package is not drift). Inside a service, `TestPackageIsByteIdenticalToTemplate` pins a digest of every file in the package. `tools/test_migrate_gs1.py` fails if a `.go` file is added to the package without being listed. |
+| Changing it | Edit the template, run the gs1 tests, paste the digest the checksum test prints into `sourceDigest`, then re-sync consumers. Never edit a service's copy. |
+
+Tests in the package are in-package (`package gs1`, no import of the module path) precisely so the
+copy compiles unchanged in any module.
 
 ## Agent runtime harness (v3): one logic, three runtimes
 
@@ -209,3 +268,46 @@ generated helper, the rewritten integration-events rule/skill, and the
 blocking `TestNoEventEnvelopeToggleOrFlatEnvelope`). Record `harness-template: v3` in each instantiated
 repo's `AGENTS.md` so a fleet-wide audit (see `scripts/harness-audit.py` / `scripts/harness-health.py`) can tell which repos are
 behind the template and by how much.
+
+## Harness² comparison (v4)
+
+Google-Research's Harness² (arXiv:2610.14224, "Recursive Agent Harnessing for an Open World")
+edits an agent's own harness DURING a task (Propose-Probe-Compose: propose an edit, probe it
+against the same task with no ground truth needed, compose the winner) and keeps a persistent
+"improvement harness" of adopted edits across tasks. This template's v1-v3 harness only ever
+changed on a human's cadence: an incident happens, a human writes the INCIDENTS.md row and the
+fitness test, `migrate_v3.py` rolls it out. v4 closes three concrete gaps that comparison
+surfaced, each scoped to something this fleet had ALREADY identified as a problem (not a
+speculative import of the paper's generality):
+
+- **No task-level recursion.** EVALS.md rounds 2-3 found "a docs convention that is only a
+  sentence in a skill is followed about half the time by everyone" and could not tell whether
+  rewording the guide would change that, or whether to stop spending on prose and build a sensor
+  instead (its own stated conclusion). `tools/harness_probe.py` answers exactly that question with
+  real `claude -p` runs scored by `harness_eval2.py`'s existing gates: baseline wording vs a
+  candidate, same task, interleaved — Compose prints adopt/keep/inconclusive, never a guess.
+- **Harnessing-level recursion was 100% manual.** `red_issue.py --draft` (new) drafts the FIRST
+  PASS of an INCIDENTS.md row and a `t.Skip`-marked fitness-test stub from a failing scheduled
+  job, and opens it as a draft PR — mirroring Harness²'s "experience reflector" for the drafting
+  step only. It never fills in root cause or a real assertion, and never merges; a human (or the
+  existing fix agent) still does the adoption Harness² automates, because hard architecture calls
+  in this fleet stay human decisions.
+- **Two of the paper's 8 harness components were missing.** `.claude/agents/*.md` promotes
+  `code-review`/`architecture-review`/`domain-review` from prompted skills to isolated-context
+  subagents (the "subagents" component); `.claude/memory/MEMORY.md` gives each repo a durable,
+  repo-specific heuristics file (the "memory" component) distinct from INCIDENTS.md (incidents)
+  and EVALS.md (measured harness claims).
+
+What v4 deliberately does NOT import: Harness²'s executor posture. Their README runs with the
+Codex sandbox disabled and network access unrestricted, because the paper needs unconstrained
+agent behaviour to measure. This fleet's `hook.py` defaults closed (blocks destructive git,
+`--no-verify`, edits to generated files/gates) and stays that way — loosening it toward Harness²'s
+benchmark posture would trade a measured research convenience for a production-safety regression
+this fleet does not need.
+
+`benchmarks/wms-bench/` is the evaluation-rigor half of the comparison: Harness² tracks scores
+per harness config across JobBench/LAB/WorkBuddy-Bench; this fleet's EVALS.md never had a fixed,
+repeatable suite to do the equivalent across harness-template versions. `benchmarks/wms-bench/`
+is seeded with 3 tasks (reusing `harness_eval.py`/`harness_eval2.py`'s prompts and gates
+unchanged) and a `run.py` that names results by the target repo's version marker, so v3-vs-v4
+(and v4-vs-v5) becomes a diff of two JSONL files instead of a fresh ad hoc round each time.

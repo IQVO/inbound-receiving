@@ -7,25 +7,35 @@ import (
 )
 
 // ---- Appointments -------------------------------------------------------------
+//
+// Appointments are owned by dock-scheduling (ADR 0019, plan YD-0002). Here only
+// the two reads over the local copy remain, both deprecated in
+// apis/openapi.yaml (removed at stage E), and the three former write routes
+// answer 410.
 
-// handleBookAppointment backs POST /appointments (201).
-func (s *Server) handleBookAppointment(w http.ResponseWriter, r *http.Request) {
-	var req bookAppointmentRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, r, err)
-		return
+// appointmentMoved names where one former write operation lives now.
+type appointmentMoved string
+
+// The detail of each 410, naming the new owner's endpoint.
+const (
+	moveBook    appointmentMoved = "Appointments are booked in dock-scheduling: POST /appointments on that service."
+	moveCheckIn appointmentMoved = "A carrier's arrival is recorded at the gate by yard-management (POST /visits naming the appointmentId); " +
+		"dock-scheduling derives the appointment's check-in from it. There is no check-in on appointments any more."
+	moveCancel appointmentMoved = "Appointments are cancelled in dock-scheduling: POST /appointments/{appointmentId}/cancellations on that service."
+)
+
+// appointmentMovedProblem is the 410 problem of every former appointment write.
+var appointmentMovedProblem = problem{http.StatusGone, "appointment-moved", "Appointment writes moved to dock-scheduling"}
+
+// appointmentWriteMoved answers 410 appointment-moved with the detail of the
+// operation. The body is not read and no key is required.
+func appointmentWriteMoved(m appointmentMoved) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeProblem(w, r, appointmentMovedProblem, string(m))
 	}
-	d, err := s.BookAppointment.Handle(r.Context(), usecases.BookAppointmentCommand{
-		DoorCode: req.DoorCode, Carrier: req.Carrier, WindowStart: req.WindowStart, WindowEnd: req.WindowEnd, AsnNumbers: req.AsnNumbers,
-	})
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-	writeCreated(w, "/appointments/"+string(d.ID()), d.Version(), toAppointment(d))
 }
 
-// handleGetAppointment backs GET /appointments/{appointmentId}.
+// handleGetAppointment backs GET /appointments/{appointmentId} (deprecated).
 func (s *Server) handleGetAppointment(w http.ResponseWriter, r *http.Request) {
 	id, err := pathParam(r, "appointmentId")
 	if err != nil {
@@ -41,7 +51,7 @@ func (s *Server) handleGetAppointment(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleListAppointments backs
-// GET /appointments?limit=&cursor=&door=&state=&from=&to=.
+// GET /appointments?limit=&cursor=&door=&state=&from=&to= (deprecated).
 func (s *Server) handleListAppointments(w http.ResponseWriter, r *http.Request) {
 	limit, cursor, err := listQuery(r, "door", "state", "from", "to")
 	if err != nil {
@@ -71,52 +81,4 @@ func (s *Server) handleListAppointments(w http.ResponseWriter, r *http.Request) 
 		out.Items = append(out.Items, toAppointment(d))
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-// handleCheckInAppointment backs POST /appointments/{appointmentId}/check-ins.
-func (s *Server) handleCheckInAppointment(w http.ResponseWriter, r *http.Request) {
-	s.appointmentAction(w, r, func(r *http.Request, cmd usecases.AppointmentActionCommand) (appointmentResponse, error) {
-		d, err := s.CheckInAppointment.Handle(r.Context(), cmd)
-		if err != nil {
-			return appointmentResponse{}, err
-		}
-		return toAppointment(d), nil
-	})
-}
-
-// handleCancelAppointment backs POST /appointments/{appointmentId}/cancellations.
-func (s *Server) handleCancelAppointment(w http.ResponseWriter, r *http.Request) {
-	s.appointmentAction(w, r, func(r *http.Request, cmd usecases.AppointmentActionCommand) (appointmentResponse, error) {
-		d, err := s.CancelAppointment.Handle(r.Context(), cmd)
-		if err != nil {
-			return appointmentResponse{}, err
-		}
-		return toAppointment(d), nil
-	})
-}
-
-// appointmentAction is the shared request handling of check-in and cancel:
-// path id, optional reason body, optional If-Match.
-func (s *Server) appointmentAction(w http.ResponseWriter, r *http.Request, run func(*http.Request, usecases.AppointmentActionCommand) (appointmentResponse, error)) {
-	id, err := pathParam(r, "appointmentId")
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-	var req reasonRequest
-	if err := decodeOptionalJSON(r, &req); err != nil {
-		writeError(w, r, err)
-		return
-	}
-	version, err := expectedVersion(r)
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-	out, err := run(r, usecases.AppointmentActionCommand{AppointmentID: id, Reason: req.Reason, ExpectedVersion: version})
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-	writeVersioned(w, http.StatusOK, out.Version, out)
 }

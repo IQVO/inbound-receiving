@@ -39,7 +39,7 @@ func startWorker(logger *slog.Logger, name string, run func(ctx context.Context)
 	return w
 }
 
-// startConsumers starts the three local-copy consumers; they are always on. A
+// startConsumers starts the four local-copy consumers; they are always on. A
 // reader dials lazily inside Run, so a broker outage never blocks boot.
 func startConsumers(ad adapters, cfg config, logger *slog.Logger) []*worker {
 	apply := &usecases.ApplyProductRegistered{UoW: ad.uow, ProcessedEvents: ad.processed, Skus: ad.skus}
@@ -56,10 +56,19 @@ func startConsumers(ad adapters, cfg config, logger *slog.Logger) []*worker {
 	pk := inboundkafka.NewPackagingConsumer(cfg.kafkaBrokers, cfg.packagingGroup, declared, retired, logger)
 	logger.Info("packaging consumer running", "topic", inboundkafka.ProductTopic, "group_id", cfg.packagingGroup, "brokers", cfg.kafkaBrokers)
 
+	da := inboundkafka.NewDockAppointmentConsumer(cfg.kafkaBrokers, cfg.appointmentGroup, inboundkafka.DockAppointmentAppliers{
+		Booked:         &usecases.ApplyDockAppointmentBooked{UoW: ad.uow, ProcessedEvents: ad.processed, Appointments: ad.appointments},
+		Cancelled:      &usecases.ApplyDockAppointmentCancelled{UoW: ad.uow, ProcessedEvents: ad.processed, Appointments: ad.appointments},
+		Rescheduled:    &usecases.ApplyDockAppointmentRescheduled{UoW: ad.uow, ProcessedEvents: ad.processed, Appointments: ad.appointments},
+		DoorReassigned: &usecases.ApplyDockAppointmentDoorReassigned{UoW: ad.uow, ProcessedEvents: ad.processed, Appointments: ad.appointments},
+	}, logger)
+	logger.Info("dock appointment consumer running", "topic", inboundkafka.DockSchedulingTopic, "group_id", cfg.appointmentGroup, "brokers", cfg.kafkaBrokers)
+
 	return []*worker{
 		startWorker(logger, "product-consumer", pc.Run, func() { _ = pc.Close() }),
 		startWorker(logger, "dock-door-consumer", dc.Run, func() { _ = dc.Close() }),
 		startWorker(logger, "packaging-consumer", pk.Run, func() { _ = pk.Close() }),
+		startWorker(logger, "dock-appointment-consumer", da.Run, func() { _ = da.Close() }),
 	}
 }
 

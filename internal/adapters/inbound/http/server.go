@@ -28,24 +28,21 @@ const defaultCORSAllowedOrigins = "http://localhost:5173"
 
 // Server holds the use cases the handlers call.
 type Server struct {
-	RegisterAsn        *usecases.RegisterAsn
-	CancelAsn          *usecases.CancelAsn
-	GetAsn             *usecases.GetAsn
-	GetAsnCartons      *usecases.GetAsnCartons
-	GetCartonLabel     *usecases.GetCartonLabel
-	ListAsns           *usecases.ListAsns
-	BookAppointment    *usecases.BookAppointment
-	CheckInAppointment *usecases.CheckInAppointment
-	CancelAppointment  *usecases.CancelAppointment
-	GetAppointment     *usecases.GetAppointment
-	ListAppointments   *usecases.ListAppointments
-	OpenReceipt        *usecases.OpenReceipt
-	ReceiveLine        *usecases.ReceiveLine
-	ReceiveScan        *usecases.ReceiveScan
-	CloseReceipt       *usecases.CloseReceipt
-	GetReceipt         *usecases.GetReceipt
-	ListReceipts       *usecases.ListReceipts
-	ListDocks          *usecases.ListDocks
+	RegisterAsn      *usecases.RegisterAsn
+	CancelAsn        *usecases.CancelAsn
+	GetAsn           *usecases.GetAsn
+	GetAsnCartons    *usecases.GetAsnCartons
+	GetCartonLabel   *usecases.GetCartonLabel
+	ListAsns         *usecases.ListAsns
+	GetAppointment   *usecases.GetAppointment
+	ListAppointments *usecases.ListAppointments
+	OpenReceipt      *usecases.OpenReceipt
+	ReceiveLine      *usecases.ReceiveLine
+	ReceiveScan      *usecases.ReceiveScan
+	CloseReceipt     *usecases.CloseReceipt
+	GetReceipt       *usecases.GetReceipt
+	ListReceipts     *usecases.ListReceipts
+	ListDocks        *usecases.ListDocks
 
 	// Idempotency backs the Idempotency-Key middleware.
 	Idempotency ports.IdempotencyStore
@@ -93,11 +90,15 @@ func NewRouter(s *Server) http.Handler {
 	r.Get("/asns/{asnNumber}/cartons", s.handleGetAsnCartons)
 	keyed.Post("/asns/{asnNumber}/cancellations", s.handleCancelAsn)
 
-	keyed.Post("/appointments", s.handleBookAppointment)
+	// Appointments moved to dock-scheduling (ADR 0019): the three former write
+	// routes answer 410 appointment-moved whatever the request (so they sit
+	// outside the Idempotency-Key middleware: a client is told where to go, not
+	// asked for a key first). The two reads stay, deprecated, over the local copy.
+	r.Post("/appointments", appointmentWriteMoved(moveBook))
 	r.Get("/appointments", s.handleListAppointments)
 	r.Get("/appointments/{appointmentId}", s.handleGetAppointment)
-	keyed.Post("/appointments/{appointmentId}/check-ins", s.handleCheckInAppointment)
-	keyed.Post("/appointments/{appointmentId}/cancellations", s.handleCancelAppointment)
+	r.Post("/appointments/{appointmentId}/check-ins", appointmentWriteMoved(moveCheckIn))
+	r.Post("/appointments/{appointmentId}/cancellations", appointmentWriteMoved(moveCancel))
 
 	keyed.Post("/receipts", s.handleOpenReceipt)
 	r.Get("/receipts", s.handleListReceipts)

@@ -61,6 +61,7 @@ ENABLE_KONG = [
     "--set", "config.productConsumerGroup=inbound-receiving-product",
     "--set", "config.dockDoorConsumerGroup=inbound-receiving-dock-doors",
     "--set", "config.packagingConsumerGroup=inbound-receiving-packaging",
+    "--set", "config.dockAppointmentConsumerGroup=inbound-receiving-dock-appointments",
     "--set", "analytics.reports.route.enabled=true",
     "--set", "analytics.reports.route.parentRefs[0].name=warehouse-gateway",
     "--set", "analytics.reports.route.parentRefs[0].namespace=kong",
@@ -90,6 +91,7 @@ def main() -> int:
         "--set", "config.productConsumerGroup=inbound-receiving-product",
         "--set", "config.dockDoorConsumerGroup=inbound-receiving-dock-doors",
         "--set", "config.packagingConsumerGroup=inbound-receiving-packaging",
+    "--set", "config.dockAppointmentConsumerGroup=inbound-receiving-dock-appointments",
     ])
     kong_docs = [d for d in default_docs if "Kong" in (d.get("kind") or "")]
     if kong_docs:
@@ -146,6 +148,19 @@ def main() -> int:
                         failures.append(f"A2A route {name} rewrites to {target!r}, expected '/'")
                     if name.endswith("-reports") and target != "/reports":
                         failures.append(f"reports route {name} rewrites to {target!r}, expected '/reports'")
+
+    # 5. The reports route outranks the API prefix under Kong's traditional
+    #    router: equal regex priorities match in no fixed order, so without
+    #    this /api/<ctx>/reports/... can land on the API Service (404).
+    reports_routes = [r for r in routes if r["metadata"]["name"].endswith("-reports")]
+    if not reports_routes:
+        failures.append("enabled render contains no reports HTTPRoute")
+    for r in reports_routes:
+        prio = (r.get("metadata", {}).get("annotations") or {}).get("konghq.com/regex-priority")
+        if prio != "10":
+            failures.append(
+                f"reports route {r['metadata']['name']} has konghq.com/regex-priority {prio!r}, expected '10'"
+            )
 
     if failures:
         print("FAIL: inbound-receiving chart Kong-config contract")

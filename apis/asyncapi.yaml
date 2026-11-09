@@ -14,12 +14,19 @@ info:
     the inbound dock workflow of ASNs, dock appointments and receipts
     (ADR 0001, ADR 0002).
 
-    **Published.** The `Asn`, `DockAppointment` and `Receipt` aggregates raise
-    eleven events, published to `warehouse.inbound-receiving.events` through a
+    **Published.** The `Asn` and `Receipt` aggregates raise seven events,
+    published to `warehouse.inbound-receiving.events` through a
     **transactional outbox**: the aggregate row and its already-encoded events
     are written in ONE database transaction and a relay drains them to Kafka
     (at-least-once; the CloudEvents `id` is stored with the outbox row, so a
     retry republishes the same `id`). Consumers dedupe on `id`.
+    The four `DockAppointment*` messages below are **LEGACY**: the
+    DockAppointment moved to dock-scheduling (ADR 0019, plan YD-0002) and this
+    service raises them no more. They stay declared because the stage B
+    backfill command (`api republish-appointments`, removed at stage E)
+    enqueues them once per stored appointment for dock-scheduling's legacy
+    importer, and because earlier ones are still on the topics. Do not
+    consume them for new work: read dock-scheduling's events.
     `ReceiptLineReceived` is the **handover event**: inventory-storage consumes
     it and books `condition=Good` quantities into stock (ADR 0003); Damaged
     quantities are recorded here and not booked.
@@ -34,17 +41,25 @@ info:
     (group from env `DOCK_DOOR_CONSUMER_GROUP`). The three consumers always
     run: `PRODUCT_MODE` / `DOCK_DOOR_MODE` accept only `kafka` (or unset) and
     `permissive` / `off` are boot errors, as is an unset group variable.
+    `DockAppointmentBooked` and `DockAppointmentCancelled` from
+    `warehouse.dock-scheduling.events` feed the `appointments` local copy
+    (group from env `DOCK_APPOINTMENT_CONSUMER_GROUP`, ADR 0019), and
+    `DockAppointmentRescheduled` / `DockAppointmentDoorReassigned` keep its
+    door and window current (ADR 0020): inbound appointments only, guarded by
+    dock-scheduling's `version`; applying them publishes nothing. Receipts
+    validate their appointment against that copy and take its door when they
+    open; an open receipt keeps its door.
 
-    **Analytics (ADR 0006).** The same eleven events are ALSO written, in the
+    **Analytics (ADR 0006).** The seven events are ALSO written, in the
     same transaction, to `warehouse.inbound-receiving.analytics` with the same
     `type` and the same `id` per occurrence, `dataschema`
     `urn:warehouse:inbound-receiving:analytics:<EventName>:v1` and payloads
     equal to the integration payloads. Only this service's `inbound-projector`
-    consumes it; it is not an integration contract.
+    consumes it; it is not an integration contract. The legacy
+    `DockAppointment*` events already on that stream stay projected.
 
-    **Planned, not built.** warehouse-planning consuming
-    `DockAppointmentBooked` as inbound-labor demand is a documented future
-    edge. Nothing consumes that event today.
+    **Planned.** warehouse-planning reads appointments from dock-scheduling
+    (companion of plan YD-0002), not from the legacy messages here.
 
     **Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
     header `content-type: application/cloudevents+json; charset=UTF-8`.
@@ -80,7 +95,7 @@ tags:
   - name: asn
     description: Events raised by the Asn aggregate.
   - name: dockappointment
-    description: Events raised by the DockAppointment aggregate.
+    description: LEGACY events of the DockAppointment aggregate, which moved to dock-scheduling (ADR 0019); republished once by the stage B backfill.
   - name: receipt
     description: Events raised by the Receipt aggregate.
   - name: consumed
@@ -94,15 +109,19 @@ channels:
       This service's integration topic. Written by the outbox relay; every
       message carries the CloudEvents content-type header (plus the optional
       W3C `traceparent` of the writing request). Key = `asn_number`
-      for ASN and receipt events, `appointment_id` for appointment events.
-      Dispatch on the full `type`, ignore unknown types, dedupe on `id`. The
-      first consumer is inventory-storage (`ReceiptLineReceived`).
+      for ASN and receipt events, `appointment_id` for the legacy appointment
+      events. Dispatch on the full `type`, ignore unknown types, dedupe on
+      `id`. The first consumer is inventory-storage (`ReceiptLineReceived`).
+      The `DockAppointment*` messages are LEGACY (ADR 0019): only the
+      one-shot `republish-appointments` command writes them now.
     subscribe:
       operationId: receiveInboundReceivingEvents
-      summary: Receive ASN, dock appointment and receipt events.
+      summary: Receive ASN and receipt events (and the legacy dock appointment events).
       description: |
         Subscribe to the inbound dock workflow. Route on the full `type`
-        (`com.warehouse.wms.inbound-receiving.<entity>.<EventName>`).
+        (`com.warehouse.wms.inbound-receiving.<entity>.<EventName>`). The
+        `dockappointment` messages are LEGACY and only republished by the
+        stage B backfill (ADR 0019).
       tags:
         - name: asn
         - name: dockappointment
@@ -205,8 +224,193 @@ channels:
           - $ref: "#/components/messages/LocationSlotRegistered"
           - $ref: "#/components/messages/LocationSlotDecommissioned"
 
+  warehouse.dock-scheduling.events:
+    description: |
+      dock-scheduling's integration topic (ADR 0019, 0020, plan YD-0002).
+      Consumed ONLY for `DockAppointmentBooked`, `DockAppointmentCancelled`,
+      `DockAppointmentRescheduled` and `DockAppointmentDoorReassigned`, into
+      the `appointments` local copy, with a stable consumer group read from
+      env `DOCK_APPOINTMENT_CONSUMER_GROUP`; the consumer always runs. Every
+      other type on the topic (`DockAppointmentNoShow`, check-in, door
+      closures, ...) is committed past untouched. Key = `appointment_id`.
+      `DockAppointmentDoorReassigned` may not be published on this topic yet;
+      the consumer does not depend on it arriving.
+    publish:
+      operationId: consumeDockAppointmentEvents
+      summary: Consume dock-scheduling's appointment bookings, cancellations, reschedules and door reassignments.
+      description: |
+        A `DockAppointmentBooked` with `direction=INBOUND` upserts the
+        appointment (door, carrier, window, ASN numbers); an `OUTBOUND` one is
+        ignored. A `DockAppointmentCancelled` marks the stored appointment
+        cancelled. A `DockAppointmentRescheduled` moves the stored
+        appointment's door and window; a `DockAppointmentDoorReassigned` moves
+        its door (ADR 0020). All four are guarded by `version`: an event is
+        applied only if its `version` is greater than the stored one (a legacy
+        row has version 0, so any dock-scheduling version wins), and no later
+        event revives a cancelled appointment. A reschedule or reassignment
+        of an appointment that is not in the copy (an `OUTBOUND` one, or one
+        not seen yet) is ignored and logged at DEBUG. Receipts already open
+        keep their door; receipts opened afterwards take the new one. The
+        CloudEvents `id` claim and the effect commit in one transaction; the
+        offset is committed afterwards. NO-LOOP: applying an event writes
+        nothing to the outbox. A payload that breaks a rule of this context
+        is skipped with a WARN, a transient error is retried.
+      tags:
+        - name: consumed
+      message:
+        oneOf:
+          - $ref: "#/components/messages/DockSchedulingAppointmentBooked"
+          - $ref: "#/components/messages/DockSchedulingAppointmentCancelled"
+          - $ref: "#/components/messages/DockSchedulingAppointmentRescheduled"
+          - $ref: "#/components/messages/DockSchedulingAppointmentDoorReassigned"
+
 components:
   messages:
+    DockSchedulingAppointmentBooked:
+      name: DockAppointmentBooked
+      title: dock-scheduling DockAppointmentBooked (consumed)
+      summary: dock-scheduling booked (or imported) a dock appointment.
+      description: |
+        `type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked`,
+        source `/warehouse/dock-scheduling`; key and subject = `appointment_id`.
+        `data` is snake_case. Only the fields in the schema are read; the rest
+        of dock-scheduling's payload (`site_id`, `carrier_scac`, `cpt_id`,
+        `shipment_refs`, `expected_seal_number`, `provenance`,
+        `arrival_tolerance_minutes`, ...) is ignored.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/DockSchedulingAppointmentBookedEvent"
+      examples:
+        - name: inbound
+          summary: An inbound appointment covering ASN-1001.
+          payload:
+            specversion: "1.0"
+            id: "0b6d1c4e-7a2f-4d83-9e15-3c8a5f7b9d21"
+            source: "/warehouse/dock-scheduling"
+            type: "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked"
+            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-08T12:05:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:dock-scheduling:events:DockAppointmentBooked:v1"
+            data:
+              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
+              site_id: "WH1"
+              direction: "INBOUND"
+              door_code: "WH1-DOCK-IN-01"
+              carrier: "ACME Freight"
+              carrier_scac: "ACMF"
+              window_start: "2026-10-09T08:00:00Z"
+              window_end: "2026-10-09T10:00:00Z"
+              asn_numbers: ["ASN-1001"]
+              shipment_refs: []
+              provenance: "native"
+              version: 1
+    DockSchedulingAppointmentCancelled:
+      name: DockAppointmentCancelled
+      title: dock-scheduling DockAppointmentCancelled (consumed)
+      summary: dock-scheduling cancelled a dock appointment.
+      description: |
+        `type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCancelled`,
+        source `/warehouse/dock-scheduling`; key and subject = `appointment_id`.
+        Only `appointment_id` and `version` are read.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/DockSchedulingAppointmentCancelledEvent"
+      examples:
+        - name: cancelled
+          summary: The carrier asked to cancel.
+          payload:
+            specversion: "1.0"
+            id: "5e9a3b7c-1d4f-4a60-8b2e-7c0d9f1a3e45"
+            source: "/warehouse/dock-scheduling"
+            type: "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCancelled"
+            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-08T13:00:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:dock-scheduling:events:DockAppointmentCancelled:v1"
+            data:
+              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
+              site_id: "WH1"
+              door_code: "WH1-DOCK-IN-01"
+              reason: "CARRIER_REQUEST"
+              version: 2
+    DockSchedulingAppointmentRescheduled:
+      name: DockAppointmentRescheduled
+      title: dock-scheduling DockAppointmentRescheduled (consumed)
+      summary: dock-scheduling moved a dock appointment to a new window and possibly a new door.
+      description: |
+        `type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentRescheduled`,
+        source `/warehouse/dock-scheduling`; key and subject = `appointment_id`.
+        `data` is snake_case. The copy takes `door_code`, `window_start` and
+        `window_end` at `version` (ADR 0020); `previous_door_code` is logged,
+        and `site_id`, `previous_window_*` and `arrival_tolerance_minutes` are
+        ignored. Receipts already open keep their door.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/DockSchedulingAppointmentRescheduledEvent"
+      examples:
+        - name: rescheduled
+          summary: The carrier is two hours late and is moved to another door.
+          payload:
+            specversion: "1.0"
+            id: "8c2f4a1e-3b5d-4e7f-9a60-1d2c3b4a5e6f"
+            source: "/warehouse/dock-scheduling"
+            type: "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentRescheduled"
+            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-09T07:30:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:dock-scheduling:events:DockAppointmentRescheduled:v1"
+            data:
+              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
+              site_id: "WH1"
+              door_code: "WH1-DOCK-IN-03"
+              previous_door_code: "WH1-DOCK-IN-01"
+              window_start: "2026-10-09T10:00:00Z"
+              window_end: "2026-10-09T12:00:00Z"
+              previous_window_start: "2026-10-09T08:00:00Z"
+              previous_window_end: "2026-10-09T10:00:00Z"
+              arrival_tolerance_minutes: 15
+              version: 2
+    DockSchedulingAppointmentDoorReassigned:
+      name: DockAppointmentDoorReassigned
+      title: dock-scheduling DockAppointmentDoorReassigned (consumed)
+      summary: The appointment's door was reassigned (the window is unchanged).
+      description: |
+        `type` = `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentDoorReassigned`,
+        source `/warehouse/dock-scheduling`; key and subject = `appointment_id`.
+        The copy takes `to_door_code` at `version` (ADR 0020);
+        `from_door_code` is logged, not checked. dock-scheduling is moving this
+        type onto its integration topic; until then it never arrives and the
+        consumer does not depend on it. Receipts already open keep their door.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/DockSchedulingAppointmentDoorReassignedEvent"
+      examples:
+        - name: reassigned
+          summary: The booked door is blocked; the yard sends the truck to door 04.
+          payload:
+            specversion: "1.0"
+            id: "2a7e9c4b-6d1f-4b38-8e25-9f0a1b2c3d4e"
+            source: "/warehouse/dock-scheduling"
+            type: "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentDoorReassigned"
+            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-09T07:50:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:dock-scheduling:events:DockAppointmentDoorReassigned:v1"
+            data:
+              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
+              site_id: "WH1"
+              from_door_code: "WH1-DOCK-IN-01"
+              to_door_code: "WH1-DOCK-IN-04"
+              version: 3
     ASNRegistered:
       x-no-consumer-reason: "planned warehouse-planning consumer not built (K28)"
       name: ASNRegistered
@@ -266,6 +470,8 @@ components:
               reason: "Supplier cancelled the shipment"
 
     DockAppointmentBooked:
+      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
+      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
       name: DockAppointmentBooked
       title: Dock appointment booked
       summary: A door window was booked for a carrier.
@@ -299,7 +505,8 @@ components:
               asn_numbers: ["ASN-1001"]
 
     DockAppointmentCheckedIn:
-      x-no-consumer-reason: "planned warehouse-planning consumer not built (K28)"
+      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
+      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
       name: DockAppointmentCheckedIn
       title: Dock appointment checked in
       summary: The carrier arrived at the door.
@@ -327,6 +534,8 @@ components:
               checked_in_at: "2026-10-09T07:50:00Z"
 
     DockAppointmentCancelled:
+      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
+      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
       name: DockAppointmentCancelled
       title: Dock appointment cancelled
       summary: A Booked appointment was cancelled.
@@ -354,7 +563,8 @@ components:
               reason: "Carrier delayed"
 
     DockAppointmentCompleted:
-      x-no-consumer-reason: "planned warehouse-planning consumer not built (K28)"
+      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
+      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
       name: DockAppointmentCompleted
       title: Dock appointment completed
       summary: The receipt opened from the appointment closed.
@@ -615,6 +825,8 @@ components:
               reason: "Supplier cancelled the shipment"
 
     DockAppointmentBookedAnalytics:
+      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
+      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
       name: DockAppointmentBooked
       title: Dock appointment booked (analytics)
       summary: A door window was booked for a carrier, on the analytics stream.
@@ -645,6 +857,8 @@ components:
               asn_numbers: ["ASN-1001"]
 
     DockAppointmentCheckedInAnalytics:
+      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
+      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
       name: DockAppointmentCheckedIn
       title: Dock appointment checked in (analytics)
       summary: The carrier arrived at the door, on the analytics stream.
@@ -672,6 +886,8 @@ components:
               checked_in_at: "2026-10-09T07:50:00Z"
 
     DockAppointmentCancelledAnalytics:
+      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
+      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
       name: DockAppointmentCancelled
       title: Dock appointment cancelled (analytics)
       summary: A Booked appointment was cancelled, on the analytics stream.
@@ -699,6 +915,8 @@ components:
               reason: "Carrier delayed"
 
     DockAppointmentCompletedAnalytics:
+      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
+      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
       name: DockAppointmentCompleted
       title: Dock appointment completed (analytics)
       summary: The receipt opened from the appointment closed, on the analytics stream.
@@ -1117,6 +1335,78 @@ components:
               properties:
                 asn_number: { type: string }
                 reason: { type: string, description: Omitted when none was given. }
+
+    DockSchedulingAppointmentBookedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              description: The fields this service reads; others are ignored.
+              required: [appointment_id, direction, door_code, carrier, window_start, window_end, version]
+              properties:
+                appointment_id: { type: string }
+                direction: { type: string, enum: [INBOUND, OUTBOUND], description: "Only INBOUND is copied." }
+                door_code: { type: string }
+                carrier: { type: string }
+                window_start: { type: string, format: date-time }
+                window_end: { type: string, format: date-time }
+                asn_numbers:
+                  type: array
+                  description: At least one for an INBOUND appointment.
+                  items: { type: string }
+                version: { type: integer, format: int64, minimum: 1, description: "dock-scheduling's aggregate version; the version guard of the copy." }
+
+    DockSchedulingAppointmentCancelledEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              description: The fields this service reads; others are ignored.
+              required: [appointment_id, version]
+              properties:
+                appointment_id: { type: string }
+                version: { type: integer, format: int64, minimum: 1 }
+
+    DockSchedulingAppointmentRescheduledEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              description: dock-scheduling's payload; only `appointment_id`, `door_code`, `window_start`, `window_end` and `version` change the copy.
+              required: [appointment_id, door_code, window_start, window_end, version]
+              properties:
+                appointment_id: { type: string }
+                site_id: { type: string, description: Ignored. }
+                door_code: { type: string, description: The new door. }
+                previous_door_code: { type: string, description: Logged only. }
+                window_start: { type: string, format: date-time }
+                window_end: { type: string, format: date-time, description: Must be after `window_start`. }
+                previous_window_start: { type: string, format: date-time, description: Ignored. }
+                previous_window_end: { type: string, format: date-time, description: Ignored. }
+                arrival_tolerance_minutes: { type: integer, description: Ignored. }
+                version: { type: integer, format: int64, minimum: 1, description: "dock-scheduling's aggregate version; the version guard of the copy." }
+
+    DockSchedulingAppointmentDoorReassignedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              description: dock-scheduling's payload; only `appointment_id`, `to_door_code` and `version` change the copy.
+              required: [appointment_id, to_door_code, version]
+              properties:
+                appointment_id: { type: string }
+                site_id: { type: string, description: Ignored. }
+                from_door_code: { type: string, description: Logged only. }
+                to_door_code: { type: string, description: The new door. }
+                version: { type: integer, format: int64, minimum: 1 }
 
     DockAppointmentBookedEvent:
       allOf:

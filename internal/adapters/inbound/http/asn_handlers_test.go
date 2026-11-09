@@ -181,10 +181,10 @@ func TestCancelAsnInProgressConflicts(t *testing.T) {
 func TestEveryPostRequiresAnIdempotencyKey(t *testing.T) {
 	f := newFixture(t)
 	f.seedAsn(t, "ASN-1")
-	appt := "/appointments/appt-123e4567-e89b-12d3-a456-426614174000"
+	// The three moved appointment writes answer 410 without a key (ADR 0019).
 	for _, path := range []string{
-		"/asns", "/appointments", "/receipts", "/receipts/" + missingReceipt + "/lines", "/receipts/" + missingReceipt + "/scans",
-		"/asns/ASN-1/cancellations", appt + "/check-ins", appt + "/cancellations", "/receipts/" + missingReceipt + "/closures",
+		"/asns", "/receipts", "/receipts/" + missingReceipt + "/lines", "/receipts/" + missingReceipt + "/scans",
+		"/asns/ASN-1/cancellations", "/receipts/" + missingReceipt + "/closures",
 	} {
 		r := f.request(t, http.MethodPost, path, "{}", nil)
 		expectProblem(t, r, http.StatusBadRequest, "idempotency-key-required")

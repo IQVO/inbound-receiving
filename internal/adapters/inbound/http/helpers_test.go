@@ -38,7 +38,7 @@ func (c *mutableClock) set(t time.Time) { c.now.Store(&t) }
 // faults injects repository errors; nil means "behave normally".
 type faults struct {
 	asnGet, asnList, asnSave             error
-	apptGet, apptList, apptSave          error
+	apptGet, apptList                    error
 	receiptGet, receiptList, receiptSave error
 	docksList, idempotency               error
 }
@@ -79,13 +79,6 @@ func (r faultyAppointments) Get(ctx context.Context, id appointment.ID) (*appoin
 		return nil, r.f.apptGet
 	}
 	return r.AppointmentRepo.Get(ctx, id)
-}
-
-func (r faultyAppointments) Save(ctx context.Context, d *appointment.DockAppointment, v int64) error {
-	if r.f.apptSave != nil {
-		return r.f.apptSave
-	}
-	return r.AppointmentRepo.Save(ctx, d, v)
 }
 
 func (r faultyAppointments) List(ctx context.Context, f repository.AppointmentFilter, after repository.AppointmentCursor, limit int) ([]*appointment.DockAppointment, error) {
@@ -146,14 +139,16 @@ func (s faultyIdempotency) Do(ctx context.Context, req idempotency.Request, h fu
 }
 
 type fixture struct {
-	server    *httptest.Server
-	clock     *mutableClock
-	faults    *faults
-	outbox    *memory.OutboxRepo
-	doors     *memory.DockDoors
-	skus      *memory.KnownSkus
-	readiness *inboundhttp.Readiness
-	keys      atomic.Int64
+	server       *httptest.Server
+	clock        *mutableClock
+	faults       *faults
+	outbox       *memory.OutboxRepo
+	appts        *memory.AppointmentRepo
+	appointments atomic.Int64
+	doors        *memory.DockDoors
+	skus         *memory.KnownSkus
+	readiness    *inboundhttp.Readiness
+	keys         atomic.Int64
 }
 
 // newFixture serves the real router over the memory adapters in permissive
@@ -176,30 +171,27 @@ func build(t *testing.T, mode usecases.Mode) *fixture {
 	w := usecases.Writer{Asns: fa, Appointments: fap, Receipts: fr, Outbox: ob, Encoder: kafka.NewEncoder(), UoW: uow, Clock: clock, IDs: idgen.UUID{}}
 	readiness := &inboundhttp.Readiness{}
 	s := &inboundhttp.Server{
-		RegisterAsn:        &usecases.RegisterAsn{Writer: w, SkuMode: mode, Skus: skus},
-		CancelAsn:          &usecases.CancelAsn{Writer: w},
-		GetAsn:             &usecases.GetAsn{Asns: fa},
-		ListAsns:           &usecases.ListAsns{Asns: fa},
-		BookAppointment:    &usecases.BookAppointment{Writer: w, DoorMode: mode, Doors: doors},
-		CheckInAppointment: &usecases.CheckInAppointment{Writer: w},
-		CancelAppointment:  &usecases.CancelAppointment{Writer: w},
-		GetAppointment:     &usecases.GetAppointment{Appointments: fap},
-		ListAppointments:   &usecases.ListAppointments{Appointments: fap},
-		OpenReceipt:        &usecases.OpenReceipt{Writer: w},
-		ReceiveLine:        &usecases.ReceiveLine{Writer: w},
-		CloseReceipt:       &usecases.CloseReceipt{Writer: w},
-		ReceiveScan:        &usecases.ReceiveScan{Writer: w, Packaging: memory.NewPackagingView()},
-		GetReceipt:         &usecases.GetReceipt{Receipts: fr},
-		GetCartonLabel:     &usecases.GetCartonLabel{Receipts: fr},
-		ListReceipts:       &usecases.ListReceipts{Receipts: fr},
-		ListDocks:          &usecases.ListDocks{Doors: fd, Mode: mode},
-		Idempotency:        faultyIdempotency{memory.NewIdempotencyStore(), f},
-		Readiness:          readiness,
-		Metrics:            http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "# metrics\n") }),
+		RegisterAsn:      &usecases.RegisterAsn{Writer: w, SkuMode: mode, Skus: skus},
+		CancelAsn:        &usecases.CancelAsn{Writer: w},
+		GetAsn:           &usecases.GetAsn{Asns: fa},
+		ListAsns:         &usecases.ListAsns{Asns: fa},
+		GetAppointment:   &usecases.GetAppointment{Appointments: fap},
+		ListAppointments: &usecases.ListAppointments{Appointments: fap},
+		OpenReceipt:      &usecases.OpenReceipt{Writer: w},
+		ReceiveLine:      &usecases.ReceiveLine{Writer: w},
+		CloseReceipt:     &usecases.CloseReceipt{Writer: w},
+		ReceiveScan:      &usecases.ReceiveScan{Writer: w, Packaging: memory.NewPackagingView()},
+		GetReceipt:       &usecases.GetReceipt{Receipts: fr},
+		GetCartonLabel:   &usecases.GetCartonLabel{Receipts: fr},
+		ListReceipts:     &usecases.ListReceipts{Receipts: fr},
+		ListDocks:        &usecases.ListDocks{Doors: fd, Mode: mode},
+		Idempotency:      faultyIdempotency{memory.NewIdempotencyStore(), f},
+		Readiness:        readiness,
+		Metrics:          http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "# metrics\n") }),
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
-	return &fixture{server: srv, clock: clock, faults: f, outbox: ob, doors: doors, skus: skus, readiness: readiness}
+	return &fixture{server: srv, clock: clock, faults: f, outbox: ob, appts: appts, doors: doors, skus: skus, readiness: readiness}
 }
 
 type response struct {
@@ -293,27 +285,34 @@ func asnBody(number string) string {
 	return `{"asnNumber":"` + number + `","supplierRef":"ACME","expectedArrival":"2026-10-10T08:00:00Z","lines":[{"lineNo":1,"sku":"SKU-1","expectedQty":40},{"lineNo":2,"sku":"SKU-2","expectedQty":5}]}`
 }
 
-func bookBody(door string, startHour int, asns ...string) string {
-	quoted := make([]string, len(asns))
-	for i, a := range asns {
-		quoted[i] = `"` + a + `"`
-	}
-	start := startOfDay.Add(time.Duration(startHour) * time.Hour)
-	return fmt.Sprintf(`{"doorCode":"%s","carrier":"ACME Freight","windowStart":"%s","windowEnd":"%s","asnNumbers":[%s]}`,
-		door, start.Format(time.RFC3339), start.Add(2*time.Hour).Format(time.RFC3339), strings.Join(quoted, ","))
-}
-
 // seedAsn registers an ASN through the API.
 func (f *fixture) seedAsn(t *testing.T, number string) {
 	t.Helper()
 	f.mustPost(t, "/asns", asnBody(number), http.StatusCreated)
 }
 
-// seedAppointment books an appointment at hour (relative to the fixture
-// clock) and returns its id.
+// seedAppointment stores a Booked copy of a dock-scheduling appointment
+// (version 1) at hour (relative to the fixture clock) and returns its id. The
+// service has no endpoint that books one (ADR 0019): the copy is fed by the
+// dock-appointment consumer, so the fixture feeds the store directly.
 func (f *fixture) seedAppointment(t *testing.T, door string, hour int, asns ...string) string {
 	t.Helper()
-	return str(f.mustPost(t, "/appointments", bookBody(door, hour, asns...), http.StatusCreated), "appointmentId")
+	return f.seedAppointmentIn(t, appointment.Booked, 1, door, hour, asns...)
+}
+
+// seedAppointmentIn is seedAppointment with an explicit state and version.
+func (f *fixture) seedAppointmentIn(t *testing.T, state appointment.State, version int64, door string, hour int, asns ...string) string {
+	t.Helper()
+	start := startOfDay.Add(time.Duration(hour) * time.Hour)
+	id := fmt.Sprintf("appt-00000000-0000-4000-8000-%012d", f.appointments.Add(1))
+	d, err := appointment.Rehydrate(id, door, "ACME Freight", start, start.Add(2*time.Hour), asns, state, version)
+	if err != nil {
+		t.Fatalf("appointment %s: %v", id, err)
+	}
+	if _, err := f.appts.ApplyBooked(context.Background(), d); err != nil {
+		t.Fatalf("store %s: %v", id, err)
+	}
+	return id
 }
 
 // seedReceipt registers ASN-<n>, opens a walk-in receipt and returns its id.
