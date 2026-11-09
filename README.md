@@ -4,7 +4,8 @@
 
 Inbound Receiving is the WMS-tier bounded context of the warehouse-systems
 fleet that owns the inbound dock workflow: the supplier's advance ship notice
-(ASN), the carrier's dock appointment and the counted receipt, with the
+(ASN), a read-only copy of dock-scheduling's dock appointment (ADR 0019,
+0020) and the counted receipt, with the
 short / over / damaged discrepancies found when a receipt closes. It does
 **not** own the product catalogue (`product-master`), the warehouse map
 (`facility-layout`) or putaway — stock hands over to `inventory-storage`
@@ -124,7 +125,7 @@ Real types: `com.warehouse.wms.inbound-receiving.asn.ASNRegistered`,
 |---|---|---|
 | `warehouse.product-master.events` | `ProductRegistered` (known SKUs), `ProductPackLevelDeclared` / `ProductPackLevelRetired` (packaging view: pack level → eaches factor for case-level scans) | `PRODUCT_CONSUMER_GROUP` (SKUs), `PACKAGING_CONSUMER_GROUP` (packaging view) |
 | `warehouse.facility.events` | `LocationSlotRegistered`, `LocationSlotDecommissioned` (known inbound doors) | `DOCK_DOOR_CONSUMER_GROUP` |
-| `warehouse.dock-scheduling.events` | `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked` / `DockAppointmentCancelled` (the `appointments` local copy, version-guarded, raises no event; ADR 0019) | `DOCK_APPOINTMENT_CONSUMER_GROUP` |
+| `warehouse.dock-scheduling.events` | `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked` / `DockAppointmentCancelled` (the `appointments` local copy, ADR 0019) and `DockAppointmentRescheduled` / `DockAppointmentDoorReassigned` (keep the copy's door and window current; open receipts keep their door, ADR 0020); version-guarded, raises no event | `DOCK_APPOINTMENT_CONSUMER_GROUP` |
 
 ---
 
@@ -413,7 +414,7 @@ make integration  # go test -tags=integration ./... -race -count=1 (needs only D
 
 | Suite | What it proves against real infrastructure |
 |---|---|
-| `internal/application/usecases/usecases_wiring_integration_test.go` | the write use cases wired exactly like `cmd/api` (Postgres repos, UnitOfWork, CloudEvents encoder into the outbox): ASN lifecycle, appointment to closed receipt, door-overlap and unknown-ASN refusals |
+| `internal/application/usecases/usecases_wiring_integration_test.go` | the write use cases wired exactly like `cmd/api` (Postgres repos, UnitOfWork, CloudEvents encoder into the outbox): ASN lifecycle, appointment to closed receipt, the appointment copy following a reschedule and a door reassignment (ADR 0020), door-overlap and unknown-ASN refusals |
 | `internal/adapters/outbound/postgres/pgtx/pgtx_integration_test.go` | the pgx transaction carried through `pgtx`: save + outbox commit together, roll back together, nested `Do` joins via a savepoint |
 | `internal/adapters/outbound/postgres/*_integration_test.go` | repositories (version guards, paging, one open receipt per ASN), use-case atomicity, concurrent bookings, the idempotency store, and the analytics fanout (both topics' rows under one id in one transaction) |
 | `internal/adapters/outbound/kafka/publisher_integration_test.go` | the production `Encoder` + `RelaySink` publish the CloudEvents 1.0 contract to a real broker |
