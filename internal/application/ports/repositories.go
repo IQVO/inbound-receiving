@@ -45,10 +45,10 @@ type AppointmentRepository interface {
 }
 
 // AppointmentStore writes the appointments local copy; only the
-// dock-appointment consumer uses it. Both methods apply a change only when
+// dock-appointment consumer uses it. Every method applies a change only when
 // its version is greater than the stored one (a legacy row stores 0, so any
-// dock-scheduling version wins) and never raise an event: applying a
-// sibling's events must not loop (ADR 0019).
+// dock-scheduling version wins), keeps the stored state, and never raises an
+// event: applying a sibling's events must not loop (ADR 0019, 0020).
 type AppointmentStore interface {
 	// ApplyBooked inserts the appointment, or refreshes door, carrier, window,
 	// ASNs and version of a stored one; the stored state is kept, so a Booked
@@ -58,6 +58,14 @@ type AppointmentStore interface {
 	// ApplyCancelled marks a stored appointment Cancelled at the version. It
 	// reports false for an unknown id or a version that is not newer.
 	ApplyCancelled(ctx context.Context, id appointment.ID, version int64) (applied bool, err error)
+	// ApplyRescheduled moves a stored appointment to door and window at the
+	// version (ADR 0020). It never creates a row: it reports false for an
+	// unknown id or a version that is not newer.
+	ApplyRescheduled(ctx context.Context, id appointment.ID, door appointment.DoorCode, window appointment.Window, version int64) (applied bool, err error)
+	// ApplyDoorReassigned moves a stored appointment to door at the version,
+	// keeping its window (ADR 0020); false for an unknown id or a version
+	// that is not newer.
+	ApplyDoorReassigned(ctx context.Context, id appointment.ID, door appointment.DoorCode, version int64) (applied bool, err error)
 }
 
 // AppointmentHistory reads every stored appointment with the moments its

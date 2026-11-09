@@ -164,6 +164,8 @@ type wired struct {
 	cancelAsn    *usecases.CancelAsn
 	apptBooked   *usecases.ApplyDockAppointmentBooked
 	apptCancel   *usecases.ApplyDockAppointmentCancelled
+	apptResched  *usecases.ApplyDockAppointmentRescheduled
+	apptDoor     *usecases.ApplyDockAppointmentDoorReassigned
 	getAppt      *usecases.GetAppointment
 	openReceipt  *usecases.OpenReceipt
 	receiveLine  *usecases.ReceiveLine
@@ -198,6 +200,10 @@ func newWiredUsecases(t *testing.T) *wired {
 		apptBooked: &usecases.ApplyDockAppointmentBooked{
 			UoW: w.UoW, ProcessedEvents: postgres.NewProcessedEventRepo(pool), Appointments: postgres.NewAppointmentRepo(pool)},
 		apptCancel: &usecases.ApplyDockAppointmentCancelled{
+			UoW: w.UoW, ProcessedEvents: postgres.NewProcessedEventRepo(pool), Appointments: postgres.NewAppointmentRepo(pool)},
+		apptResched: &usecases.ApplyDockAppointmentRescheduled{
+			UoW: w.UoW, ProcessedEvents: postgres.NewProcessedEventRepo(pool), Appointments: postgres.NewAppointmentRepo(pool)},
+		apptDoor: &usecases.ApplyDockAppointmentDoorReassigned{
 			UoW: w.UoW, ProcessedEvents: postgres.NewProcessedEventRepo(pool), Appointments: postgres.NewAppointmentRepo(pool)},
 		getAppt:      &usecases.GetAppointment{Appointments: postgres.NewAppointmentRepo(pool)},
 		openReceipt:  &usecases.OpenReceipt{Writer: w},
@@ -449,5 +455,77 @@ func TestUsecasesAppointmentConsumersAgainstRealPostgres(t *testing.T) {
 	// NO-LOOP: none of this raised an event.
 	if after := len(wd.outboxEventTypes(t)); after != outboxBefore {
 		t.Fatalf("applying dock-scheduling's events enqueued %d message(s) in the outbox", after-outboxBefore)
+	}
+}
+
+// TestUsecasesAppointmentCopyFollowsReschedulesAndDoorReassignments walks ADR
+// 0020 on the real stack: a receipt opened before a door reassignment keeps
+// its door (a physical fact), a receipt opened after a reschedule takes the
+// new door, the claim and the update share one transaction, an unknown
+// appointment is ignored but claimed, and nothing reaches the outbox.
+func TestUsecasesAppointmentCopyFollowsReschedulesAndDoorReassignments(t *testing.T) {
+	wd := newWiredUsecases(t)
+	ctx := context.Background()
+	mustRegisterAsn(t, wd, "ASN-ITCOV-4", usecases.AsnLineInput{LineNo: 1, SKU: "SKU-E", ExpectedQty: 1})
+	mustRegisterAsn(t, wd, "ASN-ITCOV-5", usecases.AsnLineInput{LineNo: 1, SKU: "SKU-E", ExpectedQty: 1})
+	if out, err := wd.apptBooked.Handle(ctx, "ev-f1", dockSchedulingBooked("DOOR-1", 1, "ASN-ITCOV-4", "ASN-ITCOV-5")); err != nil || out != usecases.Applied {
+		t.Fatalf("apply booked = %s, %v", out, err)
+	}
+	outboxBefore := wd.outboxEventTypes(t)
+	first, err := wd.openReceipt.Handle(ctx, usecases.OpenReceiptCommand{AsnNumber: "ASN-ITCOV-4", AppointmentID: itApptID})
+	if err != nil || first.DoorCode() != "DOOR-1" {
+		t.Fatalf("first receipt = %v, %v", first, err)
+	}
+
+	// The yard reassigns the door: the open receipt keeps DOOR-1.
+	if out, err := wd.apptDoor.Handle(ctx, "ev-f2", usecases.DockAppointmentDoorReassigned{
+		AppointmentID: itApptID, FromDoorCode: "DOOR-1", ToDoorCode: "DOOR-7", Version: 2}); err != nil || out != usecases.Applied {
+		t.Fatalf("door reassigned = %s, %v", out, err)
+	}
+	var openDoor string
+	if err := wd.pool.QueryRow(ctx, `SELECT door_code FROM receipts WHERE id = $1`, string(first.ID())).Scan(&openDoor); err != nil || openDoor != "DOOR-1" {
+		t.Fatalf("open receipt door = %q, %v; want DOOR-1", openDoor, err)
+	}
+
+	// dock-scheduling reschedules: new window and door; a stale one is ignored.
+	newStart := wiredClock.now.Add(3 * time.Hour)
+	if out, err := wd.apptResched.Handle(ctx, "ev-f3", usecases.DockAppointmentRescheduled{
+		AppointmentID: itApptID, DoorCode: "DOOR-4", WindowStart: newStart, WindowEnd: newStart.Add(time.Hour), Version: 3}); err != nil || out != usecases.Applied {
+		t.Fatalf("rescheduled = %s, %v", out, err)
+	}
+	if out, _ := wd.apptResched.Handle(ctx, "ev-f4", usecases.DockAppointmentRescheduled{
+		AppointmentID: itApptID, DoorCode: "DOOR-STALE", WindowStart: newStart, WindowEnd: newStart.Add(time.Hour), Version: 3}); out != usecases.Ignored {
+		t.Fatalf("stale reschedule = %s, want ignored", out)
+	}
+	if out, _ := wd.apptResched.Handle(ctx, "ev-f3", usecases.DockAppointmentRescheduled{
+		AppointmentID: itApptID, DoorCode: "DOOR-X", WindowStart: newStart, WindowEnd: newStart.Add(time.Hour), Version: 9}); out != usecases.Duplicate {
+		t.Fatalf("redelivery = %s, want duplicate", out)
+	}
+	appt, err := wd.getAppt.Handle(ctx, itApptID)
+	if err != nil || appt.DoorCode() != "DOOR-4" || appt.Version() != 3 || !appt.Window().Start().Equal(newStart) || appt.State() != "Booked" {
+		t.Fatalf("copy after the reschedule = %+v, %v", appt, err)
+	}
+	second, err := wd.openReceipt.Handle(ctx, usecases.OpenReceiptCommand{AsnNumber: "ASN-ITCOV-5", AppointmentID: itApptID})
+	if err != nil || second.DoorCode() != "DOOR-4" {
+		t.Fatalf("second receipt = %v, %v; want DOOR-4", second, err)
+	}
+
+	// An appointment this context never copied: ignored, claimed, not created.
+	ghost := "appt-00000000-0000-4000-8000-0000000000c3"
+	if out, err := wd.apptDoor.Handle(ctx, "ev-f5", usecases.DockAppointmentDoorReassigned{AppointmentID: ghost, ToDoorCode: "DOOR-7", Version: 2}); err != nil || out != usecases.Ignored {
+		t.Fatalf("unknown appointment = %s, %v", out, err)
+	}
+	var claims int
+	if err := wd.pool.QueryRow(ctx, `SELECT count(*) FROM processed_events WHERE consumer = $1`, usecases.DockAppointmentConsumer).Scan(&claims); err != nil || claims != 5 {
+		t.Fatalf("claims = %d, %v; want 5 (f1, f2, f3, f4, f5)", claims, err)
+	}
+
+	// NO-LOOP: only the two ReceiptOpened rows were added.
+	got := wd.outboxEventTypes(t)
+	want := append(append([]string{}, outboxBefore...),
+		cloudevents.Type(outboundkafka.EntityReceipt, "ReceiptOpened"),
+		cloudevents.Type(outboundkafka.EntityReceipt, "ReceiptOpened"))
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("outbox = %v, want %v", got, want)
 	}
 }
