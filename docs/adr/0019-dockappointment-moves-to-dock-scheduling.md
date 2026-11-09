@@ -11,6 +11,8 @@ plan YD-0002. Amends [ADR 0002](./0002-aggregates-and-invariants.md) (the
 `dockappointment` types are legacy). Does not edit those ADRs: it supersedes the
 statements named below.
 
+Amended by [ADR 0020](./0020-appointment-copy-follows-reschedules-and-door-reassignments.md): point 2 and the Consequences on rescheduled appointments (the copy also follows `DockAppointmentRescheduled` and `DockAppointmentDoorReassigned`).
+
 ## Context
 
 A dock appointment is a promise about a door and a time window. Deciding it

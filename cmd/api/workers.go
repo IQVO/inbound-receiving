@@ -56,9 +56,12 @@ func startConsumers(ad adapters, cfg config, logger *slog.Logger) []*worker {
 	pk := inboundkafka.NewPackagingConsumer(cfg.kafkaBrokers, cfg.packagingGroup, declared, retired, logger)
 	logger.Info("packaging consumer running", "topic", inboundkafka.ProductTopic, "group_id", cfg.packagingGroup, "brokers", cfg.kafkaBrokers)
 
-	booked := &usecases.ApplyDockAppointmentBooked{UoW: ad.uow, ProcessedEvents: ad.processed, Appointments: ad.appointments}
-	cancelled := &usecases.ApplyDockAppointmentCancelled{UoW: ad.uow, ProcessedEvents: ad.processed, Appointments: ad.appointments}
-	da := inboundkafka.NewDockAppointmentConsumer(cfg.kafkaBrokers, cfg.appointmentGroup, booked, cancelled, logger)
+	da := inboundkafka.NewDockAppointmentConsumer(cfg.kafkaBrokers, cfg.appointmentGroup, inboundkafka.DockAppointmentAppliers{
+		Booked:         &usecases.ApplyDockAppointmentBooked{UoW: ad.uow, ProcessedEvents: ad.processed, Appointments: ad.appointments},
+		Cancelled:      &usecases.ApplyDockAppointmentCancelled{UoW: ad.uow, ProcessedEvents: ad.processed, Appointments: ad.appointments},
+		Rescheduled:    &usecases.ApplyDockAppointmentRescheduled{UoW: ad.uow, ProcessedEvents: ad.processed, Appointments: ad.appointments},
+		DoorReassigned: &usecases.ApplyDockAppointmentDoorReassigned{UoW: ad.uow, ProcessedEvents: ad.processed, Appointments: ad.appointments},
+	}, logger)
 	logger.Info("dock appointment consumer running", "topic", inboundkafka.DockSchedulingTopic, "group_id", cfg.appointmentGroup, "brokers", cfg.kafkaBrokers)
 
 	return []*worker{

@@ -354,6 +354,46 @@ func (r *fakeAppointments) ApplyCancelled(_ context.Context, id appointment.ID, 
 	return true, nil
 }
 
+// ApplyRescheduled mirrors the Postgres adapter: a newer version moves the
+// door and window of a stored row and keeps its state; an unknown id or a
+// version that is not newer changes nothing.
+func (r *fakeAppointments) ApplyRescheduled(_ context.Context, id appointment.ID, door appointment.DoorCode, window appointment.Window, version int64) (bool, error) {
+	if r.applyErr != nil {
+		return false, r.applyErr
+	}
+	cur, ok := r.items[id]
+	if !ok || cur.Version() >= version {
+		return false, nil
+	}
+	r.items[id] = rebuildAppt(cur, door, window, version)
+	return true, nil
+}
+
+// ApplyDoorReassigned moves only the door, with the same guard.
+func (r *fakeAppointments) ApplyDoorReassigned(_ context.Context, id appointment.ID, door appointment.DoorCode, version int64) (bool, error) {
+	if r.applyErr != nil {
+		return false, r.applyErr
+	}
+	cur, ok := r.items[id]
+	if !ok || cur.Version() >= version {
+		return false, nil
+	}
+	r.items[id] = rebuildAppt(cur, door, cur.Window(), version)
+	return true, nil
+}
+
+func rebuildAppt(cur *appointment.DockAppointment, door appointment.DoorCode, window appointment.Window, version int64) *appointment.DockAppointment {
+	numbers := make([]string, 0, len(cur.AsnNumbers()))
+	for _, n := range cur.AsnNumbers() {
+		numbers = append(numbers, string(n))
+	}
+	c, err := appointment.Rehydrate(string(cur.ID()), string(door), cur.Carrier(), window.Start(), window.End(), numbers, cur.State(), version)
+	if err != nil {
+		panic(err)
+	}
+	return c
+}
+
 // ListRecords serves the republish backfill: ascending id, the fixed timeline
 // of the fake (booked at bookedAt, changed an hour later).
 func (r *fakeAppointments) ListRecords(_ context.Context, after appointment.ID, limit int) ([]repository.AppointmentRecord, error) {

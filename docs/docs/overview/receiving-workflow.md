@@ -13,7 +13,7 @@ published by the relay.
 ```mermaid
 flowchart LR
   A["1. Announce<br/>POST /asns"] --> B["2. Appoint<br/>dock-scheduling books"]
-  B --> C["3. Copy<br/>DockAppointmentBooked arrives"]
+  B --> C["3. Copy<br/>DockAppointmentBooked arrives<br/>(Rescheduled / DoorReassigned keep it current)"]
   C --> D["4. Open receipt<br/>POST /receipts"]
   D --> E["5. Receive lines<br/>POST /receipts/{id}/lines"]
   E --> F["6. Close<br/>POST /receipts/{id}/closures"]
@@ -29,7 +29,7 @@ Omits: cancel paths and the read endpoints. Booking happens in dock-scheduling
 | Step | Use case | State change | Event |
 | --- | --- | --- | --- |
 | Announce | `RegisterAsn` | ASN `Registered` | `ASNRegistered` |
-| Appoint | none here: dock-scheduling books; `ApplyDockAppointmentBooked` stores the copy | appointment copy `Booked` | none (this context raises nothing) |
+| Appoint | none here: dock-scheduling books; `ApplyDockAppointmentBooked` stores the copy, `ApplyDockAppointmentRescheduled` / `ApplyDockAppointmentDoorReassigned` keep its door and window current (ADR 0020) | appointment copy `Booked` | none (this context raises nothing) |
 | Open | `OpenReceipt` | receipt `Open`, ASN `Registered -> Receiving` | `ReceiptOpened` (the ASN transition raises none) |
 | Receive | `ReceiveLine` | line counters grow | `ReceiptLineReceived` per call |
 | Close | `CloseReceipt` | receipt `Closed`, ASN `Closed` (the appointment is untouched) | `ReceiptClosed` |
@@ -42,6 +42,11 @@ Omits: cancel paths and the read endpoints. Booking happens in dock-scheduling
   asn-not-on-appointment`) and not be cancelled (`409 appointment-cancelled`);
   the receipt takes its door code from it. A check-in is not required: the
   arrival is a yard-management fact.
+- **The door follows the appointment until the receipt opens.** The copy
+  follows dock-scheduling's reschedules and door reassignments, so a receipt
+  opened afterwards takes the new door. A receipt already open keeps its door:
+  where the truck is unloaded is a physical fact
+  ([ADR 0020](/docs/adr/0020-appointment-copy-follows-reschedules-and-door-reassignments)).
 - **One open receipt per ASN.** A second `POST /receipts` for the same ASN is
   `409 receipt-already-open`. After a receipt closes the ASN is `Closed`, which
   is not receivable.

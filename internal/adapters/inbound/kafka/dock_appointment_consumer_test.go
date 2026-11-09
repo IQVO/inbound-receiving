@@ -27,9 +27,11 @@ func newAppointmentWorld() *appointmentWorld {
 	return &appointmentWorld{
 		appts: appts, processed: processed, outbox: ob,
 		consumer: &DockAppointmentConsumer{
-			Booked:    &usecases.ApplyDockAppointmentBooked{UoW: uow, ProcessedEvents: processed, Appointments: appts},
-			Cancelled: &usecases.ApplyDockAppointmentCancelled{UoW: uow, ProcessedEvents: processed, Appointments: appts},
-			Logger:    quiet(),
+			Booked:         &usecases.ApplyDockAppointmentBooked{UoW: uow, ProcessedEvents: processed, Appointments: appts},
+			Cancelled:      &usecases.ApplyDockAppointmentCancelled{UoW: uow, ProcessedEvents: processed, Appointments: appts},
+			Rescheduled:    &usecases.ApplyDockAppointmentRescheduled{UoW: uow, ProcessedEvents: processed, Appointments: appts},
+			DoorReassigned: &usecases.ApplyDockAppointmentDoorReassigned{UoW: uow, ProcessedEvents: processed, Appointments: appts},
+			Logger:         quiet(),
 		},
 	}
 }
@@ -115,18 +117,18 @@ func TestDockAppointmentConsumerKeepsOnlyInboundAppointments(t *testing.T) {
 
 func TestDockAppointmentConsumerIgnoresOtherTypesAndSkipsDeterministicProblems(t *testing.T) {
 	cases := map[string][]byte{
-		"flat legacy envelope": []byte(`{"event_id":"1","event_type":"DockAppointmentBooked","payload":{}}`),
-		"not json":             []byte(`nope`),
-		"rescheduled":          cloudEvent(t, "ev-2", "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentRescheduled", map[string]any{"appointment_id": dsAppointment, "version": 2}),
-		"no show":              cloudEvent(t, "ev-3", "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentNoShow", map[string]any{"appointment_id": dsAppointment, "version": 2}),
-		"closure":              cloudEvent(t, "ev-4", "com.warehouse.wms.dock-scheduling.dockcalendar.DoorClosureScheduled", map[string]any{"door_code": "DOOR-1"}),
-		"legacy inbound type":  cloudEvent(t, "ev-5", "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked", map[string]any{"appointment_id": dsAppointment}),
-		"malformed booked":     cloudEvent(t, "ev-6", TypeDockAppointmentBooked, map[string]any{"window_start": "yesterday"}),
-		"invalid booked":       bookedEvent(t, "ev-7", 1, func(m map[string]any) { m["asn_numbers"] = []string{} }),
-		"booked without dir":   bookedEvent(t, "ev-8", 1, func(m map[string]any) { delete(m, "direction") }),
-		"booked version zero":  bookedEvent(t, "ev-9", 0, nil),
-		"malformed cancelled":  cloudEvent(t, "ev-10", TypeDockAppointmentCancelled, map[string]any{"version": "two"}),
-		"invalid cancelled":    cloudEvent(t, "ev-11", TypeDockAppointmentCancelled, map[string]any{"appointment_id": "nope", "version": 2}),
+		"flat legacy envelope":  []byte(`{"event_id":"1","event_type":"DockAppointmentBooked","payload":{}}`),
+		"not json":              []byte(`nope`),
+		"rescheduled no window": cloudEvent(t, "ev-2", TypeDockAppointmentRescheduled, map[string]any{"appointment_id": dsAppointment, "version": 2}),
+		"no show":               cloudEvent(t, "ev-3", "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentNoShow", map[string]any{"appointment_id": dsAppointment, "version": 2}),
+		"closure":               cloudEvent(t, "ev-4", "com.warehouse.wms.dock-scheduling.dockcalendar.DoorClosureScheduled", map[string]any{"door_code": "DOOR-1"}),
+		"legacy inbound type":   cloudEvent(t, "ev-5", "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked", map[string]any{"appointment_id": dsAppointment}),
+		"malformed booked":      cloudEvent(t, "ev-6", TypeDockAppointmentBooked, map[string]any{"window_start": "yesterday"}),
+		"invalid booked":        bookedEvent(t, "ev-7", 1, func(m map[string]any) { m["asn_numbers"] = []string{} }),
+		"booked without dir":    bookedEvent(t, "ev-8", 1, func(m map[string]any) { delete(m, "direction") }),
+		"booked version zero":   bookedEvent(t, "ev-9", 0, nil),
+		"malformed cancelled":   cloudEvent(t, "ev-10", TypeDockAppointmentCancelled, map[string]any{"version": "two"}),
+		"invalid cancelled":     cloudEvent(t, "ev-11", TypeDockAppointmentCancelled, map[string]any{"appointment_id": "nope", "version": 2}),
 	}
 	for name, value := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -187,7 +189,7 @@ func TestDockAppointmentConsumerRunCommitsAfterHandling(t *testing.T) {
 }
 
 func TestNewDockAppointmentConsumerDoesNotDial(t *testing.T) {
-	c := NewDockAppointmentConsumer([]string{"127.0.0.1:1"}, "group-from-env", nil, nil, nil)
+	c := NewDockAppointmentConsumer([]string{"127.0.0.1:1"}, "group-from-env", DockAppointmentAppliers{}, nil)
 	if c.Reader == nil || c.Logger == nil {
 		t.Fatalf("consumer = %+v", c)
 	}
