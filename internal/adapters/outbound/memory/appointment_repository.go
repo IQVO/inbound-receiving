@@ -79,6 +79,43 @@ func (r *AppointmentRepo) ApplyCancelled(_ context.Context, id appointment.ID, v
 	return true, nil
 }
 
+// ApplyRescheduled implements ports.AppointmentStore (ADR 0020).
+func (r *AppointmentRepo) ApplyRescheduled(_ context.Context, id appointment.ID, door appointment.DoorCode, window appointment.Window, version int64) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.move(id, door, &window, version)
+}
+
+// ApplyDoorReassigned implements ports.AppointmentStore (ADR 0020).
+func (r *AppointmentRepo) ApplyDoorReassigned(_ context.Context, id appointment.ID, door appointment.DoorCode, version int64) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.move(id, door, nil, version)
+}
+
+// move sets the door (and the window, when non-nil) of a stored row at a
+// newer version, keeping its state, carrier and ASNs. The caller holds mu.
+func (r *AppointmentRepo) move(id appointment.ID, door appointment.DoorCode, window *appointment.Window, version int64) (bool, error) {
+	cur, exists := r.items[id]
+	if !exists || cur.Version() >= version {
+		return false, nil
+	}
+	w := cur.Window()
+	if window != nil {
+		w = *window
+	}
+	numbers := make([]string, 0, len(cur.AsnNumbers()))
+	for _, n := range cur.AsnNumbers() {
+		numbers = append(numbers, string(n))
+	}
+	c, err := appointment.Rehydrate(string(cur.ID()), string(door), cur.Carrier(), w.Start(), w.End(), numbers, cur.State(), version)
+	if err != nil {
+		return false, err
+	}
+	r.items[id] = c
+	return true, nil
+}
+
 // List implements ports.AppointmentRepository: ascending (window start, id).
 func (r *AppointmentRepo) List(_ context.Context, filter repository.AppointmentFilter, after repository.AppointmentCursor, limit int) ([]*appointment.DockAppointment, error) {
 	r.mu.Lock()

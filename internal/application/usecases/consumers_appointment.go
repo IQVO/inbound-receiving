@@ -63,29 +63,9 @@ func (uc *ApplyDockAppointmentBooked) Handle(ctx context.Context, eventID string
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrInvalidEvent, err)
 	}
-	outcome := Applied
-	err = uc.UoW.Do(ctx, func(ctx context.Context) error {
-		claimed, err := uc.ProcessedEvents.Claim(ctx, DockAppointmentConsumer, eventID)
-		if err != nil {
-			return fmt.Errorf("claim processed event: %w", err)
-		}
-		if !claimed {
-			outcome = Duplicate
-			return nil
-		}
-		applied, err := uc.Appointments.ApplyBooked(ctx, d)
-		if err != nil {
-			return err
-		}
-		if !applied {
-			outcome = Ignored
-		}
-		return nil
+	return claimAndApply(ctx, uc.UoW, uc.ProcessedEvents, eventID, func(ctx context.Context) (bool, error) {
+		return uc.Appointments.ApplyBooked(ctx, d)
 	})
-	if err != nil {
-		return "", err
-	}
-	return outcome, nil
 }
 
 // ApplyDockAppointmentCancelled marks a stored appointment Cancelled from
@@ -101,34 +81,11 @@ type ApplyDockAppointmentCancelled struct {
 // OUTBOUND one, or a Booked that was invalid) and a version that is not newer
 // are Ignored.
 func (uc *ApplyDockAppointmentCancelled) Handle(ctx context.Context, eventID, rawAppointmentID string, version int64) (Outcome, error) {
-	id, err := appointment.NewID(rawAppointmentID)
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrInvalidEvent, err)
-	}
-	if version < 1 {
-		return "", fmt.Errorf("%w: version must be at least 1", ErrInvalidEvent)
-	}
-	outcome := Applied
-	err = uc.UoW.Do(ctx, func(ctx context.Context) error {
-		claimed, err := uc.ProcessedEvents.Claim(ctx, DockAppointmentConsumer, eventID)
-		if err != nil {
-			return fmt.Errorf("claim processed event: %w", err)
-		}
-		if !claimed {
-			outcome = Duplicate
-			return nil
-		}
-		applied, err := uc.Appointments.ApplyCancelled(ctx, id, version)
-		if err != nil {
-			return err
-		}
-		if !applied {
-			outcome = Ignored
-		}
-		return nil
-	})
+	id, err := followedID(rawAppointmentID, version)
 	if err != nil {
 		return "", err
 	}
-	return outcome, nil
+	return claimAndApply(ctx, uc.UoW, uc.ProcessedEvents, eventID, func(ctx context.Context) (bool, error) {
+		return uc.Appointments.ApplyCancelled(ctx, id, version)
+	})
 }

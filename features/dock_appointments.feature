@@ -3,7 +3,10 @@ Feature: Dock appointments moved to dock-scheduling
   check-in and cancellation are answered 410 here; the appointments this service
   still shows (GET /appointments, deprecated) are a local copy fed by
   dock-scheduling's DockAppointmentBooked and DockAppointmentCancelled events,
-  version-guarded, and applying them raises no event of this service.
+  version-guarded, and applying them raises no event of this service. Since
+  ADR 0020 the copy also follows DockAppointmentRescheduled and
+  DockAppointmentDoorReassigned, so the next receipt takes the door the truck
+  is actually at; a receipt already open keeps its door.
   The scenario clock starts at 2026-10-09T07:00:00Z.
 
   Background:
@@ -89,3 +92,50 @@ Feature: Dock appointments moved to dock-scheduling
     And an appointment at door "DOOR-2" from "2026-10-09T08:00:00Z" to "2026-10-09T10:00:00Z" covers the ASN "ASN-2"
     When I list "/appointments" with query "door=DOOR-2&state=Booked"
     Then the listed "doorCode" values are "DOOR-2"
+
+  Scenario: A reschedule moves the door used by the next receipt
+    Given an appointment at door "DOOR-1" from "2026-10-09T08:00:00Z" to "2026-10-09T10:00:00Z" covers the ASN "ASN-1"
+    When dock-scheduling reschedules the appointment to door "DOOR-4" from "2026-10-09T12:00:00Z" to "2026-10-09T13:30:00Z"
+    Then the consumer reports "applied"
+    When I GET "/appointments/{appointment}"
+    Then the response field "doorCode" is "DOOR-4"
+    And the response field "windowStart" is "2026-10-09T12:00:00Z"
+    And the response field "windowEnd" is "2026-10-09T13:30:00Z"
+    And the response field "state" is "Booked"
+    And the response field "version" is "2"
+    When I POST "/receipts" with body '{"asnNumber":"ASN-1","appointmentId":"{appointment}"}'
+    Then the response status is 201
+    And the response field "doorCode" is "DOOR-4"
+    And the outbox event types are "asn.ASNRegistered, asn.ASNRegistered, receipt.ReceiptOpened"
+
+  Scenario: A door reassignment leaves an open receipt at its door
+    Given an appointment at door "DOOR-1" from "2026-10-09T08:00:00Z" to "2026-10-09T10:00:00Z" covers the ASN "ASN-1"
+    And a receipt is open for the ASN "ASN-1" on the appointment
+    When the yard reassigns the appointment to door "DOOR-7"
+    Then the consumer reports "applied"
+    When I GET "/receipts/{receipt}"
+    Then the response field "doorCode" is "DOOR-1"
+    When I GET "/appointments/{appointment}"
+    Then the response field "doorCode" is "DOOR-7"
+    And the response field "windowStart" is "2026-10-09T08:00:00Z"
+    And the response field "version" is "2"
+    And the outbox event types are "asn.ASNRegistered, asn.ASNRegistered, receipt.ReceiptOpened"
+
+  Scenario: A reschedule of an appointment this service never copied is ignored
+    When dock-scheduling reschedules an appointment this service never copied
+    Then the consumer reports "ignored"
+    When I GET "/appointments/{appointment}"
+    Then the response status is 404
+    And the problem type is "appointment-not-found"
+
+  Scenario: A reschedule never revives a cancelled appointment
+    Given an appointment at door "DOOR-1" from "2026-10-09T08:00:00Z" to "2026-10-09T10:00:00Z" covers the ASN "ASN-1"
+    And dock-scheduling cancels the appointment
+    When dock-scheduling reschedules the appointment to door "DOOR-4" from "2026-10-09T12:00:00Z" to "2026-10-09T13:00:00Z"
+    Then the consumer reports "applied"
+    When I GET "/appointments/{appointment}"
+    Then the response field "state" is "Cancelled"
+    And the response field "doorCode" is "DOOR-4"
+    When I POST "/receipts" with body '{"asnNumber":"ASN-1","appointmentId":"{appointment}"}'
+    Then the response status is 409
+    And the problem type is "appointment-cancelled"
