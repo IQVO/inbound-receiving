@@ -484,8 +484,21 @@ func phaseLocalCopies(t *testing.T, s *service, w *world) {
 			w.db.count(`SELECT count(*) FROM dock_doors WHERE door_code = $1`, doorCode) == 1 &&
 			w.db.count(`SELECT count(*) FROM appointments WHERE id = $1 AND version = 1 AND state = 'Booked'`, w.apptID) == 1
 	})
-	if n := w.db.count(`SELECT count(*) FROM processed_events`); n != 3 {
-		t.Fatalf("processed_events = %d, want 3 (the duplicate delivery was deduped by CloudEvents id)", n)
+
+	// dock-scheduling reschedules the appointment a day later (ADR 0020): the
+	// copy follows the new window through the same consumer and group.
+	moved := start.Add(24 * time.Hour)
+	rescheduled := inputEvent(t, "appt-evt-2", "/warehouse/dock-scheduling", "com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentRescheduled",
+		w.apptID, map[string]any{"appointment_id": w.apptID, "site_id": "WH1", "door_code": doorCode, "previous_door_code": doorCode,
+			"window_start": moved.Format(time.RFC3339), "window_end": moved.Add(2 * time.Hour).Format(time.RFC3339),
+			"previous_window_start": start.Format(time.RFC3339), "previous_window_end": start.Add(2 * time.Hour).Format(time.RFC3339),
+			"arrival_tolerance_minutes": 15, "version": 2})
+	produce(t, w.brokers, topicDockSched, kafkago.Message{Key: []byte(w.apptID), Value: rescheduled})
+	waitFor(t, 60*time.Second, "the appointment copy to follow the reschedule", func() bool {
+		return w.db.count(`SELECT count(*) FROM appointments WHERE id = $1 AND version = 2 AND state = 'Booked' AND window_start = $2`, w.apptID, moved) == 1
+	})
+	if n := w.db.count(`SELECT count(*) FROM processed_events`); n != 4 {
+		t.Fatalf("processed_events = %d, want 4 (the duplicate delivery was deduped by CloudEvents id)", n)
 	}
 	// Applying the event published nothing (no loop, ADR 0019).
 	if n := w.db.count(`SELECT count(*) FROM outbox_events`); n != 0 {
@@ -738,8 +751,8 @@ func phaseRestart(t *testing.T, w *world, s *service) *service {
 	// Give the restarted consumers time to (wrongly) re-apply and the relay to
 	// (wrongly) re-publish; neither may happen.
 	time.Sleep(3 * time.Second)
-	if n := w.db.count(`SELECT count(*) FROM processed_events`); n != 5 {
-		t.Fatalf("processed_events after the restart = %d, want still 5", n)
+	if n := w.db.count(`SELECT count(*) FROM processed_events`); n != 6 {
+		t.Fatalf("processed_events after the restart = %d, want still 6", n)
 	}
 	noMoreMessages(t, w.brokers, topicEvents, len(w.expected))
 	noMoreMessages(t, w.brokers, topicAnalytics, len(w.expected))
