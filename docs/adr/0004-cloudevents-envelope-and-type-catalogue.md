@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-10-08). Per-key ordering amended by [ADR 0007](./0007-outbox-relay-attempt-cap.md) (a row excluded by the relay attempt cap is overtaken).
+Accepted (2026-10-08). Per-key ordering amended by [ADR 0007](./0007-outbox-relay-attempt-cap.md) (a row excluded by the relay attempt cap is overtaken). The four `dockappointment` types are retired (ADR 0019) and no longer declared in `apis/asyncapi.yaml` (ADR 0022); their rows below are kept, marked retired.
 
 ## Context
 
@@ -38,10 +38,10 @@ catalogue of every type inbound-receiving publishes or consumes;
 |---|---|---|---|
 | `com.warehouse.wms.inbound-receiving.asn.ASNRegistered` | asn_number | asn_number | an ASN is registered |
 | `com.warehouse.wms.inbound-receiving.asn.ASNCancelled` | asn_number | asn_number | a Registered ASN is cancelled |
-| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked` | appointment_id | appointment_id | a door window is booked |
-| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCheckedIn` | appointment_id | appointment_id | the carrier checks in |
-| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled` | appointment_id | appointment_id | a Booked appointment is cancelled |
-| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCompleted` | appointment_id | appointment_id | the receipt opened from the appointment closes |
+| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked` | appointment_id | appointment_id | (retired, ADR 0022) a door window is booked |
+| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCheckedIn` | appointment_id | appointment_id | (retired, ADR 0022) the carrier checks in |
+| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled` | appointment_id | appointment_id | (retired, ADR 0022) a Booked appointment is cancelled |
+| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCompleted` | appointment_id | appointment_id | (retired, ADR 0022) the receipt opened from the appointment closes |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptOpened` | receipt_id | asn_number | receiving of an ASN starts |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived` | receipt_id | asn_number | a quantity is received against a line |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived` | receipt_id | asn_number | a carton (or one case) is received: identity only, never quantity (ADR 0012) |
