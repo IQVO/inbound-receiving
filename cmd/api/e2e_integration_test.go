@@ -234,6 +234,8 @@ func (e env) apply(t *testing.T) {
 	t.Setenv("DOCK_DOOR_CONSUMER_GROUP", "inbound-receiving-dock-doors-e2e")
 	t.Setenv("PACKAGING_CONSUMER_GROUP", "inbound-receiving-packaging-e2e")
 	t.Setenv("DOCK_APPOINTMENT_CONSUMER_GROUP", "inbound-receiving-appointments-e2e")
+	t.Setenv("VISIT_ARRIVAL_CONSUMER_GROUP", "inbound-receiving-visit-arrivals-e2e")
+	t.Setenv("CARTON_STOW_CONSUMER_GROUP", "inbound-receiving-carton-stows-e2e")
 	t.Setenv("HTTP_ADDR", e.addr)
 	t.Setenv("SHUTDOWN_DRAIN_DELAY", "0")
 	t.Setenv("OUTBOX_RELAY_INTERVAL", "200ms")
@@ -431,6 +433,7 @@ type world struct {
 	receiptID     string
 	apptID        string
 	cartonReceipt string
+	stowReceipt   string
 	expected      []expectedEvent
 }
 
@@ -672,7 +675,7 @@ func phaseNUL(t *testing.T, s *service, w *world) {
 func phaseRows(t *testing.T, w *world) {
 	t.Helper()
 	db := w.db
-	for table, want := range map[string]int{"asns": 3, "appointments": 1, "receipts": 2, "receipt_lines": 2, "asn_cartons": 2, "receipt_cartons": 2, "receipt_carton_discrepancies": 2, "pack_levels": 2} {
+	for table, want := range map[string]int{"asns": 4, "appointments": 2, "receipts": 3, "receipt_lines": 3, "asn_cartons": 3, "receipt_cartons": 3, "receipt_carton_discrepancies": 2, "pack_levels": 2, "visit_arrivals": 1, "carton_stows": 1, "receipt_stow_completions": 1} {
 		if n := db.count("SELECT count(*) FROM " + table); n != want {
 			t.Fatalf("%s rows = %d, want %d", table, n, want)
 		}
@@ -733,6 +736,8 @@ func phaseTopics(t *testing.T, w *world) {
 		t.Fatalf("ReceiptLineReceived data = %+v", line)
 	}
 	assertCartonPayloads(t, ev, w)
+	last := len(w.expected) - 2 // ReceiptStowCompleted is the last occurrence before ASN-9's registration
+	assertStowPayload(t, string(decodeEnvelope(t, ev[last]).Data), w)
 }
 
 // Phase 7: restart the real entry point in-process on the same database and
@@ -751,8 +756,8 @@ func phaseRestart(t *testing.T, w *world, s *service) *service {
 	// Give the restarted consumers time to (wrongly) re-apply and the relay to
 	// (wrongly) re-publish; neither may happen.
 	time.Sleep(3 * time.Second)
-	if n := w.db.count(`SELECT count(*) FROM processed_events`); n != 6 {
-		t.Fatalf("processed_events after the restart = %d, want still 6", n)
+	if n := w.db.count(`SELECT count(*) FROM processed_events`); n != 9 {
+		t.Fatalf("processed_events after the restart = %d, want still 9", n)
 	}
 	noMoreMessages(t, w.brokers, topicEvents, len(w.expected))
 	noMoreMessages(t, w.brokers, topicAnalytics, len(w.expected))
@@ -807,6 +812,8 @@ func TestRunOnRealPostgresAndKafka(t *testing.T) {
 	createTopic(t, brokers, topicProducts)
 	createTopic(t, brokers, topicFacility)
 	createTopic(t, brokers, topicDockSched)
+	createTopic(t, brokers, topicYard)
+	createTopic(t, brokers, topicInventory)
 	w := &world{e: env{dbURL: dbURL, brokers: brokers, addr: freeAddr(t)}, pg: pg, kc: kc, db: newPGView(t, dbURL), brokers: brokers}
 
 	s := w.e.start(t)
@@ -814,6 +821,7 @@ func TestRunOnRealPostgresAndKafka(t *testing.T) {
 	phaseLocalCopies(t, s, w)
 	phaseWorkflow(t, s, w)
 	phaseCartons(t, s, w)
+	phaseDockToStock(t, s, w)
 	phaseNUL(t, s, w)
 	phaseRows(t, w)
 	phaseTopics(t, w)

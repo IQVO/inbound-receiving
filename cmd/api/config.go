@@ -22,7 +22,12 @@ type config struct {
 	// appointmentGroup is the stable group of the dock-appointment consumer
 	// (the appointments local copy fed by dock-scheduling, ADR 0019).
 	appointmentGroup string
-	kafkaBrokers     []string
+	// visitArrivalGroup and cartonStowGroup are the stable groups of the two
+	// dock-to-stock consumers (yard-management's VisitCheckedIn and
+	// inventory-storage's ContainerStowed, ADR 0021).
+	visitArrivalGroup string
+	cartonStowGroup   string
+	kafkaBrokers      []string
 }
 
 // Boot errors for the variables the context cannot run without. Each message
@@ -33,7 +38,7 @@ var (
 )
 
 // loadConfig validates the environment before anything is opened or bound:
-// DATABASE_URL, KAFKA_BROKERS and all four consumer groups are mandatory, the
+// DATABASE_URL, KAFKA_BROKERS and all six consumer groups are mandatory, the
 // consumer modes may only be `kafka` (the default), and EVENT_PUBLISHER may
 // only be `kafka`. Every error names the variable (ADR 0011).
 func loadConfig(env func(string) string) (config, error) {
@@ -65,6 +70,12 @@ func loadConfig(env func(string) string) (config, error) {
 	}
 	if cfg.appointmentGroup = env("DOCK_APPOINTMENT_CONSUMER_GROUP"); cfg.appointmentGroup == "" {
 		return config{}, errors.New("DOCK_APPOINTMENT_CONSUMER_GROUP is required: the dock-appointment consumer (appointments local copy fed by dock-scheduling) always runs on real Kafka")
+	}
+	if cfg.visitArrivalGroup = env("VISIT_ARRIVAL_CONSUMER_GROUP"); cfg.visitArrivalGroup == "" {
+		return config{}, errors.New("VISIT_ARRIVAL_CONSUMER_GROUP is required: the visit-arrival consumer (visit_arrivals local copy fed by yard-management) always runs on real Kafka")
+	}
+	if cfg.cartonStowGroup = env("CARTON_STOW_CONSUMER_GROUP"); cfg.cartonStowGroup == "" {
+		return config{}, errors.New("CARTON_STOW_CONSUMER_GROUP is required: the carton-stow consumer (carton_stows local copy fed by inventory-storage) always runs on real Kafka")
 	}
 	return cfg, nil
 }
