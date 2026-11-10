@@ -35,6 +35,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
+	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
 
 // The whole analytics read side (ADR 0006) against real infrastructure, all
@@ -224,13 +225,13 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 		},
 	}}
 	e2eScenario(t, writes)
-	// 10 events raised by the service (both topics) + the 3 legacy
+	// 11 events raised by the service (both topics) + the 3 legacy
 	// DockAppointment events of the pre-cutover history (analytics stream only).
-	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, analyticsTopic); n != 13 {
-		t.Fatalf("analytics outbox rows = %d, want 13 (10 raised + 3 legacy appointment events)", n)
+	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, analyticsTopic); n != 14 {
+		t.Fatalf("analytics outbox rows = %d, want 14 (11 raised + 3 legacy appointment events)", n)
 	}
-	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, integrationTopic); n != 10 {
-		t.Fatalf("integration outbox rows = %d, want 10 (this service raises no appointment event any more)", n)
+	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, integrationTopic); n != 11 {
+		t.Fatalf("integration outbox rows = %d, want 11 (this service raises no appointment event any more)", n)
 	}
 
 	// ---- the topic also carries messages the projector must survive ----
@@ -381,6 +382,17 @@ func e2eScenario(t *testing.T, w e2eWrites) {
 		}
 		return w.w.Outbox.Insert(ctx, msgs...)
 	})
+	w.at(e2eAt(6, 10, 0), "dock-to-stock fact", func(ctx context.Context) error {
+		// The gate arrival (yard check-in 07:50) to the last Good carton stow (09:50): 7200 s (ADR 0021).
+		msgs, err := w.w.Encoder.EncodeReceipt(receipt.ReceiptStowCompleted{
+			Header: receipt.Header{ID: receipt.ID(receiptID), Asn: "ASN-1", At: e2eAt(6, 10, 0)}, AppointmentID: apptID,
+			ArrivedAt: e2eAt(6, 7, 50), ClosedAt: e2eAt(6, 9, 30), StowedAt: e2eAt(6, 9, 50), DockToStockSeconds: 7200, CartonCount: 3,
+		})
+		if err != nil {
+			return err
+		}
+		return w.w.Outbox.Insert(ctx, msgs...)
+	})
 	w.at(e2eAt(6, 11, 0), "walk-in receipt", func(ctx context.Context) error {
 		_, err := (&usecases.OpenReceipt{Writer: w.w}).Handle(ctx, usecases.OpenReceiptCommand{AsnNumber: "ASN-2"})
 		return err
@@ -390,6 +402,7 @@ func e2eScenario(t *testing.T, w e2eWrites) {
 func assertReceivingPerformance(t *testing.T, got e2eReport) {
 	t.Helper()
 	zeroTiming := map[string]any{"count": 0.0, "p50_seconds": nil, "p95_seconds": nil}
+	zeroDockToStock := map[string]any{"count": 0.0, "p50_seconds": nil, "p90_seconds": nil, "under_target": 0.0, "share_under_target": nil}
 	wantDays := []map[string]any{
 		{
 			"day": "2026-10-05", "receipts_closed": 0.0, "lines_received": 0.0, "units_good": 0.0, "units_damaged": 0.0,
@@ -397,6 +410,7 @@ func assertReceivingPerformance(t *testing.T, got e2eReport) {
 			"receipt_cycle": zeroTiming,
 			"appointments":  map[string]any{"booked": 1.0, "checked_in": 0.0, "cancelled": 0.0, "completed": 0.0},
 			"dock_dwell":    zeroTiming,
+			"dock_to_stock": zeroDockToStock,
 		},
 		{
 			"day": "2026-10-06", "receipts_closed": 1.0, "lines_received": 3.0, "units_good": 15.0, "units_damaged": 1.0,
@@ -404,6 +418,7 @@ func assertReceivingPerformance(t *testing.T, got e2eReport) {
 			"receipt_cycle": map[string]any{"count": 1.0, "p50_seconds": 5100.0, "p95_seconds": 5100.0},
 			"appointments":  map[string]any{"booked": 0.0, "checked_in": 1.0, "cancelled": 0.0, "completed": 1.0},
 			"dock_dwell":    map[string]any{"count": 1.0, "p50_seconds": 6000.0, "p95_seconds": 6000.0},
+			"dock_to_stock": map[string]any{"count": 1.0, "p50_seconds": 7200.0, "p90_seconds": 7200.0, "under_target": 1.0, "share_under_target": 1.0},
 		},
 	}
 	if !reflect.DeepEqual(got.Days, wantDays) {
