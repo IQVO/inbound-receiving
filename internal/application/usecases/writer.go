@@ -17,11 +17,14 @@ import (
 
 // Writer bundles the ports every write use case needs. Appointments is the
 // read side of the local copy (OpenReceipt validates against it); this
-// context never writes an appointment from a use case (ADR 0019).
+// context never writes an appointment from a use case (ADR 0019). Stows is
+// the dock-to-stock store (ADR 0021): when it is nil no stow completion is
+// evaluated, which only a test may do; cmd/api always sets it.
 type Writer struct {
 	Asns         ports.AsnRepository
 	Appointments ports.AppointmentRepository
 	Receipts     ports.ReceiptRepository
+	Stows        ports.StowStore
 	Outbox       ports.OutboxRepository
 	Encoder      ports.EventEncoder
 	UoW          ports.UnitOfWork
