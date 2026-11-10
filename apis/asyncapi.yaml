@@ -20,13 +20,11 @@ info:
     are written in ONE database transaction and a relay drains them to Kafka
     (at-least-once; the CloudEvents `id` is stored with the outbox row, so a
     retry republishes the same `id`). Consumers dedupe on `id`.
-    The four `DockAppointment*` messages below are **LEGACY**: the
-    DockAppointment moved to dock-scheduling (ADR 0019, plan YD-0002) and this
-    service raises them no more. They stay declared because the stage B
-    backfill command (`api republish-appointments`, removed at stage E)
-    enqueues them once per stored appointment for dock-scheduling's legacy
-    importer, and because earlier ones are still on the topics. Do not
-    consume them for new work: read dock-scheduling's events.
+    The four `dockappointment` types (Booked, CheckedIn, Cancelled, Completed)
+    are **RETIRED**: the DockAppointment moved to dock-scheduling (ADR 0019,
+    plan YD-0002), the backfill command that republished them is gone and
+    this service raises none (ADR 0022), so they are no longer declared. Read
+    dock-scheduling's events instead.
     `ReceiptLineReceived` is the **handover event**: inventory-storage consumes
     it and books `condition=Good` quantities into stock (ADR 0003); Damaged
     quantities are recorded here and not booked.
@@ -55,11 +53,11 @@ info:
     `type` and the same `id` per occurrence, `dataschema`
     `urn:warehouse:inbound-receiving:analytics:<EventName>:v1` and payloads
     equal to the integration payloads. Only this service's `inbound-projector`
-    consumes it; it is not an integration contract. The legacy
-    `DockAppointment*` events already on that stream stay projected.
+    consumes it; it is not an integration contract. The retired
+    `dockappointment` events already on that stream stay projected (ADR 0022).
 
     **Planned.** warehouse-planning reads appointments from dock-scheduling
-    (companion of plan YD-0002), not from the legacy messages here.
+    (companion of plan YD-0002).
 
     **Envelope (mandatory).** CloudEvents 1.0, structured content mode, Kafka
     header `content-type: application/cloudevents+json; charset=UTF-8`.
@@ -72,9 +70,8 @@ info:
     (`application/json`) and `dataschema`
     (`urn:warehouse:inbound-receiving:events:<EventName>:v1`) are all required.
     `type` = `com.warehouse.wms.inbound-receiving.<entity>.<EventName>` with
-    `<entity>` one of `asn`, `dockappointment`, `receipt`. Kafka key:
-    `asn_number` for `asn.*` and `receipt.*`, `appointment_id` for
-    `dockappointment.*`. `data` is snake_case, optional fields are omitted when
+    `<entity>` one of `asn`, `receipt`. Kafka key:
+    `asn_number` for `asn.*` and `receipt.*`. `data` is snake_case, optional fields are omitted when
     unset, timestamps are RFC 3339 UTC. A breaking payload change is a new
     `.v2` type, never a mutation.
 
@@ -94,8 +91,6 @@ tags:
     description: The inbound-receiving bounded context (WMS subdomain).
   - name: asn
     description: Events raised by the Asn aggregate.
-  - name: dockappointment
-    description: LEGACY events of the DockAppointment aggregate, which moved to dock-scheduling (ADR 0019); republished once by the stage B backfill.
   - name: receipt
     description: Events raised by the Receipt aggregate.
   - name: consumed
@@ -109,31 +104,21 @@ channels:
       This service's integration topic. Written by the outbox relay; every
       message carries the CloudEvents content-type header (plus the optional
       W3C `traceparent` of the writing request). Key = `asn_number`
-      for ASN and receipt events, `appointment_id` for the legacy appointment
-      events. Dispatch on the full `type`, ignore unknown types, dedupe on
+      for ASN and receipt events. Dispatch on the full `type`, ignore unknown types, dedupe on
       `id`. The first consumer is inventory-storage (`ReceiptLineReceived`).
-      The `DockAppointment*` messages are LEGACY (ADR 0019): only the
-      one-shot `republish-appointments` command writes them now.
     subscribe:
       operationId: receiveInboundReceivingEvents
-      summary: Receive ASN and receipt events (and the legacy dock appointment events).
+      summary: Receive ASN and receipt events.
       description: |
         Subscribe to the inbound dock workflow. Route on the full `type`
-        (`com.warehouse.wms.inbound-receiving.<entity>.<EventName>`). The
-        `dockappointment` messages are LEGACY and only republished by the
-        stage B backfill (ADR 0019).
+        (`com.warehouse.wms.inbound-receiving.<entity>.<EventName>`).
       tags:
         - name: asn
-        - name: dockappointment
         - name: receipt
       message:
         oneOf:
           - $ref: "#/components/messages/ASNRegistered"
           - $ref: "#/components/messages/ASNCancelled"
-          - $ref: "#/components/messages/DockAppointmentBooked"
-          - $ref: "#/components/messages/DockAppointmentCheckedIn"
-          - $ref: "#/components/messages/DockAppointmentCancelled"
-          - $ref: "#/components/messages/DockAppointmentCompleted"
           - $ref: "#/components/messages/ReceiptOpened"
           - $ref: "#/components/messages/ReceiptLineReceived"
           - $ref: "#/components/messages/ReceiptCartonReceived"
@@ -170,10 +155,6 @@ channels:
         oneOf:
           - $ref: "#/components/messages/ASNRegisteredAnalytics"
           - $ref: "#/components/messages/ASNCancelledAnalytics"
-          - $ref: "#/components/messages/DockAppointmentBookedAnalytics"
-          - $ref: "#/components/messages/DockAppointmentCheckedInAnalytics"
-          - $ref: "#/components/messages/DockAppointmentCancelledAnalytics"
-          - $ref: "#/components/messages/DockAppointmentCompletedAnalytics"
           - $ref: "#/components/messages/ReceiptOpenedAnalytics"
           - $ref: "#/components/messages/ReceiptLineReceivedAnalytics"
           - $ref: "#/components/messages/ReceiptCartonReceivedAnalytics"
@@ -524,132 +505,6 @@ components:
             data:
               asn_number: "ASN-1001"
               reason: "Supplier cancelled the shipment"
-
-    DockAppointmentBooked:
-      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
-      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
-      name: DockAppointmentBooked
-      title: Dock appointment booked
-      summary: A door window was booked for a carrier.
-      description: |
-        `type` = `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked`;
-        subject and key = the appointment id. The planned warehouse-planning
-        consumer (inbound-labor demand) is not built.
-      contentType: application/cloudevents+json
-      tags:
-        - name: dockappointment
-      payload:
-        $ref: "#/components/schemas/DockAppointmentBookedEvent"
-      examples:
-        - name: booked
-          summary: A two-hour window at an inbound door covering ASN-1001.
-          payload:
-            specversion: "1.0"
-            id: "4a8c2e91-5b3d-4c7f-a012-9e6d1b8f3c25"
-            source: "/warehouse/inbound-receiving"
-            type: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked"
-            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
-            time: "2026-10-08T12:05:00Z"
-            datacontenttype: "application/json"
-            dataschema: "urn:warehouse:inbound-receiving:events:DockAppointmentBooked:v1"
-            data:
-              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
-              door_code: "WH1-DOCK-IN-01"
-              carrier: "ACME Freight"
-              window_start: "2026-10-09T08:00:00Z"
-              window_end: "2026-10-09T10:00:00Z"
-              asn_numbers: ["ASN-1001"]
-
-    DockAppointmentCheckedIn:
-      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
-      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
-      name: DockAppointmentCheckedIn
-      title: Dock appointment checked in
-      summary: The carrier arrived at the door.
-      description: "`type` = `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCheckedIn`; subject and key = the appointment id."
-      contentType: application/cloudevents+json
-      tags:
-        - name: dockappointment
-      payload:
-        $ref: "#/components/schemas/DockAppointmentCheckedInEvent"
-      examples:
-        - name: checkedIn
-          summary: Checked in ten minutes before the window.
-          payload:
-            specversion: "1.0"
-            id: "9d3e5f10-2a4b-4c6d-8e7f-0b1a2c3d4e5f"
-            source: "/warehouse/inbound-receiving"
-            type: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCheckedIn"
-            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
-            time: "2026-10-09T07:50:00Z"
-            datacontenttype: "application/json"
-            dataschema: "urn:warehouse:inbound-receiving:events:DockAppointmentCheckedIn:v1"
-            data:
-              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
-              door_code: "WH1-DOCK-IN-01"
-              checked_in_at: "2026-10-09T07:50:00Z"
-
-    DockAppointmentCancelled:
-      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
-      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
-      name: DockAppointmentCancelled
-      title: Dock appointment cancelled
-      summary: A Booked appointment was cancelled.
-      description: "`type` = `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled`; subject and key = the appointment id."
-      contentType: application/cloudevents+json
-      tags:
-        - name: dockappointment
-      payload:
-        $ref: "#/components/schemas/DockAppointmentCancelledEvent"
-      examples:
-        - name: cancelled
-          summary: Cancelled because the carrier was delayed.
-          payload:
-            specversion: "1.0"
-            id: "b2c4d6e8-1f3a-4b5c-9d7e-8f0a1b2c3d4e"
-            source: "/warehouse/inbound-receiving"
-            type: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled"
-            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
-            time: "2026-10-08T18:00:00Z"
-            datacontenttype: "application/json"
-            dataschema: "urn:warehouse:inbound-receiving:events:DockAppointmentCancelled:v1"
-            data:
-              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
-              door_code: "WH1-DOCK-IN-01"
-              reason: "Carrier delayed"
-
-    DockAppointmentCompleted:
-      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
-      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
-      name: DockAppointmentCompleted
-      title: Dock appointment completed
-      summary: The receipt opened from the appointment closed.
-      description: |
-        `type` = `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCompleted`;
-        subject and key = the appointment id. Keyed differently from
-        `ReceiptClosed` (the ASN number), so their relative order is not
-        guaranteed.
-      contentType: application/cloudevents+json
-      tags:
-        - name: dockappointment
-      payload:
-        $ref: "#/components/schemas/DockAppointmentCompletedEvent"
-      examples:
-        - name: completed
-          summary: Completed when the receipt closed.
-          payload:
-            specversion: "1.0"
-            id: "c3d5e7f9-2a4b-4c6d-8e0f-1a2b3c4d5e6f"
-            source: "/warehouse/inbound-receiving"
-            type: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCompleted"
-            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
-            time: "2026-10-09T09:30:00Z"
-            datacontenttype: "application/json"
-            dataschema: "urn:warehouse:inbound-receiving:events:DockAppointmentCompleted:v1"
-            data:
-              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
-              door_code: "WH1-DOCK-IN-01"
-              completed_at: "2026-10-09T09:30:00Z"
 
     ReceiptOpened:
       x-no-consumer-reason: "planned warehouse-planning consumer not built (K28)"
@@ -1019,125 +874,6 @@ components:
             data:
               asn_number: "ASN-1001"
               reason: "Supplier cancelled the shipment"
-
-    DockAppointmentBookedAnalytics:
-      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
-      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
-      name: DockAppointmentBooked
-      title: Dock appointment booked (analytics)
-      summary: A door window was booked for a carrier, on the analytics stream.
-      description: "`type` = `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked` (the same as on the integration topic); dataschema `urn:warehouse:inbound-receiving:analytics:DockAppointmentBooked:v1`; payload equal to the integration payload."
-      contentType: application/cloudevents+json
-      tags:
-        - name: analytics
-      payload:
-        $ref: "#/components/schemas/DockAppointmentBookedEvent"
-      examples:
-        - name: analytics
-          summary: The analytics copy of the integration example (same id).
-          payload:
-            specversion: "1.0"
-            id: "4a8c2e91-5b3d-4c7f-a012-9e6d1b8f3c25"
-            source: "/warehouse/inbound-receiving"
-            type: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked"
-            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
-            time: "2026-10-08T12:05:00Z"
-            datacontenttype: "application/json"
-            dataschema: "urn:warehouse:inbound-receiving:analytics:DockAppointmentBooked:v1"
-            data:
-              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
-              door_code: "WH1-DOCK-IN-01"
-              carrier: "ACME Freight"
-              window_start: "2026-10-09T08:00:00Z"
-              window_end: "2026-10-09T10:00:00Z"
-              asn_numbers: ["ASN-1001"]
-
-    DockAppointmentCheckedInAnalytics:
-      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
-      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
-      name: DockAppointmentCheckedIn
-      title: Dock appointment checked in (analytics)
-      summary: The carrier arrived at the door, on the analytics stream.
-      description: "`type` = `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCheckedIn` (the same as on the integration topic); dataschema `urn:warehouse:inbound-receiving:analytics:DockAppointmentCheckedIn:v1`; payload equal to the integration payload."
-      contentType: application/cloudevents+json
-      tags:
-        - name: analytics
-      payload:
-        $ref: "#/components/schemas/DockAppointmentCheckedInEvent"
-      examples:
-        - name: analytics
-          summary: The analytics copy of the integration example (same id).
-          payload:
-            specversion: "1.0"
-            id: "9d3e5f10-2a4b-4c6d-8e7f-0b1a2c3d4e5f"
-            source: "/warehouse/inbound-receiving"
-            type: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCheckedIn"
-            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
-            time: "2026-10-09T07:50:00Z"
-            datacontenttype: "application/json"
-            dataschema: "urn:warehouse:inbound-receiving:analytics:DockAppointmentCheckedIn:v1"
-            data:
-              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
-              door_code: "WH1-DOCK-IN-01"
-              checked_in_at: "2026-10-09T07:50:00Z"
-
-    DockAppointmentCancelledAnalytics:
-      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
-      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
-      name: DockAppointmentCancelled
-      title: Dock appointment cancelled (analytics)
-      summary: A Booked appointment was cancelled, on the analytics stream.
-      description: "`type` = `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled` (the same as on the integration topic); dataschema `urn:warehouse:inbound-receiving:analytics:DockAppointmentCancelled:v1`; payload equal to the integration payload."
-      contentType: application/cloudevents+json
-      tags:
-        - name: analytics
-      payload:
-        $ref: "#/components/schemas/DockAppointmentCancelledEvent"
-      examples:
-        - name: analytics
-          summary: The analytics copy of the integration example (same id).
-          payload:
-            specversion: "1.0"
-            id: "b2c4d6e8-1f3a-4b5c-9d7e-8f0a1b2c3d4e"
-            source: "/warehouse/inbound-receiving"
-            type: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled"
-            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
-            time: "2026-10-08T18:00:00Z"
-            datacontenttype: "application/json"
-            dataschema: "urn:warehouse:inbound-receiving:analytics:DockAppointmentCancelled:v1"
-            data:
-              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
-              door_code: "WH1-DOCK-IN-01"
-              reason: "Carrier delayed"
-
-    DockAppointmentCompletedAnalytics:
-      x-deprecated: "LEGACY (ADR 0019): raised by the DockAppointment aggregate before it moved to dock-scheduling; republished once by `api republish-appointments` only."
-      x-no-consumer-reason: "legacy; dock-scheduling's importer reads it once (strangler stages A/B), nothing else consumes it"
-      name: DockAppointmentCompleted
-      title: Dock appointment completed (analytics)
-      summary: The receipt opened from the appointment closed, on the analytics stream.
-      description: "`type` = `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCompleted` (the same as on the integration topic); dataschema `urn:warehouse:inbound-receiving:analytics:DockAppointmentCompleted:v1`; payload equal to the integration payload."
-      contentType: application/cloudevents+json
-      tags:
-        - name: analytics
-      payload:
-        $ref: "#/components/schemas/DockAppointmentCompletedEvent"
-      examples:
-        - name: analytics
-          summary: The analytics copy of the integration example (same id).
-          payload:
-            specversion: "1.0"
-            id: "c3d5e7f9-2a4b-4c6d-8e0f-1a2b3c4d5e6f"
-            source: "/warehouse/inbound-receiving"
-            type: "com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCompleted"
-            subject: "appt-123e4567-e89b-12d3-a456-426614174000"
-            time: "2026-10-09T09:30:00Z"
-            datacontenttype: "application/json"
-            dataschema: "urn:warehouse:inbound-receiving:analytics:DockAppointmentCompleted:v1"
-            data:
-              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
-              door_code: "WH1-DOCK-IN-01"
-              completed_at: "2026-10-09T09:30:00Z"
 
     ReceiptOpenedAnalytics:
       name: ReceiptOpened
@@ -1603,64 +1339,6 @@ components:
                 from_door_code: { type: string, description: Logged only. }
                 to_door_code: { type: string, description: The new door. }
                 version: { type: integer, format: int64, minimum: 1 }
-
-    DockAppointmentBookedEvent:
-      allOf:
-        - $ref: "#/components/schemas/CloudEventEnvelope"
-        - type: object
-          properties:
-            data:
-              type: object
-              required: [appointment_id, door_code, carrier, window_start, window_end, asn_numbers]
-              properties:
-                appointment_id: { type: string }
-                door_code: { type: string }
-                carrier: { type: string }
-                window_start: { type: string, format: date-time }
-                window_end: { type: string, format: date-time }
-                asn_numbers:
-                  type: array
-                  minItems: 1
-                  items: { type: string }
-
-    DockAppointmentCheckedInEvent:
-      allOf:
-        - $ref: "#/components/schemas/CloudEventEnvelope"
-        - type: object
-          properties:
-            data:
-              type: object
-              required: [appointment_id, door_code, checked_in_at]
-              properties:
-                appointment_id: { type: string }
-                door_code: { type: string }
-                checked_in_at: { type: string, format: date-time }
-
-    DockAppointmentCancelledEvent:
-      allOf:
-        - $ref: "#/components/schemas/CloudEventEnvelope"
-        - type: object
-          properties:
-            data:
-              type: object
-              required: [appointment_id, door_code]
-              properties:
-                appointment_id: { type: string }
-                door_code: { type: string }
-                reason: { type: string, description: Omitted when none was given. }
-
-    DockAppointmentCompletedEvent:
-      allOf:
-        - $ref: "#/components/schemas/CloudEventEnvelope"
-        - type: object
-          properties:
-            data:
-              type: object
-              required: [appointment_id, door_code, completed_at]
-              properties:
-                appointment_id: { type: string }
-                door_code: { type: string }
-                completed_at: { type: string, format: date-time }
 
     ReceiptOpenedEvent:
       allOf:
