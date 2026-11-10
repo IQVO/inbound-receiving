@@ -75,12 +75,12 @@ only by this service's `inbound-projector` (group from env
 
 - Dispatch on the **full** `type`; ignore unknown types.
 - Dedupe on the CloudEvents `id` (the same `id` is republished on a relay retry).
-- **Deprecated, no longer raised (ADR 0019).** The four
+- **Retired (ADR 0019, ADR 0022).** The four
   `dockappointment.DockAppointment{Booked,CheckedIn,Cancelled,Completed}` types
-  (key `appointment_id`) moved to dock-scheduling. Only the one-shot
-  `api republish-appointments` command still enqueues them so that
-  dock-scheduling's importer can rebuild its state. `ReceiptClosed` no longer
-  implies a `DockAppointmentCompleted`.
+  (key `appointment_id`) moved to dock-scheduling. They are no longer raised and
+  no longer declared in `apis/asyncapi.yaml`; the `api republish-appointments`
+  command that re-announced them is removed. `ReceiptClosed` no longer implies
+  a `DockAppointmentCompleted`.
 - `warehouse-planning` consumed the legacy `DockAppointmentBooked` and
   `DockAppointmentCancelled` as inbound-labour demand (its group
   `warehouse-planning-inbound-demand`, [ADR 0017](https://github.com/IQVO/warehouse-planning/blob/develop/docs/adr/0017-inbound-labour-demand-and-observed-capacity-feedback.md),
