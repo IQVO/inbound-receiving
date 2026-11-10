@@ -21,6 +21,7 @@ type Memory struct {
 	appointments map[string]*report.AppointmentTimes
 	receipts     map[string]*memReceipt
 	lines        []memLine
+	stows        map[string]report.StowCompleted // by receipt id
 	discrepancy  map[discrepancyKey]time.Time
 	lastAt       *time.Time
 }
@@ -55,6 +56,7 @@ func NewMemory() *Memory {
 		appointments: map[string]*report.AppointmentTimes{},
 		receipts:     map[string]*memReceipt{},
 		discrepancy:  map[discrepancyKey]time.Time{},
+		stows:        map[string]report.StowCompleted{},
 	}
 }
 
@@ -124,6 +126,14 @@ func (m *Memory) foldAppointment(e report.Event) {
 }
 
 func (m *Memory) foldReceipt(e report.Event, at time.Time) {
+	if e.Kind == report.KindReceiptStowCompleted {
+		if _, exists := m.stows[e.ReceiptID]; !exists { // one row per receipt: the first wins
+			s := *e.Stow
+			s.ArrivedAt, s.StowedAt = s.ArrivedAt.UTC(), s.StowedAt.UTC()
+			m.stows[e.ReceiptID] = s
+		}
+		return
+	}
 	r, ok := m.receipts[e.ReceiptID]
 	if !ok {
 		r = &memReceipt{}
@@ -159,6 +169,9 @@ func checkLikeTheDatabase(e report.Event) error {
 		if d.LineNo < 1 || !d.Kind.Valid() {
 			return fmt.Errorf("%w: discrepancy %d/%s of %s violates a check constraint", report.ErrRejected, d.LineNo, d.Kind, e.ReceiptID)
 		}
+	}
+	if s := e.Stow; s != nil && (s.DockToStockSeconds < 0 || s.CartonCount < 1) {
+		return fmt.Errorf("%w: stow of %s violates a check constraint", report.ErrRejected, e.ReceiptID)
 	}
 	return nil
 }
@@ -206,6 +219,7 @@ func (m *Memory) PerformanceDays(_ context.Context, r report.Range) ([]report.Pe
 		m.countLines(&d, w)
 		m.countDiscrepancies(&d, w)
 		m.countAppointments(&d, w)
+		m.countStows(&d, w)
 		out = append(out, d)
 	}
 	return out, nil
@@ -253,6 +267,16 @@ func (m *Memory) countAppointments(d *report.PerformanceDay, w report.DayWindow)
 		}
 	}
 	d.DockDwell = report.TimingOf(dwell)
+}
+
+func (m *Memory) countStows(d *report.PerformanceDay, w report.DayWindow) {
+	var secs []float64
+	for _, s := range m.stows {
+		if inWindowAt(s.StowedAt, w) {
+			secs = append(secs, float64(s.DockToStockSeconds))
+		}
+	}
+	d.DockToStock = report.DockToStockOf(secs)
 }
 
 func (m *Memory) countReceipts(d *report.PerformanceDay, w report.DayWindow) {

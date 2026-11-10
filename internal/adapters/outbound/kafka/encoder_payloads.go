@@ -144,3 +144,15 @@ type receiptClosedData struct {
 	ClosedAt      string            `json:"closed_at"`
 	Discrepancies []discrepancyData `json:"discrepancies"`
 }
+
+// stowCompletedData is the payload of ReceiptStowCompleted (ADR 0021).
+type stowCompletedData struct {
+	ReceiptID          string `json:"receipt_id"`
+	AsnNumber          string `json:"asn_number"`
+	AppointmentID      string `json:"appointment_id"`
+	ArrivedAt          string `json:"arrived_at"`
+	ClosedAt           string `json:"closed_at"`
+	StowedAt           string `json:"stowed_at"`
+	DockToStockSeconds int64  `json:"dock_to_stock_seconds"`
+	CartonCount        int    `json:"carton_count"`
+}

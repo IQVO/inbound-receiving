@@ -65,6 +65,7 @@ type adapters struct {
 	outbox       ports.OutboxRepository
 	outboxStore  outboxrelay.Store
 	processed    ports.ProcessedEvents
+	stows        ports.StowStore
 	skus         skuCopy
 	doors        doorCopy
 	packaging    packagingView
@@ -78,7 +79,7 @@ type adapters struct {
 
 func (a adapters) writer() usecases.Writer {
 	return usecases.Writer{
-		Asns: a.asns, Appointments: a.appointments, Receipts: a.receipts,
+		Asns: a.asns, Appointments: a.appointments, Receipts: a.receipts, Stows: a.stows,
 		Outbox: a.outbox, Encoder: outboundkafka.NewFanoutEncoder(), UoW: a.uow,
 		Clock: clock.System{}, IDs: idgen.UUID{},
 	}
@@ -137,7 +138,7 @@ func buildAdapters(ctx context.Context, databaseURL string, logger *slog.Logger)
 	ob := postgres.NewOutboxRepo(pool)
 	return adapters{
 		asns: postgres.NewAsnRepo(pool), appointments: postgres.NewAppointmentRepo(pool), receipts: postgres.NewReceiptRepo(pool),
-		outbox: ob, outboxStore: ob, processed: postgres.NewProcessedEventRepo(pool),
+		outbox: ob, outboxStore: ob, processed: postgres.NewProcessedEventRepo(pool), stows: postgres.NewStowRepo(pool),
 		skus: postgres.NewKnownSkus(pool), doors: postgres.NewDockDoors(pool), packaging: postgres.NewPackagingView(pool),
 		idempotency: postgres.NewIdempotencyStore(pool), uow: postgres.NewUnitOfWork(pool),
 		sweeper: newSweeper(pool, os.Getenv, logger), pool: pool,

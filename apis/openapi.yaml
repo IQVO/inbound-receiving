@@ -955,7 +955,21 @@ paths:
         completed) include only receipts and appointments whose opening or
         check-in the projection also saw; their `p50_seconds` / `p95_seconds`
         are linear-interpolated percentiles and are null when `count` is 0.
-        `appointments` counts each milestone that fell in the window.
+        `appointments` counts each milestone that fell in the window. The
+        `appointments` and `dock_dwell` blocks are FROZEN since ADR 0019: the
+        appointment moved to dock-scheduling, so nothing new feeds them.
+
+        `dock_to_stock` (ADR 0021) is the time from the carrier's gate arrival
+        (yard-management's `VisitCheckedIn`) to the stow of the last Good
+        carton (inventory-storage's `ContainerStowed`) of the receipts whose
+        `ReceiptStowCompleted` fell in the window (a fact counts in the UTC day
+        of its `stowed_at`). `p50_seconds` is the median and `p90_seconds` the
+        90th percentile (linear-interpolated); `under_target` counts the
+        facts at or under `dock_to_stock_target_seconds` (11160 s = 3.1 h, the
+        WERC best-in-class) and `share_under_target` is `under_target / count`.
+        The percentiles and the share are null when `count` is 0. A receipt
+        without an appointment arrival (a walk-in) or without cartons has no
+        dock-to-stock and is not counted.
 
         `current` is the state right now, independent of the range:
         `open_receipts` (opened, not yet closed), `expected_today` (ASNs not
@@ -975,6 +989,7 @@ paths:
               example:
                 from: "2026-10-05T00:00:00Z"
                 to: "2026-10-07T00:00:00Z"
+                dock_to_stock_target_seconds: 11160
                 days:
                   - day: "2026-10-05"
                     receipts_closed: 14
@@ -985,6 +1000,7 @@ paths:
                     receipt_cycle: { count: 14, p50_seconds: 2700, p95_seconds: 6900 }
                     appointments: { booked: 18, checked_in: 15, cancelled: 2, completed: 14 }
                     dock_dwell: { count: 14, p50_seconds: 3300, p95_seconds: 8100 }
+                    dock_to_stock: { count: 12, p50_seconds: 9300, p90_seconds: 15600, under_target: 8, share_under_target: 0.6666666666666666 }
                   - day: "2026-10-06"
                     receipts_closed: 0
                     lines_received: 0
@@ -994,6 +1010,7 @@ paths:
                     receipt_cycle: { count: 0, p50_seconds: null, p95_seconds: null }
                     appointments: { booked: 0, checked_in: 0, cancelled: 0, completed: 0 }
                     dock_dwell: { count: 0, p50_seconds: null, p95_seconds: null }
+                    dock_to_stock: { count: 0, p50_seconds: null, p90_seconds: null, under_target: 0, share_under_target: null }
                 current:
                   open_receipts: 2
                   expected_today: 9
@@ -1937,7 +1954,7 @@ components:
           example: ok
     ReceivingPerformanceReport:
       type: object
-      required: [from, to, days, current]
+      required: [from, to, dock_to_stock_target_seconds, days, current]
       properties:
         from:
           type: string
@@ -1947,6 +1964,10 @@ components:
           type: string
           format: date-time
           description: The effective range end (exclusive, UTC).
+        dock_to_stock_target_seconds:
+          type: integer
+          format: int32
+          description: The dock-to-stock target the days' `share_under_target` is measured against, 11160 s (3.1 h, WERC best-in-class; ADR 0021).
         days:
           type: array
           description: One row per UTC day intersecting the range, in day order, zeros included.
@@ -1956,7 +1977,7 @@ components:
           $ref: "#/components/schemas/ReceivingCurrent"
     ReceivingPerformanceDay:
       type: object
-      required: [day, receipts_closed, lines_received, units_good, units_damaged, discrepancies, receipt_cycle, appointments, dock_dwell]
+      required: [day, receipts_closed, lines_received, units_good, units_damaged, discrepancies, receipt_cycle, appointments, dock_dwell, dock_to_stock]
       properties:
         day:
           type: string
@@ -1990,6 +2011,8 @@ components:
           $ref: "#/components/schemas/AppointmentCounts"
         dock_dwell:
           $ref: "#/components/schemas/TimingSummary"
+        dock_to_stock:
+          $ref: "#/components/schemas/DockToStockSummary"
     DiscrepancyCounts:
       type: object
       description: Discrepancies of the receipts closed in the window, by kind.
@@ -2018,6 +2041,19 @@ components:
         count: { type: integer, format: int32, minimum: 0 }
         p50_seconds: { type: number, format: double, nullable: true, minimum: 0 }
         p95_seconds: { type: number, format: double, nullable: true, minimum: 0 }
+    DockToStockSummary:
+      type: object
+      description: |
+        The dock-to-stock facts (ADR 0021) of the receipts whose last Good
+        carton was stowed in the window: gate arrival to last stow, in
+        seconds, never negative.
+      required: [count, p50_seconds, p90_seconds, under_target, share_under_target]
+      properties:
+        count: { type: integer, format: int32, minimum: 0 }
+        p50_seconds: { type: number, format: double, nullable: true, minimum: 0, description: "Median; null when count is 0." }
+        p90_seconds: { type: number, format: double, nullable: true, minimum: 0, description: "90th percentile; null when count is 0." }
+        under_target: { type: integer, format: int32, minimum: 0, description: "Facts at or under dock_to_stock_target_seconds." }
+        share_under_target: { type: number, format: double, nullable: true, minimum: 0, maximum: 1, description: "under_target / count; null when count is 0." }
     ReceivingCurrent:
       type: object
       description: The state right now (not range-bound).

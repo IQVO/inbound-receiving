@@ -24,6 +24,8 @@
 //	DOCK_DOOR_CONSUMER_GROUP      stable group of the dock-door consumer (REQUIRED)
 //	PACKAGING_CONSUMER_GROUP      stable group of the packaging consumer feeding the PackagingView (REQUIRED)
 //	DOCK_APPOINTMENT_CONSUMER_GROUP stable group of the dock-appointment consumer feeding the appointments local copy from dock-scheduling (REQUIRED, ADR 0019)
+//	VISIT_ARRIVAL_CONSUMER_GROUP  stable group of the visit-arrival consumer feeding the visit_arrivals local copy from yard-management (REQUIRED, ADR 0021)
+//	CARTON_STOW_CONSUMER_GROUP    stable group of the carton-stow consumer feeding the carton_stows local copy from inventory-storage (REQUIRED, ADR 0021)
 //	OTEL_EXPORTER_OTLP_ENDPOINT   OTLP/gRPC collector (default localhost:4317)
 //	SHUTDOWN_DRAIN_DELAY          wait after flipping /readyz before closing (default 5s)
 //	LOG_LEVEL, SERVICE_VERSION, ENVIRONMENT, CORS_ALLOWED_ORIGINS

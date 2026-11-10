@@ -175,6 +175,14 @@ config:
   # DockAppointmentBooked / DockAppointmentCancelled (warehouse.dock-scheduling.events).
   # REQUIRED, like productConsumerGroup.
   dockAppointmentConsumerGroup: ""
+  # VISIT_ARRIVAL_CONSUMER_GROUP (ADR 0021): the STABLE group id of the consumer that
+  # feeds the visit_arrivals local copy from yard-management's VisitCheckedIn
+  # (warehouse.yard-management.events). REQUIRED, like productConsumerGroup.
+  visitArrivalConsumerGroup: ""
+  # CARTON_STOW_CONSUMER_GROUP (ADR 0021): the STABLE group id of the consumer that
+  # feeds the carton_stows local copy from inventory-storage's ContainerStowed
+  # (warehouse.inventory.events). REQUIRED, like productConsumerGroup.
+  cartonStowConsumerGroup: ""
   # CARTON_MAX_GROSS_WEIGHT_G / CARTON_MAX_LONGEST_SIDE_MM (ADR 0014): the
   # CartonOverLimit handling limits, in grams and millimetres, checked against
   # a carton's DECLARED weight and longest side at acceptance. 0 = unchecked.

@@ -109,9 +109,16 @@ func followedID(raw string, version int64) (appointment.ID, error) {
 // apply in ONE unit of work: Duplicate when the id was already claimed,
 // Ignored when apply changed nothing, Applied otherwise.
 func claimAndApply(ctx context.Context, uow ports.UnitOfWork, processed ports.ProcessedEvents, eventID string, apply func(context.Context) (bool, error)) (Outcome, error) {
+	return claimApply(ctx, uow, processed, DockAppointmentConsumer, eventID, apply)
+}
+
+// claimApply claims eventID in the consumer's namespace and runs apply in ONE
+// unit of work: Duplicate when the id was already claimed, Ignored when apply
+// changed nothing, Applied otherwise.
+func claimApply(ctx context.Context, uow ports.UnitOfWork, processed ports.ProcessedEvents, consumer, eventID string, apply func(context.Context) (bool, error)) (Outcome, error) {
 	outcome := Applied
 	err := uow.Do(ctx, func(ctx context.Context) error {
-		claimed, err := processed.Claim(ctx, DockAppointmentConsumer, eventID)
+		claimed, err := processed.Claim(ctx, consumer, eventID)
 		if err != nil {
 			return fmt.Errorf("claim processed event: %w", err)
 		}

@@ -32,6 +32,7 @@ type world struct {
 	clock        *fakeClock
 	ids          *fakeIDs
 	uow          *fakeUoW
+	stows        *fakeStow
 	writer       usecases.Writer
 }
 
@@ -48,8 +49,9 @@ func newWorld() *world {
 	}
 	w.appointments = &fakeAppointments{items: map[appointment.ID]*appointment.DockAppointment{}}
 	w.receipts = &fakeReceipts{items: map[receipt.ID]*receipt.Receipt{}}
+	w.stows = newFakeStow(w.receipts)
 	w.writer = usecases.Writer{
-		Asns: w.asns, Appointments: w.appointments, Receipts: w.receipts,
+		Asns: w.asns, Appointments: w.appointments, Receipts: w.receipts, Stows: w.stows,
 		Outbox: w.outbox, Encoder: fakeEncoder{}, UoW: w.uow, Clock: w.clock, IDs: w.ids,
 	}
 	return w

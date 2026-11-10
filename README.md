@@ -114,7 +114,7 @@ an `…Analytics` twin on `warehouse.inbound-receiving.analytics`):
 |---|---|
 | `asn` | `ASNRegistered`, `ASNCancelled` |
 | `dockappointment` | *(deprecated, no longer raised, ADR 0019)* `DockAppointmentBooked`, `DockAppointmentCheckedIn`, `DockAppointmentCompleted`, `DockAppointmentCancelled`; only `api republish-appointments` still enqueues them (stage B backfill) |
-| `receipt` | `ReceiptOpened`, `ReceiptLineReceived`, `ReceiptCartonReceived`, `ReceiptClosed`, `CartonDiscrepancyRaised` |
+| `receipt` | `ReceiptOpened`, `ReceiptLineReceived`, `ReceiptCartonReceived`, `ReceiptClosed`, `CartonDiscrepancyRaised`, `ReceiptStowCompleted` (the dock-to-stock fact, ADR 0021) |
 
 Real types: `com.warehouse.wms.inbound-receiving.asn.ASNRegistered`,
 `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived`.
@@ -126,6 +126,8 @@ Real types: `com.warehouse.wms.inbound-receiving.asn.ASNRegistered`,
 | `warehouse.product-master.events` | `ProductRegistered` (known SKUs), `ProductPackLevelDeclared` / `ProductPackLevelRetired` (packaging view: pack level → eaches factor for case-level scans) | `PRODUCT_CONSUMER_GROUP` (SKUs), `PACKAGING_CONSUMER_GROUP` (packaging view) |
 | `warehouse.facility.events` | `LocationSlotRegistered`, `LocationSlotDecommissioned` (known inbound doors) | `DOCK_DOOR_CONSUMER_GROUP` |
 | `warehouse.dock-scheduling.events` | `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked` / `DockAppointmentCancelled` (the `appointments` local copy, ADR 0019) and `DockAppointmentRescheduled` / `DockAppointmentDoorReassigned` (keep the copy's door and window current; open receipts keep their door, ADR 0020); version-guarded, raises no event | `DOCK_APPOINTMENT_CONSUMER_GROUP` |
+| `warehouse.yard-management.events` | `com.warehouse.wms.yard-management.yardvisit.VisitCheckedIn` (the `visit_arrivals` local copy: the gate arrival of a visit with an appointment; a walk-in visit is ignored, ADR 0021) | `VISIT_ARRIVAL_CONSUMER_GROUP` |
+| `warehouse.inventory.events` | `com.warehouse.wms.inventory-storage.container.ContainerStowed` (the `carton_stows` local copy: when a carton's LPN was stowed; joined to a receipt carton by its SSCC, ADR 0021) | `CARTON_STOW_CONSUMER_GROUP` |
 
 ---
 
@@ -133,7 +135,7 @@ Real types: `com.warehouse.wms.inbound-receiving.asn.ASNRegistered`,
 
 Postgres and Kafka are the only runtime (ADR 0011): there is no in-memory
 mode, `EVENT_PUBLISHER=log` is a boot error, and `cmd/api` refuses to boot
-without `DATABASE_URL`, `KAFKA_BROKERS` and all three consumer groups — every
+without `DATABASE_URL`, `KAFKA_BROKERS` and all six consumer groups — every
 error names its variable. Migrations run at boot.
 
 ```sh
@@ -143,7 +145,9 @@ export KAFKA_BROKERS='localhost:9092'
 export PRODUCT_CONSUMER_GROUP=inbound-product \
        DOCK_DOOR_CONSUMER_GROUP=inbound-doors \
        PACKAGING_CONSUMER_GROUP=inbound-packaging \
-       DOCK_APPOINTMENT_CONSUMER_GROUP=inbound-appointments
+       DOCK_APPOINTMENT_CONSUMER_GROUP=inbound-appointments \
+       VISIT_ARRIVAL_CONSUMER_GROUP=inbound-visit-arrivals \
+       CARTON_STOW_CONSUMER_GROUP=inbound-carton-stows
 go run ./cmd/api               # REST on :8080
 ```
 
@@ -167,6 +171,8 @@ returns 503 while draining. `/healthz` is liveness only.
 | `DOCK_DOOR_CONSUMER_GROUP` | **required** | Stable group of the dock-door consumer |
 | `PACKAGING_CONSUMER_GROUP` | **required** | Stable group of the packaging-view consumer |
 | `DOCK_APPOINTMENT_CONSUMER_GROUP` | **required** | Stable group of the dock-appointment consumer (appointments local copy fed by dock-scheduling, ADR 0019); there is no off switch |
+| `VISIT_ARRIVAL_CONSUMER_GROUP` | **required** | Stable group of the visit-arrival consumer (`visit_arrivals` local copy fed by yard-management's `VisitCheckedIn`, ADR 0021); there is no off switch |
+| `CARTON_STOW_CONSUMER_GROUP` | **required** | Stable group of the carton-stow consumer (`carton_stows` local copy fed by inventory-storage's `ContainerStowed`, ADR 0021); there is no off switch |
 | `OUTBOX_RELAY_INTERVAL` | `1s` | Relay poll interval (Go duration or seconds) |
 | `OUTBOX_MAX_ATTEMPTS` | `20` | Failures before the relay excludes a row (`0` = unlimited) |
 | `CARTON_MAX_GROSS_WEIGHT_G` | `0` (unchecked) | CartonOverLimit weight limit in grams (ADR 0014) |

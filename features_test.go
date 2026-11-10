@@ -61,6 +61,10 @@ type world struct {
 	skus   *memory.KnownSkus
 	doors  *memory.DockDoors
 	appts  *memory.AppointmentRepo
+	// stows is the memory twin of the dock-to-stock evidence (ADR 0021) and
+	// writer the Writer the dock-to-stock consumers are built on.
+	stows  *memory.StowStore
+	writer usecases.Writer
 
 	packaging *memory.PackagingView
 
@@ -82,6 +86,7 @@ type world struct {
 	apptSeq     int
 	apptVersion int64
 	lastAppt    apptAnnouncement
+	stowFeed    stowFeed
 	lpn         string
 	limits      receipt.CartonLimits
 	listQuery   string
@@ -97,13 +102,15 @@ func (w *world) start() {
 	w.skuMode, w.doorMode = usecases.ModePermissive, usecases.ModePermissive
 	w.status, w.header, w.body, w.keys, w.appointment, w.receipt, w.listQuery = 0, nil, nil, 0, "", "", ""
 	w.lpn, w.limits = "", receipt.CartonLimits{}
-	w.wave2, w.apptSeq, w.apptVersion, w.lastAppt = wave2State{}, 0, 0, apptAnnouncement{}
-	uow := memory.NewUnitOfWork(asns, appts, receipts, w.skus, w.doors, w.packaging, ob, processed)
+	w.wave2, w.apptSeq, w.apptVersion, w.lastAppt, w.stowFeed = wave2State{}, 0, 0, apptAnnouncement{}, stowFeed{}
+	w.stows = memory.NewStowStore(receipts)
+	uow := memory.NewUnitOfWork(asns, appts, receipts, w.skus, w.doors, w.packaging, ob, processed, w.stows)
 	w.uow = uow
 	writer := usecases.Writer{
-		Asns: asns, Appointments: appts, Receipts: receipts, Outbox: ob, Encoder: outboundkafka.NewEncoder(),
+		Asns: asns, Appointments: appts, Receipts: receipts, Stows: w.stows, Outbox: ob, Encoder: outboundkafka.NewEncoder(),
 		UoW: uow, Clock: w.clock, IDs: idgen.UUID{},
 	}
+	w.writer = writer
 	idem := memory.NewIdempotencyStore()
 	// The server is built lazily so a Given can pick the enforcement modes
 	// before the first request.
@@ -501,4 +508,5 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	w.registerWave2(sc)
 	w.registerAppointments(sc)
 	w.registerCartons(sc)
+	w.registerStows(sc)
 }

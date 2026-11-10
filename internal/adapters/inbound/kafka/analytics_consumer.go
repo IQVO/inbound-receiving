@@ -38,7 +38,7 @@ func entityOf(k report.Kind) string {
 	}
 }
 
-// analyticsKinds maps the FULL CloudEvents type of the nine published events
+// analyticsKinds maps the FULL CloudEvents type of the ten published events
 // to their report.Kind. Every other type on the topic is acknowledged and
 // ignored.
 var analyticsKinds = func() map[string]report.Kind {
@@ -57,6 +57,10 @@ type analyticsData struct {
 	ExpectedArrival *time.Time `json:"expected_arrival"`
 	AppointmentID   string     `json:"appointment_id"`
 	ReceiptID       string     `json:"receipt_id"`
+	ArrivedAt       time.Time  `json:"arrived_at"`
+	StowedAt        time.Time  `json:"stowed_at"`
+	DockToStockSecs int64      `json:"dock_to_stock_seconds"`
+	CartonCount     int        `json:"carton_count"`
 	LineNo          int        `json:"line_no"`
 	SKU             string     `json:"sku"`
 	Quantity        int64      `json:"quantity"`
@@ -202,6 +206,10 @@ func applyReceiptDetail(e *report.Event, d analyticsData) {
 	switch e.Kind {
 	case report.KindReceiptLineReceived:
 		e.Line = &report.LineReceived{LineNo: d.LineNo, SKU: d.SKU, Quantity: d.Quantity, Condition: report.Condition(d.Condition)}
+	case report.KindReceiptStowCompleted:
+		e.Stow = &report.StowCompleted{
+			ArrivedAt: d.ArrivedAt.UTC(), StowedAt: d.StowedAt.UTC(), DockToStockSeconds: d.DockToStockSecs, CartonCount: d.CartonCount,
+		}
 	case report.KindReceiptClosed:
 		e.Discrepancies = make([]report.Discrepancy, 0, len(d.Discrepancies))
 		for _, x := range d.Discrepancies {

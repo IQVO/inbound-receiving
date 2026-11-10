@@ -39,7 +39,7 @@ func startWorker(logger *slog.Logger, name string, run func(ctx context.Context)
 	return w
 }
 
-// startConsumers starts the four local-copy consumers; they are always on. A
+// startConsumers starts the six local-copy consumers; they are always on. A
 // reader dials lazily inside Run, so a broker outage never blocks boot.
 func startConsumers(ad adapters, cfg config, logger *slog.Logger) []*worker {
 	apply := &usecases.ApplyProductRegistered{UoW: ad.uow, ProcessedEvents: ad.processed, Skus: ad.skus}
@@ -64,11 +64,20 @@ func startConsumers(ad adapters, cfg config, logger *slog.Logger) []*worker {
 	}, logger)
 	logger.Info("dock appointment consumer running", "topic", inboundkafka.DockSchedulingTopic, "group_id", cfg.appointmentGroup, "brokers", cfg.kafkaBrokers)
 
+	w := ad.writer()
+	va := inboundkafka.NewVisitArrivalConsumer(cfg.kafkaBrokers, cfg.visitArrivalGroup, &usecases.ApplyVisitCheckedIn{Writer: w, ProcessedEvents: ad.processed}, logger)
+	logger.Info("visit arrival consumer running", "topic", inboundkafka.YardManagementTopic, "group_id", cfg.visitArrivalGroup, "brokers", cfg.kafkaBrokers)
+
+	cs := inboundkafka.NewCartonStowConsumer(cfg.kafkaBrokers, cfg.cartonStowGroup, &usecases.ApplyContainerStowed{Writer: w, ProcessedEvents: ad.processed}, logger)
+	logger.Info("carton stow consumer running", "topic", inboundkafka.InventoryTopic, "group_id", cfg.cartonStowGroup, "brokers", cfg.kafkaBrokers)
+
 	return []*worker{
 		startWorker(logger, "product-consumer", pc.Run, func() { _ = pc.Close() }),
 		startWorker(logger, "dock-door-consumer", dc.Run, func() { _ = dc.Close() }),
 		startWorker(logger, "packaging-consumer", pk.Run, func() { _ = pk.Close() }),
 		startWorker(logger, "dock-appointment-consumer", da.Run, func() { _ = da.Close() }),
+		startWorker(logger, "visit-arrival-consumer", va.Run, func() { _ = va.Close() }),
+		startWorker(logger, "carton-stow-consumer", cs.Run, func() { _ = cs.Close() }),
 	}
 }
 
