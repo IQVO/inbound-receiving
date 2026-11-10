@@ -14,11 +14,11 @@ import (
 	"time"
 )
 
-// Kind is which of the nine published events a fact came from. The names are
+// Kind is which of the ten published events a fact came from. The names are
 // the CloudEvents event names (the last segment of `type`).
 type Kind string
 
-// The nine events the analytics topic carries.
+// The ten events the analytics topic carries.
 const (
 	KindAsnRegistered        Kind = "ASNRegistered"
 	KindAsnCancelled         Kind = "ASNCancelled"
@@ -29,6 +29,8 @@ const (
 	KindReceiptOpened        Kind = "ReceiptOpened"
 	KindReceiptLineReceived  Kind = "ReceiptLineReceived"
 	KindReceiptClosed        Kind = "ReceiptClosed"
+	// KindReceiptStowCompleted is the dock-to-stock fact (ADR 0021).
+	KindReceiptStowCompleted Kind = "ReceiptStowCompleted"
 )
 
 // Kinds returns every projected kind, in catalogue order.
@@ -36,7 +38,7 @@ func Kinds() []Kind {
 	return []Kind{
 		KindAsnRegistered, KindAsnCancelled,
 		KindAppointmentBooked, KindAppointmentCheckedIn, KindAppointmentCancelled, KindAppointmentCompleted,
-		KindReceiptOpened, KindReceiptLineReceived, KindReceiptClosed,
+		KindReceiptOpened, KindReceiptLineReceived, KindReceiptClosed, KindReceiptStowCompleted,
 	}
 }
 
@@ -51,7 +53,7 @@ func (k Kind) IsAppointment() bool {
 
 // IsReceipt reports whether k is a receipt event.
 func (k Kind) IsReceipt() bool {
-	return k == KindReceiptOpened || k == KindReceiptLineReceived || k == KindReceiptClosed
+	return k == KindReceiptOpened || k == KindReceiptLineReceived || k == KindReceiptClosed || k == KindReceiptStowCompleted
 }
 
 // Condition is the condition of a received quantity.
@@ -96,6 +98,16 @@ type Discrepancy struct {
 	Kind   DiscrepancyKind
 }
 
+// StowCompleted is the part of a ReceiptStowCompleted the report reads: the
+// gate arrival, the stow of the last Good carton, the seconds between them and
+// how many Good cartons the receipt had (ADR 0021).
+type StowCompleted struct {
+	ArrivedAt          time.Time
+	StowedAt           time.Time
+	DockToStockSeconds int64
+	CartonCount        int
+}
+
 // Event is one decoded analytics event ready to project. Only the fields of
 // its Kind are set.
 type Event struct {
@@ -115,6 +127,8 @@ type Event struct {
 	Line *LineReceived
 	// Discrepancies is set on a ReceiptClosed (possibly empty).
 	Discrepancies []Discrepancy
+	// Stow is set exactly on a ReceiptStowCompleted.
+	Stow *StowCompleted
 }
 
 // ErrInvalidEvent marks an event that can never be projected (the consumer
@@ -144,11 +158,8 @@ func (e Event) Validate() error {
 }
 
 func (e Event) validateDetail() error {
-	if e.Kind != KindReceiptLineReceived && e.Line != nil {
-		return fmt.Errorf("%w: %s %s carries a received line", ErrInvalidEvent, e.Kind, e.EventID)
-	}
-	if e.Kind != KindReceiptClosed && len(e.Discrepancies) > 0 {
-		return fmt.Errorf("%w: %s %s carries discrepancies", ErrInvalidEvent, e.Kind, e.EventID)
+	if what := e.strayDetail(); what != "" {
+		return fmt.Errorf("%w: %s %s carries %s", ErrInvalidEvent, e.Kind, e.EventID, what)
 	}
 	switch e.Kind {
 	case KindReceiptLineReceived:
@@ -163,12 +174,42 @@ func (e Event) validateDetail() error {
 		case !l.Condition.Valid():
 			return fmt.Errorf("%w: %s %s unknown condition %q", ErrInvalidEvent, e.Kind, e.EventID, l.Condition)
 		}
+	case KindReceiptStowCompleted:
+		return e.validateStow()
 	case KindReceiptClosed:
 		for _, d := range e.Discrepancies {
 			if d.LineNo < 1 || !d.Kind.Valid() {
 				return fmt.Errorf("%w: %s %s discrepancy line %d kind %q", ErrInvalidEvent, e.Kind, e.EventID, d.LineNo, d.Kind)
 			}
 		}
+	}
+	return nil
+}
+
+// strayDetail names the detail an event carries that its Kind never does.
+func (e Event) strayDetail() string {
+	switch {
+	case e.Kind != KindReceiptLineReceived && e.Line != nil:
+		return "a received line"
+	case e.Kind != KindReceiptStowCompleted && e.Stow != nil:
+		return "a stow"
+	case e.Kind != KindReceiptClosed && len(e.Discrepancies) > 0:
+		return "discrepancies"
+	}
+	return ""
+}
+
+func (e Event) validateStow() error {
+	s := e.Stow
+	switch {
+	case s == nil:
+		return fmt.Errorf("%w: %s %s without a stow", ErrInvalidEvent, e.Kind, e.EventID)
+	case s.ArrivedAt.IsZero() || s.StowedAt.IsZero():
+		return fmt.Errorf("%w: %s %s without arrived_at and stowed_at", ErrInvalidEvent, e.Kind, e.EventID)
+	case s.DockToStockSeconds < 0:
+		return fmt.Errorf("%w: %s %s dock_to_stock_seconds %d is negative", ErrInvalidEvent, e.Kind, e.EventID, s.DockToStockSeconds)
+	case s.CartonCount < 1:
+		return fmt.Errorf("%w: %s %s carton_count %d is below 1", ErrInvalidEvent, e.Kind, e.EventID, s.CartonCount)
 	}
 	return nil
 }
@@ -296,6 +337,9 @@ type PerformanceDay struct {
 	// DockDwell is the check-in-to-completed time of the appointments
 	// completed in the window that the projection also saw checked in.
 	DockDwell Timing
+	// DockToStock is the gate-arrival-to-last-Good-carton-stowed time of the
+	// receipts whose stow completed in the window (ADR 0021).
+	DockToStock Timing
 }
 
 // CurrentCounts is the state right now, independent of the report range.

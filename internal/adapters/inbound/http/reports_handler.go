@@ -61,6 +61,7 @@ type performanceDayDTO struct {
 	ReceiptCycle   timingDTO        `json:"receipt_cycle"`
 	Appointments   appointmentsDTO  `json:"appointments"`
 	DockDwell      timingDTO        `json:"dock_dwell"`
+	DockToStock    timingDTO        `json:"dock_to_stock"`
 }
 
 type currentDTO struct {
@@ -110,7 +111,8 @@ func dayToDTO(d report.PerformanceDay) performanceDayDTO {
 			Booked: d.Appointments.Booked, CheckedIn: d.Appointments.CheckedIn,
 			Cancelled: d.Appointments.Cancelled, Completed: d.Appointments.Completed,
 		},
-		DockDwell: timingToDTO(d.DockDwell),
+		DockDwell:   timingToDTO(d.DockDwell),
+		DockToStock: timingToDTO(d.DockToStock),
 	}
 }
 

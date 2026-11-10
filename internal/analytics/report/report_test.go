@@ -188,7 +188,7 @@ func TestTimingOf(t *testing.T) {
 
 func TestKinds(t *testing.T) {
 	want := []Kind{"ASNRegistered", "ASNCancelled", "DockAppointmentBooked", "DockAppointmentCheckedIn",
-		"DockAppointmentCancelled", "DockAppointmentCompleted", "ReceiptOpened", "ReceiptLineReceived", "ReceiptClosed"}
+		"DockAppointmentCancelled", "DockAppointmentCompleted", "ReceiptOpened", "ReceiptLineReceived", "ReceiptClosed", "ReceiptStowCompleted"}
 	if !reflect.DeepEqual(Kinds(), want) {
 		t.Fatalf("Kinds() = %v", Kinds())
 	}
@@ -241,6 +241,9 @@ func valid(kind Kind) Event {
 		e.AppointmentID = "appt-1"
 	case kind.IsReceipt():
 		e.ReceiptID, e.AsnNumber = "rcpt-1", "ASN-1"
+	}
+	if kind == KindReceiptStowCompleted {
+		e.Stow = &StowCompleted{ArrivedAt: t0, StowedAt: t0.Add(2 * time.Hour), DockToStockSeconds: 7200, CartonCount: 3}
 	}
 	if kind == KindReceiptLineReceived {
 		e.Line = &LineReceived{LineNo: 1, SKU: "SKU-1", Quantity: 5, Condition: ConditionGood}
@@ -304,6 +307,33 @@ var invalidEvents = map[string]func() Event{
 		e.Discrepancies = []Discrepancy{{LineNo: 0, Kind: DiscrepancyShort}}
 		return e
 	},
+	"stow kind without a stow": func() Event { e := valid(KindReceiptStowCompleted); e.Stow = nil; return e },
+	"stow on another kind": func() Event {
+		e := valid(KindReceiptClosed)
+		e.Stow = &StowCompleted{ArrivedAt: t0, StowedAt: t0, CartonCount: 1}
+		return e
+	},
+	"stow without arrived_at": func() Event {
+		e := valid(KindReceiptStowCompleted)
+		e.Stow.ArrivedAt = time.Time{}
+		return e
+	},
+	"stow without stowed_at": func() Event {
+		e := valid(KindReceiptStowCompleted)
+		e.Stow.StowedAt = time.Time{}
+		return e
+	},
+	"negative dock to stock": func() Event {
+		e := valid(KindReceiptStowCompleted)
+		e.Stow.DockToStockSeconds = -1
+		return e
+	},
+	"stow with no cartons": func() Event {
+		e := valid(KindReceiptStowCompleted)
+		e.Stow.CartonCount = 0
+		return e
+	},
+	"stow without a receipt": func() Event { e := valid(KindReceiptStowCompleted); e.ReceiptID = ""; return e },
 	"unknown discrepancy kind": func() Event {
 		e := valid(KindReceiptClosed)
 		e.Discrepancies = []Discrepancy{{LineNo: 1, Kind: "Wrong"}}

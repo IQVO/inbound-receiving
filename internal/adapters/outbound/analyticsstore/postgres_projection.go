@@ -62,6 +62,13 @@ const upsertReceiptSQL = `
 		opened_at = LEAST(receipt_facts.opened_at, EXCLUDED.opened_at),
 		closed_at = LEAST(receipt_facts.closed_at, EXCLUDED.closed_at)`
 
+// A stow fact is one row per receipt; the earliest-seen values win like every
+// other fact, so a redelivery under a new id cannot move it.
+const upsertDockToStockSQL = `
+	INSERT INTO dock_to_stock_facts (receipt_id, asn_number, arrived_at, stowed_at, dock_to_stock_seconds, carton_count)
+	VALUES ($1, $2, $3, $4, $5, $6)
+	ON CONFLICT (receipt_id) DO NOTHING`
+
 const insertLineSQL = `
 	INSERT INTO receipt_line_events (event_id, receipt_id, line_no, sku, quantity, condition, occurred_at)
 	VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -124,6 +131,11 @@ func fold(ctx context.Context, tx pgx.Tx, e report.Event) error {
 }
 
 func foldReceipt(ctx context.Context, tx pgx.Tx, e report.Event) error {
+	if e.Kind == report.KindReceiptStowCompleted {
+		s := e.Stow
+		_, err := tx.Exec(ctx, upsertDockToStockSQL, e.ReceiptID, e.AsnNumber, s.ArrivedAt.UTC(), s.StowedAt.UTC(), s.DockToStockSeconds, s.CartonCount)
+		return err
+	}
 	t := report.ReceiptTimesOf(e)
 	if _, err := tx.Exec(ctx, upsertReceiptSQL, e.ReceiptID, e.AsnNumber, t.Opened, t.Closed); err != nil {
 		return err
