@@ -139,6 +139,7 @@ channels:
           - $ref: "#/components/messages/ReceiptCartonReceived"
           - $ref: "#/components/messages/CartonDiscrepancyRaised"
           - $ref: "#/components/messages/ReceiptClosed"
+          - $ref: "#/components/messages/ReceiptStowCompleted"
 
   warehouse.inbound-receiving.analytics:
     description: |
@@ -178,6 +179,7 @@ channels:
           - $ref: "#/components/messages/ReceiptCartonReceivedAnalytics"
           - $ref: "#/components/messages/CartonDiscrepancyRaisedAnalytics"
           - $ref: "#/components/messages/ReceiptClosedAnalytics"
+          - $ref: "#/components/messages/ReceiptStowCompletedAnalytics"
 
   warehouse.product-master.events:
     description: |
@@ -263,6 +265,60 @@ channels:
           - $ref: "#/components/messages/DockSchedulingAppointmentCancelled"
           - $ref: "#/components/messages/DockSchedulingAppointmentRescheduled"
           - $ref: "#/components/messages/DockSchedulingAppointmentDoorReassigned"
+
+  warehouse.yard-management.events:
+    description: |
+      yard-management's integration topic (ADR 0021). Consumed ONLY for
+      `VisitCheckedIn`, into the `visit_arrivals` local copy, with a stable
+      consumer group read from env `VISIT_ARRIVAL_CONSUMER_GROUP`; the
+      consumer always runs. Every other type on the topic (`VisitRejected`,
+      `TrailerDocked`, `TrailerDeparted`, ...) is committed past untouched.
+      Key = `visit_id`.
+    publish:
+      operationId: consumeYardVisitEvents
+      summary: Consume yard-management's gate arrivals.
+      description: |
+        A `VisitCheckedIn` carrying an `appointment_id` stores the earliest
+        `arrived_at` seen for that appointment (idempotent, order-independent;
+        a redelivery or a later duplicate never moves it). A walk-in visit
+        (`appointment_id` null) is ignored: there is no receipt to join it
+        to. After storing, the use case evaluates the dock-to-stock fact of
+        the receipt opened from that appointment (ADR 0021) and may raise
+        `ReceiptStowCompleted` through this service's outbox, never anything
+        towards yard-management. The CloudEvents `id` claim and the effect
+        commit in one transaction; the offset is committed afterwards. A
+        payload that breaks a rule of this context is skipped with a WARN, a
+        transient error is retried.
+      tags:
+        - name: consumed
+      message:
+        $ref: "#/components/messages/YardVisitCheckedIn"
+
+  warehouse.inventory.events:
+    description: |
+      inventory-storage's integration topic (ADR 0021). Consumed ONLY for
+      `ContainerStowed`, into the `carton_stows` local copy, with a stable
+      consumer group read from env `CARTON_STOW_CONSUMER_GROUP`; the consumer
+      always runs. Every other type on the topic (`ItemStowed`, which has no
+      license plate and so cannot be joined to a carton, `CaseBroken`, ...)
+      is committed past untouched. Key and subject of `ContainerStowed` = the
+      LPN.
+    publish:
+      operationId: consumeInventoryContainerStowed
+      summary: Consume inventory-storage's container stows.
+      description: |
+        A `ContainerStowed` stores the earliest `at` seen for its `lpn`
+        (idempotent, order-independent: a later move of the container to
+        another bin is not a new stow). A receipt carton is joined to it by
+        its SSCC, which is the `lpn`. After storing, the use case evaluates
+        the dock-to-stock fact of the receipts holding that carton (ADR 0021)
+        and may raise `ReceiptStowCompleted` through this service's outbox,
+        never anything towards inventory-storage. Claim, effect and offset
+        follow the same rules as the dock-scheduling consumer.
+      tags:
+        - name: consumed
+      message:
+        $ref: "#/components/messages/InventoryContainerStowed"
 
 components:
   messages:
@@ -767,6 +823,144 @@ components:
                 - { line_no: 1, sku: "SKU-1", kind: "Short", expected_qty: 40, received_qty: 34, damaged_qty: 4 }
                 - { line_no: 1, sku: "SKU-1", kind: "Damaged", expected_qty: 40, received_qty: 34, damaged_qty: 4 }
                 - { line_no: 2, sku: "SKU-2", kind: "Over", expected_qty: 5, received_qty: 7, damaged_qty: 0 }
+
+    YardVisitCheckedIn:
+      name: VisitCheckedIn
+      title: yard-management VisitCheckedIn (consumed)
+      summary: A carrier physically arrived at the gate.
+      description: |
+        `type` = `com.warehouse.wms.yard-management.yardvisit.VisitCheckedIn`,
+        source `/warehouse/yard-management`. `data` is snake_case. Only the
+        fields in the schema are read; the rest of yard-management's payload
+        (`site_id`, `carrier`, `carrier_scac`, `purpose`, `trailers`, ...) is
+        ignored.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/YardVisitCheckedInEvent"
+      examples:
+        - name: scheduled
+          payload:
+            specversion: "1.0"
+            id: "7d1c9e2a-3b4f-4a60-8c15-9e2f0a1b3c44"
+            source: "/warehouse/yard-management"
+            type: "com.warehouse.wms.yard-management.yardvisit.VisitCheckedIn"
+            subject: "visit-5b1f0c3e"
+            time: "2026-10-09T05:00:00Z"
+            datacontenttype: "application/json"
+            data:
+              visit_id: "visit-5b1f0c3e"
+              site_id: "WH1"
+              purpose: "LIVE_UNLOAD"
+              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
+              arrived_at: "2026-10-09T05:00:00Z"
+              version: 1
+
+    InventoryContainerStowed:
+      name: ContainerStowed
+      title: inventory-storage ContainerStowed (consumed)
+      summary: A container (license plate) was put away into a bin.
+      description: |
+        `type` = `com.warehouse.wms.inventory-storage.container.ContainerStowed`,
+        source `/warehouse/inventory-storage`. `data` is snake_case. Only
+        `lpn` and `at` are read; the rest (`sku`, `qty_eaches`, `owner_ref`,
+        `site_id`, `bin`) is ignored.
+      contentType: application/cloudevents+json
+      tags:
+        - name: consumed
+      payload:
+        $ref: "#/components/schemas/InventoryContainerStowedEvent"
+      examples:
+        - name: stowed
+          payload:
+            specversion: "1.0"
+            id: "2c8e4f6a-91b0-4d37-a5e2-6b7c8d9e0f11"
+            source: "/warehouse/inventory-storage"
+            type: "com.warehouse.wms.inventory-storage.container.ContainerStowed"
+            subject: "340123450000000017"
+            time: "2026-10-09T07:00:00Z"
+            datacontenttype: "application/json"
+            data:
+              lpn: "340123450000000017"
+              sku: "SKU-1"
+              qty_eaches: 20
+              site_id: "WH1"
+              bin: "WH1-STOR-A01"
+              at: "2026-10-09T07:00:00Z"
+
+    ReceiptStowCompleted:
+      x-no-consumer-reason: "read by this service's own analytics report; no other consumer built yet"
+      name: ReceiptStowCompleted
+      title: Receipt stow completed
+      summary: The dock-to-stock fact of a receipt (ADR 0021).
+      description: |
+        `type` = `com.warehouse.wms.inbound-receiving.receipt.ReceiptStowCompleted`;
+        subject = the receipt id, key = the ASN number. Raised exactly once,
+        for a Closed receipt opened from an appointment, when every Good
+        carton has a stow from inventory-storage and the gate arrival from
+        yard-management is known, whatever order those facts and the close
+        arrive in. `dock_to_stock_seconds` is `stowed_at - arrived_at` in
+        whole seconds, never negative; `stowed_at` is the latest stow of a
+        Good carton and `carton_count` how many Good cartons that is. `At`
+        (the CloudEvents `time`) is when the completion was observed.
+      contentType: application/cloudevents+json
+      tags:
+        - name: receipt
+      payload:
+        $ref: "#/components/schemas/ReceiptStowCompletedEvent"
+      examples:
+        - name: example
+          payload:
+            specversion: "1.0"
+            id: "9a3b5c7d-1e2f-4a8b-b6c4-0d1e2f3a4b55"
+            source: "/warehouse/inbound-receiving"
+            type: "com.warehouse.wms.inbound-receiving.receipt.ReceiptStowCompleted"
+            subject: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-09T07:00:01Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inbound-receiving:events:ReceiptStowCompleted:v1"
+            data:
+              receipt_id: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+              asn_number: "ASN-1001"
+              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
+              arrived_at: "2026-10-09T05:00:00Z"
+              closed_at: "2026-10-09T06:30:00Z"
+              stowed_at: "2026-10-09T07:00:00Z"
+              dock_to_stock_seconds: 7200
+              carton_count: 12
+
+    ReceiptStowCompletedAnalytics:
+      name: ReceiptStowCompleted
+      title: Receipt stow completed (analytics)
+      summary: The dock-to-stock fact of a receipt, on the analytics stream.
+      description: "`type` = `com.warehouse.wms.inbound-receiving.receipt.ReceiptStowCompleted` (the same as on the integration topic); dataschema `urn:warehouse:inbound-receiving:analytics:ReceiptStowCompleted:v1`; payload equal to the integration payload. The projector folds it into `dock_to_stock_facts`, one row per receipt."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/ReceiptStowCompletedEvent"
+      examples:
+        - name: analytics
+          summary: The analytics copy of the integration example (same id).
+          payload:
+            specversion: "1.0"
+            id: "9a3b5c7d-1e2f-4a8b-b6c4-0d1e2f3a4b55"
+            source: "/warehouse/inbound-receiving"
+            type: "com.warehouse.wms.inbound-receiving.receipt.ReceiptStowCompleted"
+            subject: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-09T07:00:01Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inbound-receiving:analytics:ReceiptStowCompleted:v1"
+            data:
+              receipt_id: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+              asn_number: "ASN-1001"
+              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
+              arrived_at: "2026-10-09T05:00:00Z"
+              closed_at: "2026-10-09T06:30:00Z"
+              stowed_at: "2026-10-09T07:00:00Z"
+              dock_to_stock_seconds: 7200
+              carton_count: 12
 
     ASNRegisteredAnalytics:
       name: ASNRegistered
@@ -1567,6 +1761,52 @@ components:
                   type: array
                   description: Empty when everything matched.
                   items: { $ref: "#/components/schemas/DiscrepancyData" }
+
+    YardVisitCheckedInEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              description: The fields this service reads; others are ignored.
+              required: [visit_id, arrived_at, version]
+              properties:
+                visit_id: { type: string }
+                appointment_id: { type: [string, "null"], description: "Null for a walk-in visit, which is ignored." }
+                arrived_at: { type: string, format: date-time, description: "The gate arrival: the start of dock-to-stock." }
+                version: { type: integer, format: int64, minimum: 1 }
+
+    InventoryContainerStowedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              description: The fields this service reads; others are ignored.
+              required: [lpn, at]
+              properties:
+                lpn: { type: string, description: "The license plate; for a receipt carton it is its SSCC." }
+                at: { type: string, format: date-time, description: "When the container was stowed." }
+
+    ReceiptStowCompletedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [receipt_id, asn_number, appointment_id, arrived_at, closed_at, stowed_at, dock_to_stock_seconds, carton_count]
+              properties:
+                receipt_id: { type: string }
+                asn_number: { type: string }
+                appointment_id: { type: string }
+                arrived_at: { type: string, format: date-time, description: "yard-management's gate arrival." }
+                closed_at: { type: string, format: date-time }
+                stowed_at: { type: string, format: date-time, description: "The latest stow of a Good carton." }
+                dock_to_stock_seconds: { type: integer, format: int64, minimum: 0, description: "stowed_at - arrived_at, clamped at 0." }
+                carton_count: { type: integer, minimum: 1, description: "How many Good cartons were stowed." }
 
     ProductRegisteredEvent:
       allOf:
