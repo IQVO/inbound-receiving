@@ -18,6 +18,8 @@ config:
   dockDoorConsumerGroup: "inbound-receiving-dock-doors"
   packagingConsumerGroup: "inbound-receiving-packaging"
   dockAppointmentConsumerGroup: "inbound-receiving-dock-appointments"
+  visitArrivalConsumerGroup: "inbound-receiving-visit-arrivals"
+  cartonStowConsumerGroup: "inbound-receiving-carton-stows"
 
 kafka:
   enabled: true

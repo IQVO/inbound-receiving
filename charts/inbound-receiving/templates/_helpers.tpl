@@ -165,6 +165,12 @@ from its committed offsets.
 {{- if not .Values.config.dockAppointmentConsumerGroup -}}
 {{- fail "config.dockAppointmentConsumerGroup is required (DOCK_APPOINTMENT_CONSUMER_GROUP): the dock-appointment consumer (local copy of dock-scheduling's appointments) always runs on real Kafka and cmd/api exits at boot without a group. Use a STABLE id (ADR 0019)." -}}
 {{- end -}}
+{{- if not .Values.config.visitArrivalConsumerGroup -}}
+{{- fail "config.visitArrivalConsumerGroup is required (VISIT_ARRIVAL_CONSUMER_GROUP): the visit-arrival consumer (local copy of yard-management's gate arrivals) always runs on real Kafka and cmd/api exits at boot without a group. Use a STABLE id (ADR 0021)." -}}
+{{- end -}}
+{{- if not .Values.config.cartonStowConsumerGroup -}}
+{{- fail "config.cartonStowConsumerGroup is required (CARTON_STOW_CONSUMER_GROUP): the carton-stow consumer (local copy of inventory-storage's container stows) always runs on real Kafka and cmd/api exits at boot without a group. Use a STABLE id (ADR 0021)." -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

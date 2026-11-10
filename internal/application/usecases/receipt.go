@@ -236,6 +236,11 @@ func (uc *CloseReceipt) Handle(ctx context.Context, cmd CloseReceiptCommand) (*r
 		if err := uc.saveReceipt(ctx, r, loaded, events); err != nil {
 			return err
 		}
+		// Stows and the arrival may have been seen while the receipt was
+		// open: evaluate now that it is closed (ADR 0021).
+		if err := uc.completeStow(ctx, r); err != nil {
+			return err
+		}
 		out = r
 		return nil
 	})

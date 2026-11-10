@@ -74,6 +74,34 @@ own required consumer group.
 | Effect | `OpenReceipt` with an `appointmentId` requires it to exist (`422 unknown-appointment`), to cover the ASN (`422 asn-not-on-appointment`) and not be cancelled (`409 appointment-cancelled`), and takes the copy's current door. A receipt already open keeps its door (a physical fact); only receipts opened after a reschedule or reassignment take the new one. Deprecated `GET /appointments` reads the copy |
 | Invalid input | empty ids, `version < 1`, empty door, `window_end <= window_start`: WARN and commit past; transient failures retry |
 
+## yard-management: gate arrivals
+
+| Item | Value |
+| --- | --- |
+| Topic | `warehouse.yard-management.events` (`YardManagementTopic` in `visit_arrival_consumer.go`) |
+| Types | `com.warehouse.wms.yard-management.yardvisit.VisitCheckedIn` ([ADR 0021](/docs/adr/0021-dock-to-stock-kpi-from-yard-arrival-and-inventory-stow-facts)); every other type on the topic (`VisitRejected`, `TrailerDocked`, `TrailerDeparted`, ...) is committed past |
+| Consumer group | env `VISIT_ARRIVAL_CONSUMER_GROUP`; the consumer always runs; unset is a boot error |
+| Fields used | `visit_id`, `appointment_id` (null for a walk-in visit), `arrived_at`, `version`. snake_case; key = `visit_id`. `site_id`, `carrier`, `carrier_scac`, `purpose`, `trailers` are ignored |
+| Local copy | `visit_arrivals` (`appointment_id`, `arrived_at`, `visit_id`, `updated_at`) |
+| Rule | a visit with an `appointment_id` stores its `arrived_at`, keeping the earliest one seen (a redelivery or a later duplicate never moves it, whatever the order). A walk-in visit is ignored and claims nothing: a walk-in receipt has no arrival fact, so it has no dock-to-stock and is left out of the report |
+| Idempotency | claim of the CloudEvents `id` under consumer `visit-arrival-copy`, in the same unit of work |
+| Effect | evaluates the dock-to-stock fact of the receipt opened from that appointment and may raise `ReceiptStowCompleted` through this service's outbox, never anything towards yard-management |
+| Invalid input | empty ids, `version < 1`, no `arrived_at`: WARN and commit past; transient failures retry. The topic may not exist yet: the reader retries and logs, readiness does not depend on it |
+
+## inventory-storage: container stows
+
+| Item | Value |
+| --- | --- |
+| Topic | `warehouse.inventory.events` (`InventoryTopic` in `carton_stow_consumer.go`) |
+| Types | `com.warehouse.wms.inventory-storage.container.ContainerStowed` (ADR 0021); every other type is committed past, in particular `ItemStowed`, which has SKU and bin but no license plate and so cannot be joined to a carton |
+| Consumer group | env `CARTON_STOW_CONSUMER_GROUP`; the consumer always runs; unset is a boot error |
+| Fields used | `lpn`, `at`. snake_case; key and subject = the LPN. `sku`, `qty_eaches`, `owner_ref`, `site_id`, `bin` are ignored |
+| Local copy | `carton_stows` (`lpn`, `stowed_at`, `updated_at`) |
+| Rule | stores the earliest `at` seen for the LPN: a later move of the container to another bin is not a new stow. A receipt carton joins by its SSCC, which is its LPN |
+| Idempotency | claim of the CloudEvents `id` under consumer `carton-stow-copy`, in the same unit of work |
+| Effect | evaluates the dock-to-stock fact of the receipts holding that carton and may raise `ReceiptStowCompleted` through this service's outbox, never anything towards inventory-storage |
+| Invalid input | empty `lpn`, no `at`: WARN and commit past; transient failures retry |
+
 ## Modes
 
 | Copy | Mode env | Group env | Default |
@@ -82,6 +110,8 @@ own required consumer group.
 | PackagingView | none (always on) | `PACKAGING_CONSUMER_GROUP` (required) | n/a |
 | `dock_doors` | `DOCK_DOOR_MODE` = `kafka` (only value) | `DOCK_DOOR_CONSUMER_GROUP` (required) | `kafka` |
 | `appointments` | none (always on) | `DOCK_APPOINTMENT_CONSUMER_GROUP` (required) | n/a |
+| `visit_arrivals` | none (always on) | `VISIT_ARRIVAL_CONSUMER_GROUP` (required) | n/a |
+| `carton_stows` | none (always on) | `CARTON_STOW_CONSUMER_GROUP` (required) | n/a |
 
 The consumers always run and the copies are always consulted: `permissive` and
 `off` are boot errors since [ADR 0011](/docs/adr/0011-postgres-and-kafka-are-the-only-runtime).

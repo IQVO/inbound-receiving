@@ -26,7 +26,7 @@ func validEnv() map[string]string {
 	return map[string]string{
 		"DATABASE_URL": "postgres://u@db:5432/x", "KAFKA_BROKERS": "a:9092,b:9092",
 		"PRODUCT_CONSUMER_GROUP": "g1", "DOCK_DOOR_CONSUMER_GROUP": "g2", "PACKAGING_CONSUMER_GROUP": "g3",
-		"DOCK_APPOINTMENT_CONSUMER_GROUP": "g4",
+		"DOCK_APPOINTMENT_CONSUMER_GROUP": "g4", "VISIT_ARRIVAL_CONSUMER_GROUP": "g5", "CARTON_STOW_CONSUMER_GROUP": "g6",
 	}
 }
 
@@ -44,7 +44,7 @@ func withEnv(overrides map[string]string) map[string]string {
 
 func TestLoadConfigAcceptsTheMinimalRealEnvironment(t *testing.T) {
 	cfg, err := loadConfig(envOf(validEnv()))
-	if err != nil || cfg.productGroup != "g1" || cfg.doorGroup != "g2" || cfg.packagingGroup != "g3" || cfg.appointmentGroup != "g4" || len(cfg.kafkaBrokers) != 2 || cfg.kafkaBrokers[1] != "b:9092" {
+	if err != nil || cfg.productGroup != "g1" || cfg.doorGroup != "g2" || cfg.packagingGroup != "g3" || cfg.appointmentGroup != "g4" || cfg.visitArrivalGroup != "g5" || cfg.cartonStowGroup != "g6" || len(cfg.kafkaBrokers) != 2 || cfg.kafkaBrokers[1] != "b:9092" {
 		t.Fatalf("cfg = %+v, err = %v", cfg, err)
 	}
 	// The explicit values the chart renders are accepted too.
@@ -71,6 +71,11 @@ func TestLoadConfigRefusesWithAnErrorNamingTheVariable(t *testing.T) {
 		// ADR 0019: the dock-appointment consumer always runs; no group is not "off".
 		{"no DOCK_APPOINTMENT_CONSUMER_GROUP", map[string]string{"DOCK_APPOINTMENT_CONSUMER_GROUP": "-"}, "DOCK_APPOINTMENT_CONSUMER_GROUP"},
 		{"blank DOCK_APPOINTMENT_CONSUMER_GROUP", map[string]string{"DOCK_APPOINTMENT_CONSUMER_GROUP": ""}, "DOCK_APPOINTMENT_CONSUMER_GROUP"},
+		// ADR 0021: the two dock-to-stock consumers always run too.
+		{"no VISIT_ARRIVAL_CONSUMER_GROUP", map[string]string{"VISIT_ARRIVAL_CONSUMER_GROUP": "-"}, "VISIT_ARRIVAL_CONSUMER_GROUP"},
+		{"blank VISIT_ARRIVAL_CONSUMER_GROUP", map[string]string{"VISIT_ARRIVAL_CONSUMER_GROUP": ""}, "VISIT_ARRIVAL_CONSUMER_GROUP"},
+		{"no CARTON_STOW_CONSUMER_GROUP", map[string]string{"CARTON_STOW_CONSUMER_GROUP": "-"}, "CARTON_STOW_CONSUMER_GROUP"},
+		{"blank CARTON_STOW_CONSUMER_GROUP", map[string]string{"CARTON_STOW_CONSUMER_GROUP": ""}, "CARTON_STOW_CONSUMER_GROUP"},
 		{"PRODUCT_MODE=permissive", map[string]string{"PRODUCT_MODE": "permissive"}, "PRODUCT_MODE=permissive is not supported"},
 		{"PRODUCT_MODE=off", map[string]string{"PRODUCT_MODE": "off"}, "PRODUCT_MODE=off is not supported"},
 		{"DOCK_DOOR_MODE=permissive", map[string]string{"DOCK_DOOR_MODE": "permissive"}, "DOCK_DOOR_MODE=permissive is not supported"},
@@ -177,16 +182,19 @@ func TestStartOutboxRelayWithoutBrokersIsABootError(t *testing.T) {
 	}
 }
 
-func TestStartConsumersAlwaysStartsAllFourWithoutDialingAndStops(t *testing.T) {
-	cfg := config{productGroup: "product-group", doorGroup: "door-group", packagingGroup: "packaging-group", appointmentGroup: "appointment-group", kafkaBrokers: []string{"127.0.0.1:1"}}
+func TestStartConsumersAlwaysStartsAllSixWithoutDialingAndStops(t *testing.T) {
+	cfg := config{
+		productGroup: "product-group", doorGroup: "door-group", packagingGroup: "packaging-group", appointmentGroup: "appointment-group",
+		visitArrivalGroup: "visit-arrival-group", cartonStowGroup: "carton-stow-group", kafkaBrokers: []string{"127.0.0.1:1"},
+	}
 	start := time.Now()
 	workers := startConsumers(testDoubleAdapters(t), cfg, quietLogger())
 	names := map[string]bool{}
 	for _, w := range workers {
 		names[w.name] = true
 	}
-	if len(workers) != 4 || !names["dock-appointment-consumer"] {
-		t.Fatalf("workers = %v, want the four local-copy consumers including dock-appointment-consumer", names)
+	if len(workers) != 6 || !names["dock-appointment-consumer"] || !names["visit-arrival-consumer"] || !names["carton-stow-consumer"] {
+		t.Fatalf("workers = %v, want the six local-copy consumers including the two dock-to-stock ones", names)
 	}
 	if time.Since(start) > time.Second {
 		t.Fatal("starting the consumers must not dial Kafka")
@@ -302,5 +310,15 @@ func TestWatchWorkersReportsAWorkerThatDied(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("a worker that returned on its own was not reported")
+	}
+}
+
+// The dock-to-stock evaluation is part of the real write path: the Writer the
+// composition root hands to CloseReceipt and to the two consumers carries the
+// StowStore (ADR 0021). A nil store would silently skip the KPI.
+func TestWriterCarriesTheStowStore(t *testing.T) {
+	ad := testDoubleAdapters(t)
+	if ad.stows == nil || ad.writer().Stows == nil {
+		t.Fatal("the writer must carry the StowStore")
 	}
 }

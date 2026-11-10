@@ -6,10 +6,10 @@ sidebar_position: 1
 
 # Downstream consumers
 
-`inbound-receiving` publishes on `warehouse.inbound-receiving.events`: seven
+`inbound-receiving` publishes on `warehouse.inbound-receiving.events`: eight
 current types (`ASNRegistered`, `ASNCancelled`, `ReceiptOpened`,
 `ReceiptLineReceived`, `ReceiptCartonReceived`, `CartonDiscrepancyRaised`,
-`ReceiptClosed`) plus the four legacy `DockAppointment*` types, which it no
+`ReceiptClosed`) plus `ReceiptStowCompleted` (below) and the four legacy `DockAppointment*` types, which it no
 longer raises ([ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling))
 except through the one-shot `api republish-appointments` backfill. None of its
 consumers calls this service at request time: each keeps what it needs from
@@ -24,6 +24,10 @@ non-test Go for `com.warehouse.wms.inbound-receiving.*` types).
 | `exception-management` | `receipt.CartonDiscrepancyRaised` | `CARTON_DISCREPANCY_CONSUMER_GROUP` | opens and routes one exception case per carton finding | 0006 |
 | `yard-management` | `asn.ASNRegistered`, `asn.ASNCancelled`, `receipt.ReceiptOpened`, `receipt.ReceiptClosed` | `INBOUND_RECEIVING_CONSUMER_GROUP` | keeps a local copy of expected inbound ASNs and of receipts per door; a closed receipt auto-completes the unload at the door (AutoCompleteUnload) | 0003, 0009 |
 | `dock-scheduling` | `asn.ASNRegistered`, `asn.ASNCancelled`; legacy `dockappointment.DockAppointmentBooked` / `CheckedIn` / `Cancelled` / `Completed` | `ASN_CONSUMER_GROUP`; `DOCK_LEGACY_IMPORT_CONSUMER_GROUP` | ASN copy (an appointment can only cover a known, not-cancelled ASN; CANCELLED is sticky); the legacy importer rebuilds the appointments this context owned before ADR 0019 (strangler stage A, removed at stage E) | 0003, 0009 |
+
+`receipt.ReceiptStowCompleted` (the dock-to-stock fact, [ADR 0021](/docs/adr/0021-dock-to-stock-kpi-from-yard-arrival-and-inventory-stow-facts))
+has **no consumer yet** outside this service's own projector, which folds its
+analytics copy into `GET /reports/receiving-performance`.
 
 `warehouse-planning` no longer reads this topic: its inbound labour demand
 comes from dock-scheduling's appointments (its ADR 0020, strangler stage D),

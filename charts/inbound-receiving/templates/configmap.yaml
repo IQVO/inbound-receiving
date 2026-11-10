@@ -20,6 +20,8 @@ data:
   DOCK_DOOR_CONSUMER_GROUP: {{ .Values.config.dockDoorConsumerGroup | quote }}
   PACKAGING_CONSUMER_GROUP: {{ .Values.config.packagingConsumerGroup | quote }}
   DOCK_APPOINTMENT_CONSUMER_GROUP: {{ .Values.config.dockAppointmentConsumerGroup | quote }}
+  VISIT_ARRIVAL_CONSUMER_GROUP: {{ .Values.config.visitArrivalConsumerGroup | quote }}
+  CARTON_STOW_CONSUMER_GROUP: {{ .Values.config.cartonStowConsumerGroup | quote }}
   CARTON_MAX_GROSS_WEIGHT_G: {{ .Values.config.cartonMaxGrossWeightG | int64 | quote }}
   CARTON_MAX_LONGEST_SIDE_MM: {{ .Values.config.cartonMaxLongestSideMm | int64 | quote }}
   {{- with .Values.config.outboxRelayInterval }}

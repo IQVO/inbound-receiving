@@ -186,9 +186,43 @@ func TestTimingOf(t *testing.T) {
 	}
 }
 
+func TestDockToStockOf(t *testing.T) {
+	if got := DockToStockOf(nil); got.Count != 0 || got.P50 != nil || got.P90 != nil || got.UnderTarget != 0 || got.ShareUnderTarget != nil {
+		t.Fatalf("empty = %+v", got)
+	}
+	if DockToStockTargetSeconds != 11160 {
+		t.Fatalf("the target is the WERC 3.1 h = 11160 s, got %d", DockToStockTargetSeconds)
+	}
+	// 10 s, 20 s, 30 s are all under the target; 11160 s is AT it (counts);
+	// 11161 s is over it.
+	in := []float64{11161, 30, 11160, 10, 20}
+	got := DockToStockOf(in)
+	if got.Count != 5 || got.UnderTarget != 4 || *got.P50 != 30 || abs(*got.P90-(11160+0.6*(11161-11160))) > 1e-9 || abs(*got.ShareUnderTarget-0.8) > 1e-9 {
+		t.Fatalf("got %+v p50=%v p90=%v share=%v", got, *got.P50, *got.P90, *got.ShareUnderTarget)
+	}
+	if !reflect.DeepEqual(in, []float64{11161, 30, 11160, 10, 20}) {
+		t.Fatal("DockToStockOf must not reorder its input")
+	}
+	over := DockToStockOf([]float64{11161})
+	if over.UnderTarget != 0 || *over.ShareUnderTarget != 0 {
+		t.Fatalf("a single fact over the target = %+v", over)
+	}
+}
+
+func TestNewDockToStockDefinesTheShare(t *testing.T) {
+	p := 1.0
+	if got := NewDockToStock(0, nil, nil, 0); got.ShareUnderTarget != nil {
+		t.Fatalf("no facts, no share: %+v", got)
+	}
+	got := NewDockToStock(4, &p, &p, 1)
+	if got.Count != 4 || got.UnderTarget != 1 || *got.ShareUnderTarget != 0.25 || got.P50 != &p || got.P90 != &p {
+		t.Fatalf("got %+v", got)
+	}
+}
+
 func TestKinds(t *testing.T) {
 	want := []Kind{"ASNRegistered", "ASNCancelled", "DockAppointmentBooked", "DockAppointmentCheckedIn",
-		"DockAppointmentCancelled", "DockAppointmentCompleted", "ReceiptOpened", "ReceiptLineReceived", "ReceiptClosed"}
+		"DockAppointmentCancelled", "DockAppointmentCompleted", "ReceiptOpened", "ReceiptLineReceived", "ReceiptClosed", "ReceiptStowCompleted"}
 	if !reflect.DeepEqual(Kinds(), want) {
 		t.Fatalf("Kinds() = %v", Kinds())
 	}
@@ -241,6 +275,9 @@ func valid(kind Kind) Event {
 		e.AppointmentID = "appt-1"
 	case kind.IsReceipt():
 		e.ReceiptID, e.AsnNumber = "rcpt-1", "ASN-1"
+	}
+	if kind == KindReceiptStowCompleted {
+		e.Stow = &StowCompleted{ArrivedAt: t0, StowedAt: t0.Add(2 * time.Hour), DockToStockSeconds: 7200, CartonCount: 3}
 	}
 	if kind == KindReceiptLineReceived {
 		e.Line = &LineReceived{LineNo: 1, SKU: "SKU-1", Quantity: 5, Condition: ConditionGood}
@@ -304,6 +341,33 @@ var invalidEvents = map[string]func() Event{
 		e.Discrepancies = []Discrepancy{{LineNo: 0, Kind: DiscrepancyShort}}
 		return e
 	},
+	"stow kind without a stow": func() Event { e := valid(KindReceiptStowCompleted); e.Stow = nil; return e },
+	"stow on another kind": func() Event {
+		e := valid(KindReceiptClosed)
+		e.Stow = &StowCompleted{ArrivedAt: t0, StowedAt: t0, CartonCount: 1}
+		return e
+	},
+	"stow without arrived_at": func() Event {
+		e := valid(KindReceiptStowCompleted)
+		e.Stow.ArrivedAt = time.Time{}
+		return e
+	},
+	"stow without stowed_at": func() Event {
+		e := valid(KindReceiptStowCompleted)
+		e.Stow.StowedAt = time.Time{}
+		return e
+	},
+	"negative dock to stock": func() Event {
+		e := valid(KindReceiptStowCompleted)
+		e.Stow.DockToStockSeconds = -1
+		return e
+	},
+	"stow with no cartons": func() Event {
+		e := valid(KindReceiptStowCompleted)
+		e.Stow.CartonCount = 0
+		return e
+	},
+	"stow without a receipt": func() Event { e := valid(KindReceiptStowCompleted); e.ReceiptID = ""; return e },
 	"unknown discrepancy kind": func() Event {
 		e := valid(KindReceiptClosed)
 		e.Discrepancies = []Discrepancy{{LineNo: 1, Kind: "Wrong"}}

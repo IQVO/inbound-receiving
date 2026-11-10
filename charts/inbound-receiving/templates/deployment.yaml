@@ -97,6 +97,12 @@ spec:
             # ADR 0019: local copy of dock-scheduling's appointments, always on.
             - name: DOCK_APPOINTMENT_CONSUMER_GROUP
               value: {{ .Values.config.dockAppointmentConsumerGroup | quote }}
+            # ADR 0021: local copies of yard-management's gate arrivals and
+            # inventory-storage's container stows (dock-to-stock), always on.
+            - name: VISIT_ARRIVAL_CONSUMER_GROUP
+              value: {{ .Values.config.visitArrivalConsumerGroup | quote }}
+            - name: CARTON_STOW_CONSUMER_GROUP
+              value: {{ .Values.config.cartonStowConsumerGroup | quote }}
             # ADR 0014: CartonOverLimit handling limits (0 = unchecked).
             - name: CARTON_MAX_GROSS_WEIGHT_G
               value: {{ .Values.config.cartonMaxGrossWeightG | int64 | quote }}

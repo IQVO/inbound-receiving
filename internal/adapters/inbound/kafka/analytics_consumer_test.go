@@ -249,7 +249,7 @@ func anBooked(t *testing.T, id string, at time.Time) []byte {
 }
 
 // anLifecycle is a full receiving lifecycle encoded by the real encoder:
-// every one of the nine events once.
+// every one of the ten events once.
 func anLifecycle(t *testing.T) [][]byte {
 	t.Helper()
 	at := func(m int) time.Time { return anAt.Add(time.Duration(m) * time.Minute) }
@@ -269,6 +269,10 @@ func anLifecycle(t *testing.T) [][]byte {
 			{LineNo: 1, SKU: "SKU-1", Kind: receipt.KindDamaged, ExpectedQty: 40, ReceivedQty: 34, DamagedQty: 4},
 		}}),
 		anApptEvent(t, "e-done", appointment.DockAppointmentCompleted{Header: anApptHeader(at(125)), DoorCode: "D1", CompletedAt: at(125)}),
+		anRcptEvent(t, "e-stow", receipt.ReceiptStowCompleted{
+			Header: anRcptHeader(at(240)), AppointmentID: anAppt, ArrivedAt: at(60), ClosedAt: at(125), StowedAt: at(240),
+			DockToStockSeconds: 10800, CartonCount: 2,
+		}),
 	}
 }
 
@@ -277,7 +281,8 @@ func assertLifecycleDay(t *testing.T, d report.PerformanceDay) {
 	counts := d.ReceiptsClosed == 1 && d.LinesReceived == 2 && d.UnitsGood == 30 && d.UnitsDamaged == 4 &&
 		d.Discrepancies == (report.DiscrepancyCounts{Short: 1, Damaged: 1}) &&
 		d.Appointments == (report.AppointmentCounts{Booked: 1, CheckedIn: 1, Cancelled: 1, Completed: 1})
-	timings := d.ReceiptCycle.Count == 1 && d.DockDwell.Count == 1 && *d.ReceiptCycle.P50 == 3600 && *d.DockDwell.P50 == 3900
+	timings := d.ReceiptCycle.Count == 1 && d.DockDwell.Count == 1 && *d.ReceiptCycle.P50 == 3600 && *d.DockDwell.P50 == 3900 &&
+		d.DockToStock.Count == 1 && *d.DockToStock.P50 == 10800
 	if !counts || !timings {
 		t.Fatalf("day = %+v", d)
 	}
@@ -407,6 +412,12 @@ func TestAnalyticsConsumer_DeterministicPoisonGoesToTheDLQWithTheRawBytes(t *tes
 		{"quantity 0", anWire(t, "p7", typ("receipt.ReceiptLineReceived"), anRcpt, anAt, line(map[string]any{"quantity": 0}))},
 		{"line number 0", anWire(t, "p8", typ("receipt.ReceiptLineReceived"), anRcpt, anAt, line(map[string]any{"line_no": 0}))},
 		{"unknown condition", anWire(t, "p9", typ("receipt.ReceiptLineReceived"), anRcpt, anAt, line(map[string]any{"condition": "Soggy"}))},
+		{"stow without carton count", anWire(t, "p11", typ("receipt.ReceiptStowCompleted"), anRcpt, anAt, map[string]any{
+			"receipt_id": anRcpt, "asn_number": "ASN-1", "arrived_at": "2026-10-05T08:00:00Z", "stowed_at": "2026-10-05T09:00:00Z", "dock_to_stock_seconds": 3600})},
+		{"stow without times", anWire(t, "p12", typ("receipt.ReceiptStowCompleted"), anRcpt, anAt, map[string]any{
+			"receipt_id": anRcpt, "asn_number": "ASN-1", "dock_to_stock_seconds": 3600, "carton_count": 1})},
+		{"negative dock to stock", anWire(t, "p13", typ("receipt.ReceiptStowCompleted"), anRcpt, anAt, map[string]any{
+			"receipt_id": anRcpt, "asn_number": "ASN-1", "arrived_at": "2026-10-05T08:00:00Z", "stowed_at": "2026-10-05T09:00:00Z", "dock_to_stock_seconds": -5, "carton_count": 1})},
 		{"unknown discrepancy kind", anWire(t, "p10", typ("receipt.ReceiptClosed"), anRcpt, anAt, map[string]any{
 			"receipt_id": anRcpt, "asn_number": "ASN-1", "discrepancies": []map[string]any{{"line_no": 1, "sku": "S", "kind": "Bogus"}}})},
 	}
@@ -499,6 +510,8 @@ func TestAnalyticsConsumer_EventMapping(t *testing.T) {
 	closed.Discrepancies = []report.Discrepancy{
 		{LineNo: 1, SKU: "SKU-1", Kind: report.DiscrepancyShort}, {LineNo: 1, SKU: "SKU-1", Kind: report.DiscrepancyDamaged},
 	}
+	stow := rcpt(report.KindReceiptStowCompleted, "e-stow", 240)
+	stow.Stow = &report.StowCompleted{ArrivedAt: at(60), StowedAt: at(240), DockToStockSeconds: 10800, CartonCount: 2}
 	want := []report.Event{
 		asnReg,
 		{Kind: report.KindAsnCancelled, EventID: "e-asn-x", At: at(1), AsnNumber: "ASN-2"},
@@ -507,6 +520,7 @@ func TestAnalyticsConsumer_EventMapping(t *testing.T) {
 		appt(report.KindAppointmentCancelled, "e-cancel", 3, anAppt2),
 		rcpt(report.KindReceiptOpened, "e-open", 65), line1, line2, closed,
 		appt(report.KindAppointmentCompleted, "e-done", 125, anAppt),
+		stow,
 	}
 	if !reflect.DeepEqual(proj.events, want) {
 		t.Fatalf("events =\n%+v\nwant\n%+v", proj.events, want)

@@ -34,6 +34,21 @@ Omits: cancel paths and the read endpoints. Booking happens in dock-scheduling
 | Receive | `ReceiveLine` | line counters grow | `ReceiptLineReceived` per call |
 | Close | `CloseReceipt` | receipt `Closed`, ASN `Closed` (the appointment is untouched) | `ReceiptClosed` |
 
+## Dock-to-stock (ADR 0021)
+
+Dock-to-stock is the time from the carrier's **physical arrival at the gate**
+(yard-management's `VisitCheckedIn.arrived_at`) to the **stow of the last Good
+carton** (inventory-storage's `ContainerStowed.at`, joined to the receipt's
+cartons by SSCC = LPN). It is measured per receipt: once a receipt opened from
+an appointment is `Closed`, the gate arrival of that appointment is known and
+every Good carton (accepted, all contents `Good`) has a stow, this context
+raises `ReceiptStowCompleted` exactly once, in whichever order those facts and
+the close arrive. `dock_to_stock_seconds = stowed_at - arrived_at`, never
+negative. Receipts without an appointment (walk-in) and receipts without
+cartons (line-only) have no dock-to-stock: they are out of scope and not
+reported. The report side is `GET /reports/receiving-performance`
+(`dock_to_stock`, with the share at or under the 3.1 h target).
+
 ## Rules worth knowing
 
 - **Appointment is optional.** A receipt may be opened without `appointmentId`

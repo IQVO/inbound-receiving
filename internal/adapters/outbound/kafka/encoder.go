@@ -246,6 +246,11 @@ func receiptRow(ev receipt.Event) (row, error) {
 			})
 		}
 		r.data = receiptClosedData{ReceiptID: id, AsnNumber: number, ClosedAt: ts(e.At), Discrepancies: ds}
+	case receipt.ReceiptStowCompleted:
+		r.data = stowCompletedData{
+			ReceiptID: id, AsnNumber: number, AppointmentID: string(e.AppointmentID), ArrivedAt: ts(e.ArrivedAt),
+			ClosedAt: ts(e.ClosedAt), StowedAt: ts(e.StowedAt), DockToStockSeconds: e.DockToStockSeconds, CartonCount: e.CartonCount,
+		}
 	default:
 		return row{}, fmt.Errorf("kafka encoder: %s is not a published receipt event", ev.EventName())
 	}

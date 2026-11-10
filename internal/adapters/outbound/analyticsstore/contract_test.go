@@ -116,9 +116,18 @@ func assertDay(t *testing.T, got, want report.PerformanceDay) {
 		}
 	}
 	got.ReceiptCycle, want.ReceiptCycle, got.DockDwell, want.DockDwell = report.Timing{}, report.Timing{}, report.Timing{}, report.Timing{}
+	assertDockToStock(t, want.Day, got.DockToStock, want.DockToStock)
+	got.DockToStock, want.DockToStock = report.DockToStock{}, report.DockToStock{}
 	got.Day = want.Day
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("day = %+v, want %+v", got, want)
+	}
+}
+
+func assertDockToStock(t *testing.T, day time.Time, got, want report.DockToStock) {
+	t.Helper()
+	if got.Count != want.Count || got.UnderTarget != want.UnderTarget || !approx(got.P50, want.P50) || !approx(got.P90, want.P90) || !approx(got.ShareUnderTarget, want.ShareUnderTarget) {
+		t.Fatalf("%s dock to stock = %+v, want %+v", day.Format("2006-01-02"), got, want)
 	}
 }
 
@@ -219,6 +228,27 @@ var contractScenarios = []struct {
 		d6.DockDwell = timing(1, f(7200), f(7200))
 		assertDays(t, perf(t, s, "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z"), []report.PerformanceDay{d5, d6})
 	}},
+	{"dock to stock: counted in the UTC day of the stow, one row per receipt, percentiles of the seconds", func(t *testing.T, s store) {
+		mustApply(t, s,
+			stowEv("w1", "R-1", "2026-10-06T07:00:00Z", "2026-10-06T09:00:00Z", 7200, 3),
+			stowEv("w2", "R-2", "2026-10-06T08:00:00Z", "2026-10-06T20:00:00Z", 43200, 1),
+			stowEv("w3", "R-3", "2026-10-05T23:00:00Z", "2026-10-06T00:00:00Z", 3600, 1), // == next day: out of day 5
+			stowEv("w4", "R-1", "2026-10-06T07:00:00Z", "2026-10-06T09:00:00Z", 999, 9),  // another id for the same receipt: first wins
+		)
+		d5, d6 := zeroDay("2026-10-05"), zeroDay("2026-10-06")
+		// 3600 s and 7200 s are under the 11160 s target, 43200 s is not.
+		d6.DockToStock = report.NewDockToStock(3, f(7200), f(7200+0.8*(43200-7200)), 2)
+		assertDays(t, perf(t, s, "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z"), []report.PerformanceDay{d5, d6})
+	}},
+	{"a stow the schema forbids is rejected and leaves nothing behind", func(t *testing.T, s store) {
+		bad := stowEv("bad", "R-9", "2026-10-06T07:00:00Z", "2026-10-06T09:00:00Z", 7200, 0)
+		if _, err := s.Apply(context.Background(), bad); !errors.Is(err, report.ErrRejected) {
+			t.Fatalf("err = %v, want ErrRejected", err)
+		}
+		if last, _ := s.LastEventAt(context.Background()); last != nil {
+			t.Fatalf("the rejected event was marked processed: %v", last)
+		}
+	}},
 	{"the range is half-open and clips the first and last day", func(t *testing.T, s store) {
 		mustApply(t, s,
 			closedEv("a", "A", "2026-10-05T09:59:59Z"),
@@ -277,6 +307,13 @@ var contractScenarios = []struct {
 			t.Fatalf("the same id must be applicable once fixed: %v, %v", applied, err)
 		}
 	}},
+}
+
+// stowEv is a ReceiptStowCompleted whose stow happened at stowed.
+func stowEv(id, receipt, arrived, stowed string, seconds int64, cartons int) report.Event {
+	e := rcptEv(id, report.KindReceiptStowCompleted, receipt, "ASN-X", stowed)
+	e.Stow = &report.StowCompleted{ArrivedAt: at(arrived), StowedAt: at(stowed), DockToStockSeconds: seconds, CartonCount: cartons}
+	return e
 }
 
 // ev2 is an appointment event with a throwaway appointment id.

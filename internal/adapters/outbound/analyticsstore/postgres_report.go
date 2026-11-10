@@ -53,7 +53,8 @@ const performanceDaysSQL = `
 	       (SELECT count(*) FROM appointment_facts a WHERE a.checked_in_at >= days.lo AND a.checked_in_at < days.hi),
 	       (SELECT count(*) FROM appointment_facts a WHERE a.cancelled_at  >= days.lo AND a.cancelled_at  < days.hi),
 	       (SELECT count(*) FROM appointment_facts a WHERE a.completed_at  >= days.lo AND a.completed_at  < days.hi),
-	       dwell.n, dwell.p50, dwell.p95
+	       dwell.n, dwell.p50, dwell.p95,
+	       d2s.n, d2s.p50, d2s.p90, d2s.under
 	FROM days
 	CROSS JOIN LATERAL (
 		SELECT count(*) AS n,
@@ -71,11 +72,20 @@ const performanceDaysSQL = `
 		      FROM appointment_facts a
 		      WHERE a.checked_in_at IS NOT NULL AND a.completed_at >= days.lo AND a.completed_at < days.hi) s
 	) dwell
+	CROSS JOIN LATERAL (
+		SELECT count(*) AS n,
+		       percentile_cont(0.50) WITHIN GROUP (ORDER BY s.secs) AS p50,
+		       percentile_cont(0.90) WITHIN GROUP (ORDER BY s.secs) AS p90,
+		       count(*) FILTER (WHERE s.secs <= $3) AS under
+		FROM (SELECT f.dock_to_stock_seconds::float8 AS secs
+		      FROM dock_to_stock_facts f
+		      WHERE f.stowed_at >= days.lo AND f.stowed_at < days.hi) s
+	) d2s
 	ORDER BY days.day`
 
 // PerformanceDays implements report.Reader.
 func (r *Reader) PerformanceDays(ctx context.Context, rg report.Range) ([]report.PerformanceDay, error) {
-	rows, err := r.pool.Query(ctx, performanceDaysSQL, rg.From.UTC(), rg.To.UTC())
+	rows, err := r.pool.Query(ctx, performanceDaysSQL, rg.From.UTC(), rg.To.UTC(), report.DockToStockTargetSeconds)
 	if err != nil {
 		return nil, fmt.Errorf("analyticsstore: performance days: %w", err)
 	}
@@ -83,13 +93,19 @@ func (r *Reader) PerformanceDays(ctx context.Context, rg report.Range) ([]report
 	out := []report.PerformanceDay{}
 	for rows.Next() {
 		var d report.PerformanceDay
+		var d2s struct {
+			count, under int
+			p50, p90     *float64
+		}
 		if err := rows.Scan(&d.Day, &d.ReceiptsClosed, &d.LinesReceived, &d.UnitsGood, &d.UnitsDamaged,
 			&d.Discrepancies.Short, &d.Discrepancies.Over, &d.Discrepancies.Damaged,
 			&d.ReceiptCycle.Count, &d.ReceiptCycle.P50, &d.ReceiptCycle.P95,
 			&d.Appointments.Booked, &d.Appointments.CheckedIn, &d.Appointments.Cancelled, &d.Appointments.Completed,
-			&d.DockDwell.Count, &d.DockDwell.P50, &d.DockDwell.P95); err != nil {
+			&d.DockDwell.Count, &d.DockDwell.P50, &d.DockDwell.P95,
+			&d2s.count, &d2s.p50, &d2s.p90, &d2s.under); err != nil {
 			return nil, fmt.Errorf("analyticsstore: scan performance day: %w", err)
 		}
+		d.DockToStock = report.NewDockToStock(d2s.count, d2s.p50, d2s.p90, d2s.under)
 		y, m, dd := d.Day.Date()
 		d.Day = time.Date(y, m, dd, 0, 0, 0, 0, time.UTC)
 		out = append(out, d)
