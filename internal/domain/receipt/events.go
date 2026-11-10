@@ -98,6 +98,25 @@ type ReceiptCartonReceived struct {
 // EventName returns "ReceiptCartonReceived".
 func (ReceiptCartonReceived) EventName() string { return "ReceiptCartonReceived" }
 
+// ReceiptStowCompleted is raised once, for a Closed receipt opened from an
+// appointment, when every Good carton has been stowed by inventory (ADR
+// 0021). It carries the dock-to-stock fact: ArrivedAt is the yard's gate
+// arrival, StowedAt the latest carton stow, DockToStockSeconds their
+// difference in whole seconds and CartonCount the Good cartons stowed. At is
+// when the completion was observed.
+type ReceiptStowCompleted struct {
+	Header
+	AppointmentID      appointment.ID
+	ArrivedAt          time.Time
+	ClosedAt           time.Time
+	StowedAt           time.Time
+	DockToStockSeconds int64
+	CartonCount        int
+}
+
+// EventName returns "ReceiptStowCompleted".
+func (ReceiptStowCompleted) EventName() string { return "ReceiptStowCompleted" }
+
 // CartonDiscrepancyRaised is raised when a scan or the close finds a carton
 // problem; ReceiptClosed keeps its three line-level kinds (ADR 0012).
 type CartonDiscrepancyRaised struct {
