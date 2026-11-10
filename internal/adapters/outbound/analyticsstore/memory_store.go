@@ -276,7 +276,7 @@ func (m *Memory) countStows(d *report.PerformanceDay, w report.DayWindow) {
 			secs = append(secs, float64(s.DockToStockSeconds))
 		}
 	}
-	d.DockToStock = report.TimingOf(secs)
+	d.DockToStock = report.DockToStockOf(secs)
 }
 
 func (m *Memory) countReceipts(d *report.PerformanceDay, w report.DayWindow) {

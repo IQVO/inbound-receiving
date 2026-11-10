@@ -110,16 +110,24 @@ func assertDay(t *testing.T, got, want report.PerformanceDay) {
 	for _, p := range []struct {
 		name      string
 		got, want report.Timing
-	}{{"receipt cycle", got.ReceiptCycle, want.ReceiptCycle}, {"dock dwell", got.DockDwell, want.DockDwell}, {"dock to stock", got.DockToStock, want.DockToStock}} {
+	}{{"receipt cycle", got.ReceiptCycle, want.ReceiptCycle}, {"dock dwell", got.DockDwell, want.DockDwell}} {
 		if p.got.Count != p.want.Count || !approx(p.got.P50, p.want.P50) || !approx(p.got.P95, p.want.P95) {
 			t.Fatalf("%s %s = %+v, want %+v", want.Day.Format("2006-01-02"), p.name, p.got, p.want)
 		}
 	}
 	got.ReceiptCycle, want.ReceiptCycle, got.DockDwell, want.DockDwell = report.Timing{}, report.Timing{}, report.Timing{}, report.Timing{}
-	got.DockToStock, want.DockToStock = report.Timing{}, report.Timing{}
+	assertDockToStock(t, want.Day, got.DockToStock, want.DockToStock)
+	got.DockToStock, want.DockToStock = report.DockToStock{}, report.DockToStock{}
 	got.Day = want.Day
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("day = %+v, want %+v", got, want)
+	}
+}
+
+func assertDockToStock(t *testing.T, day time.Time, got, want report.DockToStock) {
+	t.Helper()
+	if got.Count != want.Count || got.UnderTarget != want.UnderTarget || !approx(got.P50, want.P50) || !approx(got.P90, want.P90) || !approx(got.ShareUnderTarget, want.ShareUnderTarget) {
+		t.Fatalf("%s dock to stock = %+v, want %+v", day.Format("2006-01-02"), got, want)
 	}
 }
 
@@ -228,7 +236,8 @@ var contractScenarios = []struct {
 			stowEv("w4", "R-1", "2026-10-06T07:00:00Z", "2026-10-06T09:00:00Z", 999, 9),  // another id for the same receipt: first wins
 		)
 		d5, d6 := zeroDay("2026-10-05"), zeroDay("2026-10-06")
-		d6.DockToStock = timing(3, f(7200), f(7200+0.9*(43200-7200))) // 3600s, 7200s, 43200s
+		// 3600 s and 7200 s are under the 11160 s target, 43200 s is not.
+		d6.DockToStock = report.NewDockToStock(3, f(7200), f(7200+0.8*(43200-7200)), 2)
 		assertDays(t, perf(t, s, "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z"), []report.PerformanceDay{d5, d6})
 	}},
 	{"a stow the schema forbids is rejected and leaves nothing behind", func(t *testing.T, s store) {

@@ -66,19 +66,19 @@ func TestReports_ReceivingPerformance(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("status %d %s: %s", rec.Code, rec.Header().Get("Content-Type"), rec.Body)
 	}
-	want := `{"from":"2026-10-06T00:00:00Z","to":"2026-10-07T12:00:00Z","days":[` +
+	want := `{"from":"2026-10-06T00:00:00Z","to":"2026-10-07T12:00:00Z","dock_to_stock_target_seconds":11160,"days":[` +
 		`{"day":"2026-10-06","receipts_closed":1,"lines_received":2,"units_good":10,"units_damaged":2,` +
 		`"discrepancies":{"short":1,"over":0,"damaged":0},` +
 		`"receipt_cycle":{"count":1,"p50_seconds":7200,"p95_seconds":7200},` +
 		`"appointments":{"booked":0,"checked_in":1,"cancelled":0,"completed":1},` +
 		`"dock_dwell":{"count":1,"p50_seconds":10800,"p95_seconds":10800},` +
-		`"dock_to_stock":{"count":1,"p50_seconds":14400,"p95_seconds":14400}},` +
+		`"dock_to_stock":{"count":1,"p50_seconds":14400,"p90_seconds":14400,"under_target":0,"share_under_target":0}},` +
 		`{"day":"2026-10-07","receipts_closed":0,"lines_received":0,"units_good":0,"units_damaged":0,` +
 		`"discrepancies":{"short":0,"over":0,"damaged":0},` +
 		`"receipt_cycle":{"count":0,"p50_seconds":null,"p95_seconds":null},` +
 		`"appointments":{"booked":0,"checked_in":0,"cancelled":0,"completed":0},` +
 		`"dock_dwell":{"count":0,"p50_seconds":null,"p95_seconds":null},` +
-		`"dock_to_stock":{"count":0,"p50_seconds":null,"p95_seconds":null}}],` +
+		`"dock_to_stock":{"count":0,"p50_seconds":null,"p90_seconds":null,"under_target":0,"share_under_target":null}}],` +
 		`"current":{"open_receipts":1,"expected_today":1,"expected_today_started":1}}` + "\n"
 	if rec.Body.String() != want {
 		t.Fatalf("body:\n got %s\nwant %s", rec.Body, want)

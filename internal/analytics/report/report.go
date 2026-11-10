@@ -339,7 +339,7 @@ type PerformanceDay struct {
 	DockDwell Timing
 	// DockToStock is the gate-arrival-to-last-Good-carton-stowed time of the
 	// receipts whose stow completed in the window (ADR 0021).
-	DockToStock Timing
+	DockToStock DockToStock
 }
 
 // CurrentCounts is the state right now, independent of the report range.

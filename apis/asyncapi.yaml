@@ -849,6 +849,7 @@ components:
             subject: "visit-5b1f0c3e"
             time: "2026-10-09T05:00:00Z"
             datacontenttype: "application/json"
+            dataschema: "urn:warehouse:yard-management:events:VisitCheckedIn:v1"
             data:
               visit_id: "visit-5b1f0c3e"
               site_id: "WH1"
@@ -881,6 +882,7 @@ components:
             subject: "340123450000000017"
             time: "2026-10-09T07:00:00Z"
             datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inventory-storage:events:ContainerStowed:v1"
             data:
               lpn: "340123450000000017"
               sku: "SKU-1"

@@ -186,7 +186,7 @@ the UTC day of its `stowed_at`. `p50_seconds` (the median) and `p90_seconds`
 are linear-interpolated percentiles (`percentile_cont`, the definition
 `report.Percentile` mirrors), `null` when `count` is 0; `under_target` counts
 the facts at or under 11160 s and `share_under_target` is `under_target /
-count`, `null` when `count` is 0. The MCP report tool returns the same rows.
+count`, `null` when `count` is 0. The service has no MCP report tool (the MCP server exposes the OLTP reads only), so there is nothing to extend there.
 
 The frozen appointment block (`appointments`, `dock_dwell`) stays in the
 report and in the projector, unchanged, and is documented as frozen since ADR

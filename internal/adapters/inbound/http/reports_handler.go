@@ -38,6 +38,14 @@ type timingDTO struct {
 	P95Seconds *float64 `json:"p95_seconds"`
 }
 
+type dockToStockDTO struct {
+	Count            int      `json:"count"`
+	P50Seconds       *float64 `json:"p50_seconds"`
+	P90Seconds       *float64 `json:"p90_seconds"`
+	UnderTarget      int      `json:"under_target"`
+	ShareUnderTarget *float64 `json:"share_under_target"`
+}
+
 type discrepanciesDTO struct {
 	Short   int `json:"short"`
 	Over    int `json:"over"`
@@ -61,7 +69,7 @@ type performanceDayDTO struct {
 	ReceiptCycle   timingDTO        `json:"receipt_cycle"`
 	Appointments   appointmentsDTO  `json:"appointments"`
 	DockDwell      timingDTO        `json:"dock_dwell"`
-	DockToStock    timingDTO        `json:"dock_to_stock"`
+	DockToStock    dockToStockDTO   `json:"dock_to_stock"`
 }
 
 type currentDTO struct {
@@ -71,10 +79,13 @@ type currentDTO struct {
 }
 
 type performanceReportDTO struct {
-	From    time.Time           `json:"from"`
-	To      time.Time           `json:"to"`
-	Days    []performanceDayDTO `json:"days"`
-	Current currentDTO          `json:"current"`
+	From time.Time `json:"from"`
+	To   time.Time `json:"to"`
+	// DockToStockTargetSeconds is the WERC best-in-class target (3.1 h) the
+	// days' share_under_target is measured against (ADR 0021).
+	DockToStockTargetSeconds int                 `json:"dock_to_stock_target_seconds"`
+	Days                     []performanceDayDTO `json:"days"`
+	Current                  currentDTO          `json:"current"`
 }
 
 // NewReportsRouter builds the router of cmd/inbound-reports: /healthz,
@@ -111,8 +122,11 @@ func dayToDTO(d report.PerformanceDay) performanceDayDTO {
 			Booked: d.Appointments.Booked, CheckedIn: d.Appointments.CheckedIn,
 			Cancelled: d.Appointments.Cancelled, Completed: d.Appointments.Completed,
 		},
-		DockDwell:   timingToDTO(d.DockDwell),
-		DockToStock: timingToDTO(d.DockToStock),
+		DockDwell: timingToDTO(d.DockDwell),
+		DockToStock: dockToStockDTO{
+			Count: d.DockToStock.Count, P50Seconds: d.DockToStock.P50, P90Seconds: d.DockToStock.P90,
+			UnderTarget: d.DockToStock.UnderTarget, ShareUnderTarget: d.DockToStock.ShareUnderTarget,
+		},
 	}
 }
 
@@ -138,7 +152,7 @@ func (s *ReportsServer) handleReceivingPerformance(w http.ResponseWriter, r *htt
 		return
 	}
 	out := performanceReportDTO{
-		From: rg.From, To: rg.To, Days: make([]performanceDayDTO, 0, len(days)),
+		From: rg.From, To: rg.To, DockToStockTargetSeconds: report.DockToStockTargetSeconds, Days: make([]performanceDayDTO, 0, len(days)),
 		Current: currentDTO{OpenReceipts: cur.OpenReceipts, ExpectedToday: cur.ExpectedToday, ExpectedTodayStarted: cur.ExpectedTodayStarted},
 	}
 	for _, d := range days {

@@ -250,6 +250,7 @@ the numbers are illustrative):
 {
   "from": "2026-09-12T00:00:00Z",
   "to": "2026-10-12T00:00:00Z",
+  "dock_to_stock_target_seconds": 11160,
   "days": [
     {
       "day": "2026-10-11",
@@ -260,7 +261,8 @@ the numbers are illustrative):
       "discrepancies": {"short": 1, "over": 0, "damaged": 1},
       "receipt_cycle": {"count": 3, "p50_seconds": 5400, "p95_seconds": 9000},
       "appointments": {"booked": 4, "checked_in": 3, "cancelled": 1, "completed": 3},
-      "dock_dwell": {"count": 3, "p50_seconds": 4200, "p95_seconds": 7100}
+      "dock_dwell": {"count": 3, "p50_seconds": 4200, "p95_seconds": 7100},
+      "dock_to_stock": {"count": 2, "p50_seconds": 9300, "p90_seconds": 12100, "under_target": 1, "share_under_target": 0.5}
     }
   ],
   "current": {"open_receipts": 2, "expected_today": 5, "expected_today_started": 3}
@@ -270,6 +272,18 @@ the numbers are illustrative):
 One `days` entry per UTC calendar day intersecting the range. `p50_seconds` /
 `p95_seconds` are `null` when `count` is 0. `current` is computed for today's
 UTC day.
+
+`appointments` and `dock_dwell` are **frozen since ADR 0019**: the appointment
+moved to dock-scheduling, so nothing new feeds them. `dock_to_stock` (ADR 0021)
+is the time from the carrier's gate arrival (yard-management's `VisitCheckedIn`)
+to the stow of the last Good carton (inventory-storage's `ContainerStowed`),
+counted in the UTC day of that last stow. `p50_seconds` / `p90_seconds` are
+null when `count` is 0, `under_target` counts the facts at or under
+`dock_to_stock_target_seconds` (11160 s = 3.1 h, WERC best-in-class) and
+`share_under_target` is `under_target / count` (null when `count` is 0). Walk-in
+receipts (no appointment arrival) and receipts without cartons have no
+dock-to-stock and are not counted. The `dock_to_stock_facts` table is rebuilt by
+replaying the analytics topic under a new `ANALYTICS_CONSUMER_GROUP`.
 
 ### `GET /reports/freshness`
 

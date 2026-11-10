@@ -42,6 +42,7 @@ Topic `warehouse.inbound-receiving.events`, written by the outbox relay.
 | `receipt.ReceiptOpened` | `POST /receipts` | `receipt_id`, `asn_number`, `appointment_id?`, `door_code?`, `opened_at` |
 | `receipt.ReceiptLineReceived` | `POST /receipts/{receiptId}/lines` | `receipt_id`, `asn_number`, `line_no`, `sku`, `quantity`, `condition` (`Good` or `Damaged`), `received_at` |
 | `receipt.ReceiptClosed` | `POST /receipts/{receiptId}/closures` | `receipt_id`, `asn_number`, `closed_at`, `discrepancies[]` = `{line_no, sku, kind, expected_qty, received_qty, damaged_qty}` |
+| `receipt.ReceiptStowCompleted` | no request: raised by the `visit-arrival` and `carton-stow` consumers, or by `POST /receipts/{receiptId}/closures`, once a closed receipt opened from an appointment has the gate arrival and a stow for every Good carton (ADR 0021) | `receipt_id`, `asn_number`, `appointment_id`, `arrived_at`, `closed_at`, `stowed_at`, `dock_to_stock_seconds`, `carton_count` |
 
 `?` marks a field omitted when unset. `kind` is `Short`, `Over` or `Damaged`;
 `discrepancies` is present and empty when everything matched. `received_qty` is
