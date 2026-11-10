@@ -292,7 +292,7 @@ channels:
       tags:
         - name: consumed
       message:
-        $ref: "#/components/messages/YardVisitCheckedIn"
+        $ref: "#/components/messages/VisitCheckedIn"
 
   warehouse.inventory.events:
     description: |
@@ -318,7 +318,7 @@ channels:
       tags:
         - name: consumed
       message:
-        $ref: "#/components/messages/InventoryContainerStowed"
+        $ref: "#/components/messages/ContainerStowed"
 
 components:
   messages:
@@ -824,7 +824,7 @@ components:
                 - { line_no: 1, sku: "SKU-1", kind: "Damaged", expected_qty: 40, received_qty: 34, damaged_qty: 4 }
                 - { line_no: 2, sku: "SKU-2", kind: "Over", expected_qty: 5, received_qty: 7, damaged_qty: 0 }
 
-    YardVisitCheckedIn:
+    VisitCheckedIn:
       name: VisitCheckedIn
       title: yard-management VisitCheckedIn (consumed)
       summary: A carrier physically arrived at the gate.
@@ -838,7 +838,7 @@ components:
       tags:
         - name: consumed
       payload:
-        $ref: "#/components/schemas/YardVisitCheckedInEvent"
+        $ref: "#/components/schemas/VisitCheckedInEvent"
       examples:
         - name: scheduled
           payload:
@@ -858,7 +858,7 @@ components:
               arrived_at: "2026-10-09T05:00:00Z"
               version: 1
 
-    InventoryContainerStowed:
+    ContainerStowed:
       name: ContainerStowed
       title: inventory-storage ContainerStowed (consumed)
       summary: A container (license plate) was put away into a bin.
@@ -871,7 +871,7 @@ components:
       tags:
         - name: consumed
       payload:
-        $ref: "#/components/schemas/InventoryContainerStowedEvent"
+        $ref: "#/components/schemas/ContainerStowedEvent"
       examples:
         - name: stowed
           payload:
@@ -1764,7 +1764,7 @@ components:
                   description: Empty when everything matched.
                   items: { $ref: "#/components/schemas/DiscrepancyData" }
 
-    YardVisitCheckedInEvent:
+    VisitCheckedInEvent:
       allOf:
         - $ref: "#/components/schemas/CloudEventEnvelope"
         - type: object
@@ -1779,7 +1779,7 @@ components:
                 arrived_at: { type: string, format: date-time, description: "The gate arrival: the start of dock-to-stock." }
                 version: { type: integer, format: int64, minimum: 1 }
 
-    InventoryContainerStowedEvent:
+    ContainerStowedEvent:
       allOf:
         - $ref: "#/components/schemas/CloudEventEnvelope"
         - type: object
