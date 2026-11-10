@@ -16,11 +16,11 @@ import (
 	ce "github.com/cloudevents/sdk-go/v2/event"
 	kafkago "github.com/segmentio/kafka-go"
 
+	"github.com/claudioed/inbound-receiving/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/analyticsstore"
 	outboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/outbound/kafka"
 	"github.com/claudioed/inbound-receiving/internal/analytics/report"
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
-	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
@@ -49,8 +49,6 @@ func anRcptHeader(at time.Time) receipt.Header {
 	return receipt.Header{ID: anRcpt, Asn: "ASN-1", At: at}
 }
 
-func anApptHeader(at time.Time) appointment.Header { return appointment.Header{ID: anAppt, At: at} }
-
 func anRegistered(t *testing.T, id string, arrival time.Time) []byte {
 	t.Helper()
 	_, events, err := asn.Register("ASN-1", "ACME", arrival, []asn.LineInput{{LineNo: 1, SKU: "SKU-1", ExpectedQty: 40}}, anAt)
@@ -65,9 +63,20 @@ func anRcptEvent(t *testing.T, id string, ev receipt.Event) []byte {
 	return anEncode(t, id, func(e *outboundkafka.AnalyticsEncoder) ([]outbox.Message, error) { return e.EncodeReceipt(ev) })
 }
 
-func anApptEvent(t *testing.T, id string, ev appointment.Event) []byte {
+// anApptEvent builds a historical dockappointment event as the retired
+// encoder wrote it on the analytics stream (ADR 0022 removed the encoder; the
+// projector still folds what is already on the topic).
+func anApptEvent(t *testing.T, id, name, appointmentID string, at time.Time, data map[string]any) []byte {
 	t.Helper()
-	return anEncode(t, id, func(e *outboundkafka.AnalyticsEncoder) ([]outbox.Message, error) { return e.EncodeAppointment(ev) })
+	data["appointment_id"], data["door_code"] = appointmentID, "D1"
+	b, err := cloudevents.New(cloudevents.Spec{
+		ID: id, Entity: entityAppointment, EventName: name, Subject: appointmentID, Time: at,
+		Stream: cloudevents.StreamAnalytics, Version: 1, Data: data,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 // anWire builds a hand-made CloudEvent (payload variants the real encoder
@@ -241,15 +250,14 @@ func (h *anHarness) run(t *testing.T, values ...[]byte) *fakeReader {
 
 func anBooked(t *testing.T, id string, at time.Time) []byte {
 	t.Helper()
-	d, err := appointment.Rehydrate(anAppt, "D1", "ACME", at.Add(time.Hour), at.Add(2*time.Hour), []string{"ASN-1"}, appointment.Booked, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return anApptEvent(t, id, d.Replay(appointment.Timeline{BookedAt: at, ChangedAt: at})[0])
+	return anApptEvent(t, id, "DockAppointmentBooked", anAppt, at, map[string]any{
+		"carrier": "ACME", "window_start": at.Add(time.Hour), "window_end": at.Add(2 * time.Hour), "asn_numbers": []string{"ASN-1"},
+	})
 }
 
-// anLifecycle is a full receiving lifecycle encoded by the real encoder:
-// every one of the ten events once.
+// anLifecycle is a full receiving lifecycle: every one of the ten events once,
+// the ASN and receipt events encoded by the real encoder, the four historical
+// dockappointment events built by hand (anApptEvent).
 func anLifecycle(t *testing.T) [][]byte {
 	t.Helper()
 	at := func(m int) time.Time { return anAt.Add(time.Duration(m) * time.Minute) }
@@ -259,8 +267,8 @@ func anLifecycle(t *testing.T) [][]byte {
 			return e.EncodeAsn(asn.ASNCancelled{Header: asn.Header{Number: "ASN-2", At: at(1)}, Reason: "no"})
 		}),
 		anBooked(t, "e-book", at(2)),
-		anApptEvent(t, "e-in", appointment.DockAppointmentCheckedIn{Header: anApptHeader(at(60)), DoorCode: "D1", CheckedInAt: at(60)}),
-		anApptEvent(t, "e-cancel", appointment.DockAppointmentCancelled{Header: appointment.Header{ID: anAppt2, At: at(3)}, DoorCode: "D1"}),
+		anApptEvent(t, "e-in", "DockAppointmentCheckedIn", anAppt, at(60), map[string]any{"checked_in_at": at(60)}),
+		anApptEvent(t, "e-cancel", "DockAppointmentCancelled", anAppt2, at(3), map[string]any{}),
 		anRcptEvent(t, "e-open", receipt.ReceiptOpened{Header: anRcptHeader(at(65)), AppointmentID: anAppt, DoorCode: "D1"}),
 		anRcptEvent(t, "e-line1", receipt.ReceiptLineReceived{Header: anRcptHeader(at(70)), LineNo: 1, SKU: "SKU-1", Quantity: 30, Condition: receipt.ConditionGood}),
 		anRcptEvent(t, "e-line2", receipt.ReceiptLineReceived{Header: anRcptHeader(at(71)), LineNo: 1, SKU: "SKU-1", Quantity: 4, Condition: receipt.ConditionDamaged}),
@@ -268,7 +276,7 @@ func anLifecycle(t *testing.T) [][]byte {
 			{LineNo: 1, SKU: "SKU-1", Kind: receipt.KindShort, ExpectedQty: 40, ReceivedQty: 34, DamagedQty: 4},
 			{LineNo: 1, SKU: "SKU-1", Kind: receipt.KindDamaged, ExpectedQty: 40, ReceivedQty: 34, DamagedQty: 4},
 		}}),
-		anApptEvent(t, "e-done", appointment.DockAppointmentCompleted{Header: anApptHeader(at(125)), DoorCode: "D1", CompletedAt: at(125)}),
+		anApptEvent(t, "e-done", "DockAppointmentCompleted", anAppt, at(125), map[string]any{"completed_at": at(125)}),
 		anRcptEvent(t, "e-stow", receipt.ReceiptStowCompleted{
 			Header: anRcptHeader(at(240)), AppointmentID: anAppt, ArrivedAt: at(60), ClosedAt: at(125), StowedAt: at(240),
 			DockToStockSeconds: 10800, CartonCount: 2,

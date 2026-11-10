@@ -30,11 +30,6 @@
 //	SHUTDOWN_DRAIN_DELAY          wait after flipping /readyz before closing (default 5s)
 //	LOG_LEVEL, SERVICE_VERSION, ENVIRONMENT, CORS_ALLOWED_ORIGINS
 //
-// Subcommand (ADR 0019, stage B of the DockAppointment transfer): with a first
-// argument the binary runs that command once and exits instead of serving,
-// e.g. `./api republish-appointments` (needs only DATABASE_URL; see
-// republish.go).
-//
 // GET /readyz is 200 only while Postgres answers a ping AND a Kafka broker
 // answers a metadata request (verdict cached 3s, bounded 2s); /healthz is
 // liveness only.
@@ -73,10 +68,6 @@ const workerDrainTimeout = 10 * time.Second
 const DefaultShutdownDrainDelay = 5 * time.Second
 
 func main() {
-	// A subcommand (republish-appointments, ADR 0019) runs once and exits.
-	if len(os.Args) > 1 {
-		os.Exit(runCommand(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
-	}
 	if err := run(context.Background()); err != nil {
 		slog.Error("service exited with error", "error", err)
 		os.Exit(1)

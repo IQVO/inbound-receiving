@@ -16,9 +16,8 @@ import (
 
 // AppointmentRepo is the pgx-backed appointments local copy over
 // appointments and appointment_asns (ADR 0019): the read side
-// (ports.AppointmentRepository), the consumer's write side
-// (ports.AppointmentStore) and the stage B backfill's reader
-// (ports.AppointmentHistory). Every write is version-guarded: a change
+// (ports.AppointmentRepository) and the consumer's write side
+// (ports.AppointmentStore). Every write is version-guarded: a change
 // applies only when its version is greater than the stored one.
 type AppointmentRepo struct {
 	pool *pgxpool.Pool
@@ -30,7 +29,6 @@ func NewAppointmentRepo(pool *pgxpool.Pool) *AppointmentRepo { return &Appointme
 var (
 	_ ports.AppointmentRepository = (*AppointmentRepo)(nil)
 	_ ports.AppointmentStore      = (*AppointmentRepo)(nil)
-	_ ports.AppointmentHistory    = (*AppointmentRepo)(nil)
 )
 
 const appointmentColumns = `id, door_code, carrier, window_start, window_end, state, version`
@@ -164,57 +162,6 @@ func (r *AppointmentRepo) ApplyDoorReassigned(ctx context.Context, id appointmen
 		return false, fmt.Errorf("reassign appointment door %s: %w", id, err)
 	}
 	return tag.RowsAffected() == 1, nil
-}
-
-// ListRecords implements ports.AppointmentHistory. The check-in moment of a
-// Completed row is the opening of its first receipt (a receipt could only be
-// opened on a CheckedIn appointment); NULL when it has none.
-func (r *AppointmentRepo) ListRecords(ctx context.Context, after appointment.ID, limit int) ([]repository.AppointmentRecord, error) {
-	q := queryFor(ctx, r.pool)
-	rows, err := q.Query(ctx, `SELECT a.id, a.door_code, a.carrier, a.window_start, a.window_end, a.state, a.version,
-			a.created_at, a.updated_at,
-			(SELECT min(rc.opened_at) FROM receipts rc WHERE rc.appointment_id = a.id)
-		FROM appointments a WHERE a.id > $1::text ORDER BY a.id LIMIT $2`, string(after), limit)
-	if err != nil {
-		return nil, fmt.Errorf("list appointment records: %w", err)
-	}
-	defer rows.Close()
-	type record struct {
-		row                  appointmentRow
-		created, updated     time.Time
-		firstReceiptOpenedAt *time.Time
-	}
-	var page []record
-	ids := make([]string, 0)
-	for rows.Next() {
-		var rec record
-		if err := rows.Scan(append(rec.row.targets(), &rec.created, &rec.updated, &rec.firstReceiptOpenedAt)...); err != nil {
-			return nil, fmt.Errorf("scan appointment record: %w", err)
-		}
-		page = append(page, rec)
-		ids = append(ids, rec.row.id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read appointment records: %w", err)
-	}
-	rows.Close()
-	numbers, err := loadAppointmentAsns(ctx, q, ids)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]repository.AppointmentRecord, 0, len(page))
-	for _, rec := range page {
-		d, err := rec.row.toAppointment(numbers[rec.row.id])
-		if err != nil {
-			return nil, err
-		}
-		tl := appointment.Timeline{BookedAt: rec.created, ChangedAt: rec.updated}
-		if rec.firstReceiptOpenedAt != nil {
-			tl.CheckedInAt = *rec.firstReceiptOpenedAt
-		}
-		out = append(out, repository.AppointmentRecord{Appointment: d, Timeline: tl})
-	}
-	return out, nil
 }
 
 // List implements ports.AppointmentRepository: ascending (window_start, id),
