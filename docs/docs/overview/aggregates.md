@@ -53,9 +53,8 @@ Package `internal/domain/appointment` keeps the type only to hold that copy:
   transfer may still be `CheckedIn` or `Completed` (version 0).
 - `Rehydrate` rebuilds a row; `Covers(asn)` answers whether the appointment
   carries an ASN (what `OpenReceipt` asks).
-- `Replay(timeline)` rebuilds the legacy event sequence of a stored row
-  (`Booked`, then `CheckedIn` / `Cancelled` / `Completed`) for the stage B
-  backfill `api republish-appointments`. Both go at stage E.
+- It has no events: the legacy `Replay` and the `api republish-appointments`
+  backfill it served were removed ([ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)).
 
 `Book`, `CheckIn`, `Cancel`, `Complete` and `Schedule.CheckNoOverlap` (and the
 per-door advisory lock) are deleted.

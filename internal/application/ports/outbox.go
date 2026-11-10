@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
-	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
@@ -24,14 +23,6 @@ type OutboxRepository interface {
 type EventEncoder interface {
 	EncodeAsn(events ...asn.Event) ([]outbox.Message, error)
 	EncodeReceipt(events ...receipt.Event) ([]outbox.Message, error)
-}
-
-// LegacyAppointmentEncoder encodes the legacy DockAppointment events (ADR
-// 0019). Only the stage B backfill (republish-appointments) uses it: this
-// context no longer raises appointment events, so the running service's
-// encoder does not have the method.
-type LegacyAppointmentEncoder interface {
-	EncodeAppointment(events ...appointment.Event) ([]outbox.Message, error)
 }
 
 // ProcessedEvents is the inbound-consumer idempotency guard. Claim records

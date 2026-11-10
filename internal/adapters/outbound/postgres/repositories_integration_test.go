@@ -357,65 +357,6 @@ func TestMigration0005ResetsLegacyVersionsSoAnyNewVersionWins(t *testing.T) {
 	}
 }
 
-// ListRecords feeds the stage B backfill: ascending id, the row's own
-// timestamps and, for a Completed row, the opening of its first receipt.
-func TestAppointmentRepoListRecordsForTheBackfill(t *testing.T) {
-	ctx := context.Background()
-	pool := startPostgresPool(t)
-	repo := postgres.NewAppointmentRepo(pool)
-	asns, receipts := postgres.NewAsnRepo(pool), postgres.NewReceiptRepo(pool)
-	for i, state := range []string{"Booked", "CheckedIn", "Completed", "Cancelled"} {
-		if _, err := pool.Exec(ctx, `INSERT INTO appointments (id, door_code, carrier, window_start, window_end, state, version, created_at, updated_at)
-			VALUES ($1, 'DOOR-1', 'ACME', $2, $3, $4, 0, $5, $6)`,
-			apptID(i+1), t0, t0.Add(time.Hour), state, t0.Add(-48*time.Hour), t0.Add(time.Duration(i)*time.Hour)); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := pool.Exec(ctx, `INSERT INTO appointment_asns (appointment_id, position, asn_number) VALUES ($1, 1, $2)`,
-			apptID(i+1), "ASN-"+string(rune('1'+i))); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// The Completed one (id 3) had a receipt opened at t0+20min.
-	a := newAsn(t, "ASN-3")
-	if err := asns.Save(ctx, a, 0); err != nil {
-		t.Fatal(err)
-	}
-	r, _, err := receipt.Open(rcptID(1), a.Snapshot(), apptID(3), "DOOR-1", t0.Add(20*time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := receipts.Save(ctx, r, 0); err != nil {
-		t.Fatal(err)
-	}
-
-	all, err := repo.ListRecords(ctx, "", 10)
-	if err != nil || len(all) != 4 {
-		t.Fatalf("records = %d, %v", len(all), err)
-	}
-	for i, rec := range all {
-		if string(rec.Appointment.ID()) != apptID(i+1) {
-			t.Fatalf("record %d = %s, want ascending id", i, rec.Appointment.ID())
-		}
-		if !rec.Timeline.BookedAt.Equal(t0.Add(-48*time.Hour)) || !rec.Timeline.ChangedAt.Equal(t0.Add(time.Duration(i)*time.Hour)) {
-			t.Fatalf("record %d timeline = %+v", i, rec.Timeline)
-		}
-		wantIn := time.Time{}
-		if i == 2 {
-			wantIn = t0.Add(20 * time.Minute)
-		}
-		if !rec.Timeline.CheckedInAt.Equal(wantIn) {
-			t.Fatalf("record %d checked-in moment = %v, want %v", i, rec.Timeline.CheckedInAt, wantIn)
-		}
-	}
-	page, err := repo.ListRecords(ctx, appointment.ID(apptID(2)), 1)
-	if err != nil || len(page) != 1 || string(page[0].Appointment.ID()) != apptID(3) {
-		t.Fatalf("page after #2 limit 1 = %v, %v", page, err)
-	}
-	if rest, err := repo.ListRecords(ctx, appointment.ID(apptID(4)), 10); err != nil || len(rest) != 0 {
-		t.Fatalf("after the last = %v, %v", rest, err)
-	}
-}
-
 func TestReceiptRepoVersionGuardRoundTripAndLines(t *testing.T) {
 	ctx := context.Background()
 	pool := startPostgresPool(t)

@@ -19,7 +19,7 @@ paths:
   Owned by dock-scheduling since ADR 0019: here it is a read-only LOCAL COPY
   (`appointments`, identity `appt-<uuid>`) fed by `DockAppointmentConsumer`;
   the `DockAppointment` type in `internal/domain/appointment` survives only to
-  hold that copy and to replay legacy rows for `api republish-appointments`.
+  hold that copy.
 - **Door code**: the code of an inbound dock door (a facility-layout slot with
   role `Dock`), 1..64 chars, no whitespace, control characters or `/`.
 - **Window**: `[start, end)`, `end > start`, at most 4 hours
@@ -46,8 +46,7 @@ paths:
 - **DockAppointment** (`internal/domain/appointment`, ADR 0019): no longer an
   aggregate this context drives. It is rehydrated from the local copy
   (`Booked` or `Cancelled`; legacy rows may still be `CheckedIn|Completed`),
-  answers `Covers(asn)` for `OpenReceipt`, and `Replay` rebuilds a legacy
-  row's events for the backfill. The booking, check-in, cancel, complete
+  and answers `Covers(asn)` for `OpenReceipt`. The booking, check-in, cancel, complete
   commands and `Schedule.CheckNoOverlap` are gone: dock-scheduling enforces them.
 - **Receipt** (`internal/domain/receipt`, the richest aggregate): `Open` needs
   an ASN snapshot in `Registered|Receiving` (`ErrAsnNotReceivable`).
@@ -67,8 +66,8 @@ packages and the standard library.
 ## Domain events
 
 - `asn`: `ASNRegistered` (supplier, expected arrival, lines), `ASNCancelled` (reason).
-- `appointment`: the four legacy `DockAppointment*` events are no longer raised
-  (ADR 0019); they exist only as the backfill's `Replay` output.
+- `appointment`: none; the four legacy `DockAppointment*` events are gone
+  (ADR 0019, ADR 0022).
 - `receipt`: `ReceiptOpened`, `ReceiptLineReceived` (the handover event),
   `ReceiptClosed` (discrepancies).
 
@@ -77,8 +76,7 @@ packages and the standard library.
 - `RegisterAsn`, `CancelAsn`: SKU check against `known_skus` when
   `PRODUCT_MODE=kafka`.
 - `ApplyDockAppointmentBooked`, `ApplyDockAppointmentCancelled` (consumers of
-  dock-scheduling, version-guarded, NO outbox: applying raises no event) and
-  `RepublishAppointments` (the `api republish-appointments` backfill).
+  dock-scheduling, version-guarded, NO outbox: applying raises no event).
 - `OpenReceipt`, `ReceiveLine`, `CloseReceipt`: `OpenReceipt` also calls
   `Asn.BeginReceiving` and, with an `appointmentId`, validates it against the
   local copy (exists, covers the ASN, not cancelled); `CloseReceipt` also calls

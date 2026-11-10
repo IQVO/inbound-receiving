@@ -87,7 +87,7 @@ The domain aggregates:
 | Package | Aggregate | Highlights |
 |---|---|---|
 | `asn` | `Asn` | lines numbered `1..n`, unique SKUs; `Registered -> Receiving -> Closed` or `Cancelled` |
-| `appointment` | `DockAppointment` (legacy; moved to dock-scheduling, ADR 0019) | kept for the local copy and the `republish-appointments` backfill; this context no longer decides appointments |
+| `appointment` | `DockAppointment` (legacy; moved to dock-scheduling, ADR 0019) | kept for the local copy; this context no longer decides appointments |
 | `receipt` | `Receipt` | Good / Damaged counts per line, over-receipt allowed, discrepancies on close |
 | `shared` | value types | SKU, quantity, reason |
 
@@ -113,7 +113,7 @@ an `…Analytics` twin on `warehouse.inbound-receiving.analytics`):
 | Entity | Events |
 |---|---|
 | `asn` | `ASNRegistered`, `ASNCancelled` |
-| `dockappointment` | *(deprecated, no longer raised, ADR 0019)* `DockAppointmentBooked`, `DockAppointmentCheckedIn`, `DockAppointmentCompleted`, `DockAppointmentCancelled`; only `api republish-appointments` still enqueues them (stage B backfill) |
+| `dockappointment` | *(retired: no longer raised, ADR 0019; not in the contract, ADR 0022)* `DockAppointmentBooked`, `DockAppointmentCheckedIn`, `DockAppointmentCompleted`, `DockAppointmentCancelled` |
 | `receipt` | `ReceiptOpened`, `ReceiptLineReceived`, `ReceiptCartonReceived`, `ReceiptClosed`, `CartonDiscrepancyRaised`, `ReceiptStowCompleted` (the dock-to-stock fact, ADR 0021) |
 
 Real types: `com.warehouse.wms.inbound-receiving.asn.ASNRegistered`,

@@ -62,8 +62,7 @@ context's own projector) and the patterns on each edge (see the
 dock-scheduling (ADR 0019): this context no longer raises `DockAppointment*`
 events and consumes dock-scheduling's `DockAppointmentBooked` /
 `DockAppointmentCancelled` into a read-only local copy. `warehouse-planning`
-switches its inbound-demand source to dock-scheduling (stage D); until then it
-still reads the legacy events this context published before the cutover. This
+has switched its inbound-demand source to dock-scheduling (stage D). This
 repository never calls either and does not depend on them being up.
 
 ## No live cross-context lookup, in either direction

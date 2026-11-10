@@ -68,14 +68,6 @@ type AppointmentStore interface {
 	ApplyDoorReassigned(ctx context.Context, id appointment.ID, door appointment.DoorCode, version int64) (applied bool, err error)
 }
 
-// AppointmentHistory reads every stored appointment with the moments its
-// state implies; only the stage B backfill (republish-appointments) uses it.
-type AppointmentHistory interface {
-	// ListRecords returns up to limit appointments with id > after, ascending
-	// by id (byte order).
-	ListRecords(ctx context.Context, after appointment.ID, limit int) ([]repository.AppointmentRecord, error)
-}
-
 // ReceiptRepository persists Receipt aggregates by id.
 type ReceiptRepository interface {
 	// Get returns the receipt, or repository.ErrReceiptNotFound.

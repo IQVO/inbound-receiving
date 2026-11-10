@@ -1,5 +1,5 @@
 // Package kafka is the outbound Kafka adapter: it encodes the domain events
-// of the Asn, DockAppointment and Receipt aggregates into CloudEvents 1.0
+// of the Asn and Receipt aggregates into CloudEvents 1.0
 // outbox messages (Encoder) and writes drained outbox rows to the broker
 // (RelaySink). Envelopes are built ONLY through
 // internal/adapters/kafka/cloudevents. Payloads are exactly the ones pinned
@@ -15,7 +15,6 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
-	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
@@ -26,9 +25,8 @@ const Topic = "warehouse.inbound-receiving.events"
 // The `<entity>` segment of every published type:
 // com.warehouse.wms.inbound-receiving.<entity>.<EventName>.
 const (
-	EntityAsn         = "asn"
-	EntityAppointment = "dockappointment"
-	EntityReceipt     = "receipt"
+	EntityAsn     = "asn"
+	EntityReceipt = "receipt"
 )
 
 // schemaVersion is the dataschema version of every payload below
@@ -45,8 +43,6 @@ type Encoder struct {
 	// Topic overrides the destination topic (Topic when empty).
 	Topic string
 }
-
-var _ ports.LegacyAppointmentEncoder = (*Encoder)(nil)
 
 // NewEncoder returns an Encoder minting random UUID v4 ids.
 func NewEncoder() *Encoder { return &Encoder{NewID: uuid.NewString} }
@@ -67,13 +63,6 @@ type row struct {
 // is a programming error and fails the whole call.
 func (e *Encoder) EncodeAsn(events ...asn.Event) ([]outbox.Message, error) {
 	return encodeAll(e, events, asnRow)
-}
-
-// EncodeAppointment encodes legacy DockAppointment events in order. The
-// service no longer raises them (ADR 0019); only the stage B backfill
-// (republish-appointments) calls this, and only on the integration topic.
-func (e *Encoder) EncodeAppointment(events ...appointment.Event) ([]outbox.Message, error) {
-	return encodeAll(e, events, appointmentRow)
 }
 
 // EncodeReceipt encodes Receipt events in order.
@@ -180,31 +169,6 @@ func asnCartons(cartons []asn.Carton) []asnCartonData {
 		out = append(out, d)
 	}
 	return out
-}
-
-func appointmentRow(ev appointment.Event) (row, error) {
-	id := string(ev.AppointmentID())
-	r := row{entity: EntityAppointment, eventName: ev.EventName(), subject: id, key: id, at: ev.OccurredAt()}
-	switch e := ev.(type) {
-	case appointment.DockAppointmentBooked:
-		numbers := make([]string, 0, len(e.AsnNumbers))
-		for _, n := range e.AsnNumbers {
-			numbers = append(numbers, string(n))
-		}
-		r.data = bookedData{
-			AppointmentID: id, DoorCode: string(e.DoorCode), Carrier: e.Carrier,
-			WindowStart: ts(e.Window.Start()), WindowEnd: ts(e.Window.End()), AsnNumbers: numbers,
-		}
-	case appointment.DockAppointmentCheckedIn:
-		r.data = checkedInData{AppointmentID: id, DoorCode: string(e.DoorCode), CheckedInAt: ts(e.CheckedInAt)}
-	case appointment.DockAppointmentCancelled:
-		r.data = appointmentCancelledData{AppointmentID: id, DoorCode: string(e.DoorCode), Reason: e.Reason}
-	case appointment.DockAppointmentCompleted:
-		r.data = completedData{AppointmentID: id, DoorCode: string(e.DoorCode), CompletedAt: ts(e.CompletedAt)}
-	default:
-		return row{}, fmt.Errorf("kafka encoder: %s is not a published dockappointment event", ev.EventName())
-	}
-	return r, nil
 }
 
 func receiptRow(ev receipt.Event) (row, error) {

@@ -7,8 +7,8 @@
 // from that context's events (and, for rows that predate the transfer, from
 // the legacy aggregate's last state) and answers "does this appointment
 // exist, which door, which ASNs, is it cancelled" for Receipt.Open. It has no
-// commands; the only behaviour is Replay, the legacy event history the stage B
-// backfill re-emits.
+// commands and raises no event (ADR 0022 removed the legacy history,
+// Replay).
 package appointment
 
 import (
@@ -248,53 +248,3 @@ func (d *DockAppointment) State() State { return d.state }
 // Version returns the dock-scheduling version of the last applied event (0
 // for a row that predates the transfer).
 func (d *DockAppointment) Version() int64 { return d.version }
-
-// Timeline carries the moments a stored appointment's state implies; the
-// store keeps no per-transition history, so they are the row's own
-// timestamps (see Replay).
-type Timeline struct {
-	// BookedAt is when the row was created.
-	BookedAt time.Time
-	// ChangedAt is when the row last changed: the cancellation, the
-	// completion, or the check-in of a CheckedIn row.
-	ChangedAt time.Time
-	// CheckedInAt is the best known check-in moment of a Completed row (the
-	// opening of its first receipt); zero means "use ChangedAt".
-	CheckedInAt time.Time
-}
-
-// Replay returns the legacy event history that leads to the stored state, in
-// order: DockAppointmentBooked, then CheckedIn (CheckedIn, Completed),
-// Completed (Completed) or Cancelled (Cancelled). Only the stage B backfill
-// uses it, so that dock-scheduling's importer can rebuild the current state
-// of an appointment that predates the transfer. A later moment is never
-// before an earlier one.
-func (d *DockAppointment) Replay(t Timeline) []Event {
-	booked := t.BookedAt.UTC()
-	changed := t.ChangedAt.UTC()
-	if changed.Before(booked) {
-		changed = booked
-	}
-	events := []Event{DockAppointmentBooked{
-		Header: Header{ID: d.id, At: booked}, DoorCode: d.doorCode, Carrier: d.carrier,
-		Window: d.window, AsnNumbers: d.AsnNumbers(),
-	}}
-	switch d.state {
-	case CheckedIn:
-		events = append(events, d.checkedInEvent(changed))
-	case Completed:
-		in := t.CheckedInAt.UTC()
-		if in.IsZero() || in.Before(booked) || in.After(changed) {
-			in = changed
-		}
-		events = append(events, d.checkedInEvent(in),
-			DockAppointmentCompleted{Header: Header{ID: d.id, At: changed}, DoorCode: d.doorCode, CompletedAt: changed})
-	case Cancelled:
-		events = append(events, DockAppointmentCancelled{Header: Header{ID: d.id, At: changed}, DoorCode: d.doorCode})
-	}
-	return events
-}
-
-func (d *DockAppointment) checkedInEvent(at time.Time) Event {
-	return DockAppointmentCheckedIn{Header: Header{ID: d.id, At: at}, DoorCode: d.doorCode, CheckedInAt: at}
-}

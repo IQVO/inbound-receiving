@@ -47,33 +47,6 @@ type asnCancelledData struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
-type bookedData struct {
-	AppointmentID string   `json:"appointment_id"`
-	DoorCode      string   `json:"door_code"`
-	Carrier       string   `json:"carrier"`
-	WindowStart   string   `json:"window_start"`
-	WindowEnd     string   `json:"window_end"`
-	AsnNumbers    []string `json:"asn_numbers"`
-}
-
-type checkedInData struct {
-	AppointmentID string `json:"appointment_id"`
-	DoorCode      string `json:"door_code"`
-	CheckedInAt   string `json:"checked_in_at"`
-}
-
-type appointmentCancelledData struct {
-	AppointmentID string `json:"appointment_id"`
-	DoorCode      string `json:"door_code"`
-	Reason        string `json:"reason,omitempty"`
-}
-
-type completedData struct {
-	AppointmentID string `json:"appointment_id"`
-	DoorCode      string `json:"door_code"`
-	CompletedAt   string `json:"completed_at"`
-}
-
 type receiptOpenedData struct {
 	ReceiptID     string `json:"receipt_id"`
 	AsnNumber     string `json:"asn_number"`

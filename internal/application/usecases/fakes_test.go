@@ -158,21 +158,6 @@ func (fakeEncoder) EncodeAsn(events ...asn.Event) ([]outbox.Message, error) {
 	return out, nil
 }
 
-// fakeLegacyEncoder is the encoder of the legacy appointment events the
-// republish backfill uses.
-type fakeLegacyEncoder struct{ err error }
-
-func (e fakeLegacyEncoder) EncodeAppointment(events ...appointment.Event) ([]outbox.Message, error) {
-	if e.err != nil {
-		return nil, e.err
-	}
-	out := make([]outbox.Message, 0, len(events))
-	for _, ev := range events {
-		out = append(out, outbox.Message{EventType: "dockappointment." + ev.EventName(), Subject: string(ev.AppointmentID())})
-	}
-	return out, nil
-}
-
 func (fakeEncoder) EncodeReceipt(events ...receipt.Event) ([]outbox.Message, error) {
 	out := make([]outbox.Message, 0, len(events))
 	for _, e := range events {
@@ -285,10 +270,7 @@ func (r *fakeAsns) ExistingSsccs(_ context.Context, ssccs []gs1.SSCC) ([]gs1.SSC
 type fakeAppointments struct {
 	items    map[appointment.ID]*appointment.DockAppointment
 	applyErr error
-	listErr  error
 }
-
-var bookedAt = time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
 
 func cloneAppt(d *appointment.DockAppointment) *appointment.DockAppointment {
 	numbers := make([]string, 0, len(d.AsnNumbers()))
@@ -394,33 +376,6 @@ func rebuildAppt(cur *appointment.DockAppointment, door appointment.DoorCode, wi
 		panic(err)
 	}
 	return c
-}
-
-// ListRecords serves the republish backfill: ascending id, the fixed timeline
-// of the fake (booked at bookedAt, changed an hour later).
-func (r *fakeAppointments) ListRecords(_ context.Context, after appointment.ID, limit int) ([]repository.AppointmentRecord, error) {
-	if r.listErr != nil {
-		return nil, r.listErr
-	}
-	ids := make([]string, 0, len(r.items))
-	for id := range r.items {
-		if id > after {
-			ids = append(ids, string(id))
-		}
-	}
-	sort.Strings(ids)
-	var out []repository.AppointmentRecord
-	for _, id := range ids {
-		if len(out) == limit {
-			break
-		}
-		d := r.items[appointment.ID(id)]
-		out = append(out, repository.AppointmentRecord{
-			Appointment: cloneAppt(d),
-			Timeline:    appointment.Timeline{BookedAt: bookedAt, ChangedAt: bookedAt.Add(time.Hour)},
-		})
-	}
-	return out, nil
 }
 
 func (r *fakeAppointments) List(_ context.Context, f repository.AppointmentFilter, after repository.AppointmentCursor, limit int) ([]*appointment.DockAppointment, error) {
