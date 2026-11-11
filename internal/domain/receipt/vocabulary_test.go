@@ -22,6 +22,9 @@ func TestCodingTable(t *testing.T) {
 		KindMixedCartonContentMismatch:  {W13: "", CBV: "mismatch_quantity"},
 		KindUnlabelledCarton:            {W13: "", CBV: "non_conformant"},
 		KindCartonOverLimit:             {W13: "", CBV: "non_conformant"},
+		// ADR 0024: two rows, both unmapped.
+		KindLabelNonCompliant: {W13: "", CBV: "non_conformant"},
+		KindWrongDestination:  {W13: "", CBV: "mismatch_instance"},
 	}
 	for kind, coding := range want {
 		got, ok := CodingOf(kind)
@@ -32,15 +35,15 @@ func TestCodingTable(t *testing.T) {
 			t.Errorf("%s: Mapped() = %v, want %v", kind, got.Mapped(), coding.W13 != "")
 		}
 	}
-	if len(want) != 14 {
-		t.Fatalf("the table under test has %d rows, ADR 0023 has 14", len(want))
+	if len(want) != 16 {
+		t.Fatalf("the table under test has %d rows, ADR 0023 has 14 and ADR 0024 adds 2", len(want))
 	}
 }
 
 func TestEveryKindIsCoded(t *testing.T) {
 	kinds := AllKinds()
-	if len(kinds) != 14 {
-		t.Fatalf("AllKinds() = %d kinds, want 14: %v", len(kinds), kinds)
+	if len(kinds) != 16 {
+		t.Fatalf("AllKinds() = %d kinds, want 16: %v", len(kinds), kinds)
 	}
 	seen := map[Kind]bool{}
 	for _, k := range kinds {
@@ -75,7 +78,7 @@ func TestWorkedCodesAreOnlyTheW13SetOfTheStandard(t *testing.T) {
 		}
 	}
 	if mapped != 9 {
-		t.Fatalf("%d kinds are mapped, ADR 0023 maps 9 and leaves 5 unmapped", mapped)
+		t.Fatalf("%d kinds are mapped, ADR 0023 maps 9 and ADR 0024 leaves its two new kinds unmapped", mapped)
 	}
 }
 
@@ -85,5 +88,24 @@ func TestUnknownKindHasNoCoding(t *testing.T) {
 	}
 	if (Coding{}).Mapped() {
 		t.Fatal("the zero coding must not be mapped")
+	}
+}
+
+func TestTheElevenCartonKinds(t *testing.T) {
+	want := []Kind{
+		KindUnexpectedCarton, KindMissingCarton, KindDuplicateSscc, KindUnknownGtin, KindCaseQtyMismatch,
+		KindMixedCaseDeclaredAsCasePack, KindUnlabelledCarton, KindCartonOverLimit, KindMixedCartonContentMismatch,
+		KindLabelNonCompliant, KindWrongDestination,
+	}
+	if len(cartonKinds) != 11 {
+		t.Fatalf("%d carton kinds, ADR 0024 says 11", len(cartonKinds))
+	}
+	for _, k := range want {
+		if !cartonKinds[k] {
+			t.Errorf("%s is not a carton kind", k)
+		}
+	}
+	if KindLabelNonCompliant != "LabelNonCompliant" || KindWrongDestination != "WrongDestination" {
+		t.Fatalf("kind names: %q %q", KindLabelNonCompliant, KindWrongDestination)
 	}
 }

@@ -93,6 +93,10 @@ type ReceiptCartonReceived struct {
 	Sealed     bool
 	LPN        string
 	Contents   []CartonContent
+	// SSCCSource says who gave the carton its SSCC (supplier or receiver); empty
+	// without an SSCC. Label is what the scanned label said (ADR 0024).
+	SSCCSource SsccSource
+	Label      LabelData
 }
 
 // EventName returns "ReceiptCartonReceived".

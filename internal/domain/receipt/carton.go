@@ -58,6 +58,7 @@ const (
 	// KindMixedCartonContentMismatch: the counted contents of a mixed carton
 	// differ from its manifest for a SKU (Expected and Actual are "sku:qty").
 	KindMixedCartonContentMismatch Kind = "MixedCartonContentMismatch"
+	// KindLabelNonCompliant and KindWrongDestination (ADR 0024) are in label.go.
 )
 
 // CartonLimits are the handling limits a carton is checked against at
@@ -117,6 +118,11 @@ type Carton struct {
 	sealed     bool
 	contents   []CartonContent
 	receivedAt time.Time
+	// ssccSource is SsccReceiver for an assigned SSCC and "" otherwise (ADR
+	// 0024); SSCCSource derives the supplier from an SSCC without it.
+	ssccSource SsccSource
+	// label is what the scanned label said (ADR 0024).
+	label LabelData
 }
 
 // LPN returns the license plate: the SSCC, or the internal LPN.
@@ -165,6 +171,10 @@ type CartonState struct {
 	Sealed     bool
 	Contents   []CartonContentState
 	ReceivedAt time.Time
+	// SSCCSource is "receiver" for an assigned SSCC and "" otherwise.
+	SSCCSource string
+	// Label is what the scanned label said.
+	Label LabelData
 }
 
 // CasePack is the active CASE level of a SKU as the PackagingView reports it.
@@ -195,6 +205,8 @@ type CartonScan struct {
 	// Counted is the optional audit count of a MIXED carton (R10); when
 	// present the RECEIVED quantity is the counted one, never the label.
 	Counted []CountedContent
+	// Label is what the GS1-128 label said besides the SSCC (ADR 0024).
+	Label LabelData
 }
 
 // CaseScan is the resolved input of ReceiveCases: Cases cases of one SKU,
@@ -208,6 +220,11 @@ type CaseScan struct {
 	Lot       string
 	Expiry    string
 	LPNs      []string
+	// Label is what the case's label said (ADR 0024); every carton of the scan keeps it.
+	Label LabelData
+	// AssignedSSCC is set by AssignSscc only: the receiver's own SSCC, the LPN
+	// and the SSCC of the one case received.
+	AssignedSSCC gs1.SSCC
 }
 
 // CartonDiscrepancy is a finding about a physical carton. SSCC, Expected and
@@ -217,6 +234,9 @@ type CartonDiscrepancy struct {
 	SSCC     gs1.SSCC
 	Expected string
 	Actual   string
+	// SupplierRef is the supplier as the ASN knows it; set on the label findings
+	// of ADR 0024 only.
+	SupplierRef string
 }
 
 // ScanResult is what a carton operation did: the events raised (line events

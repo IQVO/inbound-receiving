@@ -107,7 +107,7 @@ func (r *Receipt) acceptCarton(idx int, in CartonScan, at time.Time) (ScanResult
 		}
 		events = append(events, line)
 	}
-	c.contents, c.status, c.sealed, c.receivedAt = contents, CartonAccepted, true, at.UTC()
+	c.contents, c.status, c.sealed, c.receivedAt, c.label = contents, CartonAccepted, true, at.UTC(), in.Label
 	events = append(events, r.cartonReceived(c, at))
 	if f, over := overLimit(in); over {
 		findings = append(findings, f)
@@ -188,6 +188,6 @@ func skuMismatch(sscc gs1.SSCC, sku shared.SKU, expected, actual int64) CartonDi
 func (r *Receipt) cartonReceived(c Carton, at time.Time) ReceiptCartonReceived {
 	return ReceiptCartonReceived{
 		Header: r.header(at), OwnerRef: r.ownerRef, SSCC: c.sscc, ParentSSCC: c.parentSscc,
-		Sealed: c.sealed, LPN: c.lpn, Contents: c.Contents(),
+		Sealed: c.sealed, LPN: c.lpn, Contents: c.Contents(), SSCCSource: c.SSCCSource(), Label: c.label,
 	}
 }

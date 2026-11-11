@@ -36,6 +36,9 @@ var (
 	// ErrPackLevelNotFound is returned by PackagingDirectory when no pack level
 	// matches the GTIN (or the SKU and level).
 	ErrPackLevelNotFound = errors.New("pack level not found")
+	// ErrSsccSerialsExhausted is returned by SsccSerials when every serial
+	// reference of the company prefix has been given (ADR 0024).
+	ErrSsccSerialsExhausted = errors.New("every SSCC serial of the company prefix has been used")
 )
 
 // AsnFilter narrows AsnRepository.List. The zero value means no filter.

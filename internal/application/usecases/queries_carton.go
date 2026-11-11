@@ -119,6 +119,13 @@ func (uc *GetCartonLabel) Handle(ctx context.Context, rawID, lpn string) (Carton
 	return labelOf(c), nil
 }
 
+// SsccLabelSymbology is the symbology of the label of a receiver-assigned SSCC
+// (ADR 0024): GS1-128, AI 00.
+const SsccLabelSymbology = "GS1-128"
+
+// LabelOf is the label data of a carton (the units and the one SKU it holds).
+func LabelOf(c receipt.Carton) CartonLabel { return labelOf(c) }
+
 func labelOf(c receipt.Carton) CartonLabel {
 	label := CartonLabel{LPN: c.LPN(), Symbology: LabelSymbology, HumanReadable: c.LPN(), ReceivedAt: c.ReceivedAt()}
 	if !c.SSCC().IsZero() {

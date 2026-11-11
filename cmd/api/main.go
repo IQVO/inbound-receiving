@@ -100,6 +100,10 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer closeAdapters()
+	ad = ad.withLabelSettings(cfg)
+	if err := ensureSsccSequence(ctx, ad, logger); err != nil {
+		return err
+	}
 
 	metrics, err := telemetry.NewMetricsHandler()
 	if err != nil {
@@ -128,6 +132,21 @@ func run(ctx context.Context) error {
 		return err
 	}
 	return serveUntilSignal(ctx, logger, httpServer, readiness, consumers, relay, closeRelay)
+}
+
+// ensureSsccSequence creates the SSCC serial sequence of the configured company
+// prefix at boot, so a missing privilege shows at startup and not on the first
+// receiving. Nothing happens without a prefix (ADR 0024).
+func ensureSsccSequence(ctx context.Context, ad adapters, logger *slog.Logger) error {
+	if ad.companyPrefix.IsZero() {
+		logger.Info("receiver-assigned SSCCs are off: RECEIVER_GS1_COMPANY_PREFIX is not set")
+		return nil
+	}
+	if err := ad.ssccSerials.EnsureSequence(ctx, ad.companyPrefix); err != nil {
+		return err
+	}
+	logger.Info("receiver-assigned SSCCs are on", "company_prefix", ad.companyPrefix.String())
+	return nil
 }
 
 // newSweeper builds the housekeeping sweeper (gap fix D24, ADR 0010) from

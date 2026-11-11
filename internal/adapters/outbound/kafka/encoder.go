@@ -196,12 +196,15 @@ func receiptRow(ev receipt.Event) (row, error) {
 		r.data = cartonReceivedData{
 			ReceiptID: id, AsnNumber: number, OwnerRef: string(e.OwnerRef), SSCC: e.SSCC.String(), ParentSSCC: e.ParentSSCC.String(),
 			Sealed: e.Sealed, LPN: e.LPN, Contents: contents, ReceivedAt: ts(e.At),
+			SSCCSource: string(e.SSCCSource), BestBefore: e.Label.BestBefore, Expiry: e.Label.Expiry,
+			ProductionDate: e.Label.ProductionDate, PackagingDate: e.Label.PackagingDate, Serial: e.Label.Serial,
+			PurchaseOrder: e.Label.PurchaseOrder, ShipToGLN: e.Label.ShipToGLN, ShipForGLN: e.Label.ShipForGLN,
 		}
 	case receipt.CartonDiscrepancyRaised:
 		coding, _ := receipt.CodingOf(e.Kind)
 		r.data = cartonDiscrepancyData{
 			ReceiptID: id, SSCC: e.SSCC.String(), Kind: string(e.Kind), Expected: e.Expected, Actual: e.Actual, At: ts(e.At),
-			W13Code: string(coding.W13), CBVDisposition: string(coding.CBV),
+			W13Code: string(coding.W13), CBVDisposition: string(coding.CBV), SupplierRef: e.SupplierRef,
 		}
 	case receipt.ReceiptClosed:
 		ds := make([]discrepancyData, 0, len(e.Discrepancies))
@@ -251,6 +254,7 @@ func receivingAdviceIssued(id, number string, e receipt.ReceivingAdviceIssued) r
 			LineNo: l.LineNo, SKU: string(l.SKU), GTIN: l.GTIN.String(),
 			ExpectedQty: l.Expected, ReceivedQty: l.Received, AcceptedQty: l.Accepted, RejectedQty: l.Rejected, HeldQty: l.Held,
 			SSCCCount: l.SSCCCount, SSCCs: ssccs, SSCCsTruncated: l.SSCCsTruncated, Discrepancies: ds,
+			EarliestBestBefore: l.EarliestBestBefore, EarliestExpiry: l.EarliestExpiry,
 		})
 	}
 	findings := make([]adviceFindingData, 0, len(e.CartonFindings))

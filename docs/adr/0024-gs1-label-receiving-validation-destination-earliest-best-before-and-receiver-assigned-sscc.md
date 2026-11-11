@@ -90,7 +90,6 @@ a template change that rewords them fails here first:
 | --- | --- |
 | `bad_check_digit` | `ErrInvalidSSCC`, `ErrInvalidGTIN` or `ErrInvalidGLN` whose message says the check digit does not match |
 | `invalid_identifier` | any other `ErrInvalidSSCC`/`ErrInvalidGTIN`/`ErrInvalidGLN` (length, non-digit) |
-| `variable_measure` | `ErrVariableMeasure` |
 | `conflicting_ais` | `ErrConflictingAIs` (AI 01 together with AI 02) |
 | `missing_ai` | `ErrMissingAI` (AI 02 without 00 and 37, 37 without 02, nothing identifying) |
 | `duplicate_ai` | `ErrDuplicateAI` |
@@ -136,7 +135,8 @@ does, the configuration is the single source and an operator must keep it right.
 An accepted carton keeps, additively and optionally, what its label said: `best_before` (AI
 15), `expiry` (AI 17, or the request's `expiry` which wins as it always did for the case path),
 `production_date` (AI 11), `packaging_date` (AI 13), `serial` (AI 21), `purchase_order` (AI
-400) and `ship_to_gln` (AI 410). Dates are ISO `YYYY-MM-DD`.
+400), `ship_to_gln` (AI 410) and `ship_for_gln` (AI 413, stored and never enforced). Dates are ISO
+`YYYY-MM-DD`.
 
 **DD=00.** GS1 writes "day not specified" as `00`. The package already reads a scan's `00` as
 the last day of that month, so a date that came from a scan is stored resolved (`270300` is

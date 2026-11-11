@@ -76,8 +76,11 @@ type ReceiveScan struct {
 	Writer
 	Packaging ports.PackagingDirectory
 	// Limits are the carton handling limits of ADR 0014; zero = unchecked.
-	Limits  receipt.CartonLimits
-	metrics ports.ReceiptMetrics
+	Limits receipt.CartonLimits
+	// SiteGLNs are this warehouse's receiving GLNs (RECEIVING_SITE_GLNS, ADR
+	// 0024); the zero value turns the destination rule off.
+	SiteGLNs receipt.SiteGLNs
+	metrics  ports.ReceiptMetrics
 }
 
 // WithMetrics attaches the business-metric port (optional).
@@ -98,6 +101,15 @@ type scanInput struct {
 	lot       string
 	expiry    string
 	counted   []CountedContent
+
+	// label is what a raw GS1-128 label said besides its identifiers (ADR 0024);
+	// shipTo is its AI 410. violation is set instead of everything above when the
+	// raw scan is a GS1-128 element string that violates the standard.
+	label     receipt.LabelData
+	shipTo    gs1.GLN
+	violation *receipt.LabelViolation
+	// startsWithSSCC tells a refused label's kind: it begins with AI 00.
+	startsWithSSCC bool
 }
 
 // Handle runs the use case.
@@ -110,7 +122,7 @@ func (uc *ReceiveScan) Handle(ctx context.Context, cmd ReceiveScanCommand) (Scan
 	if err != nil {
 		return ScanOutcome{}, err
 	}
-	in, err := parseScan(cmd)
+	in, err := parseScan(cmd, uc.now().Year())
 	if err != nil {
 		return ScanOutcome{}, err
 	}
@@ -164,6 +176,12 @@ func (uc *ReceiveScan) recordMetrics(ctx context.Context, res receipt.ScanResult
 // receipt operation.
 func (uc *ReceiveScan) dispatch(ctx context.Context, r *receipt.Receipt, in scanInput, condition receipt.Condition) (ScanKind, receipt.ScanResult, error) {
 	now := uc.now()
+	if in.violation != nil {
+		return uc.refuseLabel(ctx, r, in, now)
+	}
+	if !uc.SiteGLNs.Accepts(in.shipTo) {
+		return uc.refuseDestination(ctx, r, in, now)
+	}
 	if !in.sscc.IsZero() {
 		if err := expectKind(in.expected, ScanSSCC); err != nil {
 			return "", receipt.ScanResult{}, err

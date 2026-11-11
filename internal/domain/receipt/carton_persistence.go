@@ -71,10 +71,35 @@ func buildCarton(s CartonState, lineCount int) (Carton, error) {
 		}
 		contents = append(contents, c)
 	}
+	source, err := buildSource(s.SSCCSource, sscc)
+	if err != nil {
+		return Carton{}, err
+	}
 	return Carton{
 		lpn: s.LPN, sscc: sscc, parentSscc: parent, kind: kind, status: s.Status, sealed: s.Sealed,
-		contents: contents, receivedAt: s.ReceivedAt.UTC(),
+		contents: contents, receivedAt: s.ReceivedAt.UTC(), ssccSource: source, label: s.Label,
 	}, nil
+}
+
+// buildSource validates the stored source: only a carton with an SSCC can have
+// one, and only the receiver's is stored (a supplier SSCC is derived).
+func buildSource(value string, sscc gs1.SSCC) (SsccSource, error) {
+	switch SsccSource(value) {
+	case "":
+		return "", nil
+	case SsccReceiver:
+		if sscc.IsZero() {
+			return "", ErrInvalidCarton
+		}
+		return SsccReceiver, nil
+	case SsccSupplier:
+		if sscc.IsZero() {
+			return "", ErrInvalidCarton
+		}
+		return "", nil
+	default:
+		return "", ErrInvalidCarton
+	}
 }
 
 func optionalSSCC(value string) (gs1.SSCC, error) {
@@ -145,5 +170,6 @@ func (c Carton) state() CartonState {
 	return CartonState{
 		LPN: c.lpn, SSCC: c.sscc.String(), ParentSSCC: c.parentSscc.String(), Kind: string(c.kind),
 		Status: c.status, Sealed: c.sealed, Contents: contents, ReceivedAt: c.receivedAt,
+		SSCCSource: string(c.ssccSource), Label: c.label,
 	}
 }

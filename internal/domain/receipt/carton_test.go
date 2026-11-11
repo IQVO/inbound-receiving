@@ -200,7 +200,7 @@ func TestAcceptHomogeneousCarton(t *testing.T) {
 		ReceiptLineReceived{Header: h, LineNo: 1, SKU: "SKU-1", Quantity: 20, Condition: ConditionGood, OwnerRef: owner,
 			PackGTIN: caseGTIN1(t), Cases: 1, SSCC: ssccA(t)},
 		ReceiptCartonReceived{Header: h, OwnerRef: owner, SSCC: ssccA(t), ParentSSCC: pallet(t), Sealed: true, LPN: ssccA(t).String(),
-			Contents: []CartonContent{content}},
+			Contents: []CartonContent{content}, SSCCSource: SsccSupplier},
 	}
 	if !res.Accepted || len(res.Discrepancies) != 0 || !reflect.DeepEqual(res.Events, wantEvents) {
 		t.Fatalf("result = %+v\nwant events %+v", res, wantEvents)
@@ -245,7 +245,7 @@ func TestAcceptMixedCartonBooksEveryContentLine(t *testing.T) {
 		ReceiptCartonReceived{Header: h, OwnerRef: owner, SSCC: ssccM(t), Sealed: true, LPN: ssccM(t).String(), Contents: []CartonContent{
 			{LineNo: 1, SKU: "SKU-1", GTIN: g1, Qty: 10, Condition: ConditionGood},
 			{LineNo: 2, SKU: "SKU-2", GTIN: g2, Qty: 5, Condition: ConditionGood},
-		}},
+		}, SSCCSource: SsccSupplier},
 	}
 	if !reflect.DeepEqual(res.Events, wantEvents) {
 		t.Fatalf("events = %+v\nwant     %+v", res.Events, wantEvents)

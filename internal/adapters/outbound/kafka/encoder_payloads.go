@@ -91,6 +91,17 @@ type cartonReceivedData struct {
 	LPN        string              `json:"lpn"`
 	Contents   []cartonContentData `json:"contents"`
 	ReceivedAt string              `json:"received_at"`
+	// The fields below are additive and optional (ADR 0024): who gave the carton
+	// its SSCC and what the scanned label said.
+	SSCCSource     string `json:"sscc_source,omitempty"`
+	BestBefore     string `json:"best_before,omitempty"`
+	Expiry         string `json:"expiry,omitempty"`
+	ProductionDate string `json:"production_date,omitempty"`
+	PackagingDate  string `json:"packaging_date,omitempty"`
+	Serial         string `json:"serial,omitempty"`
+	PurchaseOrder  string `json:"purchase_order,omitempty"`
+	ShipToGLN      string `json:"ship_to_gln,omitempty"`
+	ShipForGLN     string `json:"ship_for_gln,omitempty"`
 }
 
 type cartonDiscrepancyData struct {
@@ -103,6 +114,8 @@ type cartonDiscrepancyData struct {
 	// W13Code is absent for a kind with no W13 code (unmapped, ADR 0023).
 	W13Code        string `json:"w13_code,omitempty"`
 	CBVDisposition string `json:"cbv_disposition,omitempty"`
+	// SupplierRef is set on the label findings of ADR 0024 (additive, optional).
+	SupplierRef string `json:"supplier_ref,omitempty"`
 }
 
 type discrepancyData struct {
@@ -156,6 +169,9 @@ type adviceLineData struct {
 	SSCCs          []string                `json:"ssccs,omitempty"`
 	SSCCsTruncated bool                    `json:"ssccs_truncated,omitempty"`
 	Discrepancies  []adviceDiscrepancyData `json:"discrepancies"`
+	// The earliest dates of the accepted cartons of the line (ADR 0024).
+	EarliestBestBefore string `json:"earliest_best_before,omitempty"`
+	EarliestExpiry     string `json:"earliest_expiry,omitempty"`
 }
 
 // adviceFindingData is a carton finding as the advice lists it (evidence, never

@@ -19,6 +19,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 	"github.com/claudioed/inbound-receiving/internal/bootretry"
+	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
 
 // newReadiness builds the /readyz gate: the drain gate plus a Postgres ping
@@ -78,10 +79,28 @@ type adapters struct {
 	packaging     packagingView
 	idempotency   ports.IdempotencyStore
 	uow           ports.UnitOfWork
+	// ssccSerials allocates the serials of receiver-assigned SSCCs; siteGLNs and
+	// companyPrefix are RECEIVING_SITE_GLNS and RECEIVER_GS1_COMPANY_PREFIX (ADR 0024).
+	ssccSerials   ssccSerialStore
+	siteGLNs      receipt.SiteGLNs
+	companyPrefix receipt.CompanyPrefix
 	// sweeper is the housekeeping job (ADR 0010).
 	sweeper *postgres.Sweeper
 	// pool is the Postgres pool (the readiness check pings it).
 	pool *pgxpool.Pool
+}
+
+// ssccSerialStore allocates SSCC serials and can create the sequence of a prefix
+// ahead of the first request.
+type ssccSerialStore interface {
+	ports.SsccSerials
+	EnsureSequence(ctx context.Context, prefix receipt.CompanyPrefix) error
+}
+
+// withLabelSettings applies the validated label settings of the environment.
+func (a adapters) withLabelSettings(cfg config) adapters {
+	a.siteGLNs, a.companyPrefix = cfg.siteGLNs, cfg.companyPrefix
+	return a
 }
 
 func (a adapters) writer() usecases.Writer {
@@ -116,7 +135,8 @@ func buildServer(ad adapters, readiness *inboundhttp.Readiness, metrics http.Han
 		ListAppointments: &usecases.ListAppointments{Appointments: ad.appointments},
 		OpenReceipt:      &usecases.OpenReceipt{Writer: w},
 		ReceiveLine:      (&usecases.ReceiveLine{Writer: w}).WithMetrics(receiptMetrics),
-		ReceiveScan:      (&usecases.ReceiveScan{Writer: w, Packaging: ad.packaging, Limits: cartonLimits(os.Getenv, slog.Default())}).WithMetrics(receiptMetrics),
+		ReceiveScan:      (&usecases.ReceiveScan{Writer: w, Packaging: ad.packaging, Limits: cartonLimits(os.Getenv, slog.Default()), SiteGLNs: ad.siteGLNs}).WithMetrics(receiptMetrics),
+		AssignSscc:       &usecases.AssignSscc{Writer: w, Packaging: ad.packaging, Prefix: ad.companyPrefix, Serials: ad.ssccSerials},
 		GetCartonLabel:   &usecases.GetCartonLabel{Receipts: ad.receipts},
 		CloseReceipt:     (&usecases.CloseReceipt{Writer: w}).WithMetrics(ad.adviceMetrics),
 		GetReceipt:       &usecases.GetReceipt{Receipts: ad.receipts},
@@ -161,6 +181,7 @@ func buildAdapters(ctx context.Context, databaseURL string, logger *slog.Logger)
 		advice: postgres.NewAdviceRepo(pool), adviceSLA: adviceSLA(os.Getenv, logger),
 		skus: postgres.NewKnownSkus(pool), doors: postgres.NewDockDoors(pool), packaging: postgres.NewPackagingView(pool),
 		idempotency: postgres.NewIdempotencyStore(pool), uow: postgres.NewUnitOfWork(pool), pool: pool,
+		ssccSerials: postgres.NewSsccSerials(pool),
 	}
 	// Run un-instrumented rather than not at all if the instruments cannot be registered.
 	if m, err := telemetry.NewAdviceMetrics(); err != nil {

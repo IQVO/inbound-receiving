@@ -39,6 +39,7 @@ type Server struct {
 	OpenReceipt      *usecases.OpenReceipt
 	ReceiveLine      *usecases.ReceiveLine
 	ReceiveScan      *usecases.ReceiveScan
+	AssignSscc       *usecases.AssignSscc
 	CloseReceipt     *usecases.CloseReceipt
 	GetReceipt       *usecases.GetReceipt
 	ListReceipts     *usecases.ListReceipts
@@ -107,6 +108,7 @@ func NewRouter(s *Server) http.Handler {
 	keyed.Post("/receipts/{receiptId}/lines", s.handleReceiveLine)
 	keyed.Post("/receipts/{receiptId}/scans", s.handleReceiveScan)
 	keyed.Post("/receipts/{receiptId}/closures", s.handleCloseReceipt)
+	keyed.Post("/receipts/{receiptId}/sscc-assignments", s.handleAssignSscc)
 
 	r.Get("/docks", s.handleListDocks)
 	return r

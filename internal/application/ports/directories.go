@@ -6,6 +6,7 @@ import (
 
 	"github.com/claudioed/inbound-receiving/internal/application/repository"
 	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
+	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 	"github.com/claudioed/inbound-receiving/internal/domain/shared"
 	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
 )
@@ -50,6 +51,14 @@ type PackagingDirectory interface {
 	// ActiveLevel returns the level of the SKU that is in effect at the given
 	// time, or repository.ErrPackLevelNotFound.
 	ActiveLevel(ctx context.Context, sku shared.SKU, level shared.PackLevel, at time.Time) (repository.PackLevel, error)
+}
+
+// SsccSerials allocates the serial reference of an SSCC the receiver assigns
+// (ADR 0024). A serial is never given twice for a prefix, even when the caller's
+// transaction rolls back (a gap is allowed, a reuse is not), and the sequence is
+// per prefix. repository.ErrSsccSerialsExhausted when none is left.
+type SsccSerials interface {
+	NextSerial(ctx context.Context, prefix receipt.CompanyPrefix) (int64, error)
 }
 
 // PackagingStore writes the PackagingView; only the packaging consumer uses it.
