@@ -17,7 +17,7 @@ import (
 //
 // Changing the package: edit the TEMPLATE, run this test there, paste the digest it prints into
 // this constant, then re-sync every consumer with `python3 tools/migrate_v3.py --repo <svc>`.
-const sourceDigest = "8c2ed983baaface28bea37363af33779bae61061c90dbafe1dff4d0aaf772f3f"
+const sourceDigest = "497644415aa6c1a2728572a95bf5c943de8619ffccff5e024d36ac20bc9d5efe"
 
 func TestPackageIsByteIdenticalToTemplate(t *testing.T) {
 	got := digestOfPackageFiles(t)
