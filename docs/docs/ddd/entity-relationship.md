@@ -199,7 +199,7 @@ text identifiers, and `schema_migrations` (golang-migrate's own table).
 | Table | Role | Backs |
 | --- | --- | --- |
 | `asns`, `asn_lines` | domain | the `Asn` aggregate (root row plus its lines) |
-| `appointments`, `appointment_asns` | domain | the `DockAppointment` aggregate (root row plus the ASN numbers it covers, in booking order) |
+| `appointments`, `appointment_asns` | local copy | the read-only copy of dock-scheduling's appointments (root row plus the ASN numbers it covers, in booking order), fed by its `DockAppointment*` events (ADR 0019, ADR 0020) |
 | `receipts`, `receipt_lines` | domain | the `Receipt` aggregate (root row plus the snapshot of the ASN's lines and the two counters) |
 | `receipt_cartons` | domain | the receipt's carton ledger (ADR 0012): manifest cartons plus cases received by GTIN; part of the `Receipt` read model |
 | `receipt_carton_discrepancies` | domain | the carton discrepancies raised on a receipt (ADR 0015); append-only, part of the `Receipt` read model |
@@ -213,8 +213,8 @@ text identifiers, and `schema_migrations` (golang-migrate's own table).
 ## Where there is no foreign key, on purpose
 
 - `appointment_asns.asn_number` has no FK to `asns`: `Asn` and `DockAppointment`
-  are separate aggregates that reference each other by id. The book use case
-  checks the ASNs exist and are receivable inside the unit of work.
+  are separate aggregates that reference each other by id. The copy is written from
+  dock-scheduling's events (the booking and its ASN checks live there, ADR 0019).
 - `receipts.appointment_id` and `receipts.door_code` have no FK to
   `appointments`: a walk-in receipt has neither, and the appointment is a
   separate aggregate. `receipts.asn_number` **does** have an FK to `asns`.
