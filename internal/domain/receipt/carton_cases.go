@@ -59,6 +59,7 @@ func (r *Receipt) ReceiveCases(in CaseScan, at time.Time) (ScanResult, error) {
 	res.Events = events
 	res.Events = append(res.Events, r.raise(res.Discrepancies, at)...)
 	r.lines = lines
+	r.lastReceivedAt = at.UTC()
 	r.version++
 	return res, nil
 }
