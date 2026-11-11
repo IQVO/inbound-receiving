@@ -68,11 +68,8 @@ classDiagram
     -window Window
     -state State
     -version int64
-    +Book(id, door, carrier, start, end, asnNumbers, now)$ DockAppointment
     +Rehydrate(...)$ DockAppointment
-    +CheckIn(at) Event[]
-    +Cancel(reason, now) Event[]
-    +Complete(at) Event[]
+    +Covers(asn) bool
   }
   class Window {
     <<ValueObject>>
@@ -89,17 +86,9 @@ classDiagram
     Completed
     Cancelled
   }
-  class Schedule {
-    <<DomainService>>
-    +CheckNoOverlap(candidate, activeOnSameDoor) error
-  }
 
   class ASNRegistered { <<DomainEvent>> }
   class ASNCancelled { <<DomainEvent>> }
-  class DockAppointmentBooked { <<DomainEvent>> }
-  class DockAppointmentCheckedIn { <<DomainEvent>> }
-  class DockAppointmentCancelled { <<DomainEvent>> }
-  class DockAppointmentCompleted { <<DomainEvent>> }
 
   Asn "1" *-- "1..*" AsnLine
   AsnLine --> SKU
@@ -112,15 +101,10 @@ classDiagram
   DockAppointment --> DoorCode
   DockAppointment --> AppointmentState
   DockAppointment "1" o-- "1..*" Asn : asnNumbers by id
-  Schedule ..> DockAppointment : checks
-  DockAppointment ..> DockAppointmentBooked : raises
-  DockAppointment ..> DockAppointmentCheckedIn : raises
-  DockAppointment ..> DockAppointmentCancelled : raises
-  DockAppointment ..> DockAppointmentCompleted : raises
 ```
 
 Source: `internal/domain/asn/{asn,events}.go`,
-`internal/domain/appointment/{appointment,events}.go`,
+`internal/domain/appointment/appointment.go` (its `events.go`, `Schedule`, `Book` and the lifecycle methods are gone, ADR 0019 and ADR 0022),
 `internal/domain/shared/*.go`. Omits: getters, `Header`, the `Event` interfaces
 and the sentinel errors. `DockAppointment` holds ASN **numbers** (by id), not
 `Asn` objects.

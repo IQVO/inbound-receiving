@@ -42,8 +42,9 @@ The dock appointment is **no longer an aggregate of this context**:
 dock-scheduling owns it and decides booking, rescheduling, check-in,
 cancellation and door overlap. Here the `appointments` table (and its
 `appointment_asns` coverage table) is a read-only **local copy**, fed by the
-dock-appointment consumer from dock-scheduling's `DockAppointmentBooked` and
-`DockAppointmentCancelled`, applied only when the event `version` is greater than
+dock-appointment consumer from dock-scheduling's `DockAppointmentBooked`,
+`DockAppointmentCancelled`, `DockAppointmentRescheduled` and
+`DockAppointmentDoorReassigned` (ADR 0020), applied only when the event `version` is greater than
 the stored one, and raising no event.
 
 Package `internal/domain/appointment` keeps the type only to hold that copy:

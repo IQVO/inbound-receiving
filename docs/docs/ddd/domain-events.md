@@ -7,8 +7,8 @@ sidebar_position: 21
 
 # Domain events
 
-:::caution[DockAppointment moved (ADR 0019)]
-The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (the one-shot `api republish-appointments` backfill that re-announced them was removed, [ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
+:::caution[DockAppointment moved (ADR 0019); the four types are gone (ADR 0022)]
+The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context no longer raises the four `dockappointment.DockAppointment*` types (`Booked`, `CheckedIn`, `Cancelled`, `Completed`): [ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay) removed the `api republish-appointments` backfill, the legacy encoders and the domain `Replay`, and retired the four types from `apis/asyncapi.yaml` on both channels, so the integration topic carries `asn.*` and `receipt.*` types only. What this context keeps is a read-only local copy fed by dock-scheduling's `DockAppointmentBooked`, `DockAppointmentCancelled`, `DockAppointmentRescheduled` and `DockAppointmentDoorReassigned` (a different prefix, `dock-scheduling.dockappointment`; see Consumed below). Where other DDD pages still describe the appointment commands, rules or events, read them as the pre-transfer design; those pages are not yet rewritten.
 :::
 
 Every event this context publishes or consumes. All are CloudEvents 1.0 in
@@ -24,35 +24,45 @@ catalogue (checked against the AsyncAPI file by
 
 ## Published
 
-Raised by the aggregates (`internal/domain/*/events.go`), encoded by the encoder
-and inserted into `outbox_events` inside the use case's unit of work; the relay in
-`cmd/api` publishes them. Common attributes: `source=/warehouse/inbound-receiving`,
-`time` = domain occurred-at (UTC), `datacontenttype=application/json`,
+Raised by the aggregates (`internal/domain/asn/events.go`,
+`internal/domain/receipt/events.go`), encoded by the encoder
+(`internal/adapters/outbound/kafka/encoder.go`, payload structs in
+`encoder_payloads.go`) and inserted into `outbox_events` inside the use case's unit
+of work; the relay in `cmd/api` publishes them. Common attributes:
+`source=/warehouse/inbound-receiving`, `time` = domain occurred-at (UTC),
+`datacontenttype=application/json`,
 `dataschema=urn:warehouse:inbound-receiving:events:<EventName>:v1`. Topic
-`warehouse.inbound-receiving.events` for all nine. The partitioner is the `Hash`
-balancer on the Kafka key.
+`warehouse.inbound-receiving.events` for all eight (the `<entity>` segment is `asn`
+or `receipt`: `asnRow` and `receiptRow` in the encoder reject every other event, and
+`apis/asyncapi.yaml` declares exactly these eight on the integration channel). The
+partitioner is the `Hash` balancer on the Kafka key.
 
 | Full CloudEvents type | `subject` / Kafka key | Producer use case | Payload (`data`) | Known consumers |
 | --- | --- | --- | --- | --- |
-| `com.warehouse.wms.inbound-receiving.asn.ASNRegistered` | `asn_number` / `asn_number` | `RegisterAsn` | `asn_number`, `supplier_ref`, `expected_arrival?`, `lines[]` = `{line_no, sku, expected_qty}` | none |
-| `com.warehouse.wms.inbound-receiving.asn.ASNCancelled` | `asn_number` / `asn_number` | `CancelAsn` | `asn_number`, `reason?` | none |
-| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked` | `appointment_id` / `appointment_id` | `BookAppointment` | `appointment_id`, `door_code`, `carrier`, `window_start`, `window_end`, `asn_numbers[]` | `warehouse-planning` (`INBOUND_DEMAND_CONSUMER_GROUP` there, `warehouse-planning-inbound-demand` in warehouse-infra; ADR 0017) |
-| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCheckedIn` | `appointment_id` / `appointment_id` | `CheckInAppointment` | `appointment_id`, `door_code`, `checked_in_at` | none |
-| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled` | `appointment_id` / `appointment_id` | `CancelAppointment` | `appointment_id`, `door_code`, `reason?` | `warehouse-planning` (same consumer; `door_code` and `reason` are ignored there) |
-| `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCompleted` | `appointment_id` / `appointment_id` | `CloseReceipt` (receipt opened from an appointment) | `appointment_id`, `door_code`, `completed_at` | none |
-| `com.warehouse.wms.inbound-receiving.receipt.ReceiptOpened` | `receipt_id` / `asn_number` | `OpenReceipt` | `receipt_id`, `asn_number`, `appointment_id?`, `door_code?`, `opened_at` | none |
-| `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived` | `receipt_id` / `asn_number` | `ReceiveLine` | `receipt_id`, `asn_number`, `line_no`, `sku`, `quantity`, `condition` (`Good` or `Damaged`), `received_at` | `inventory-storage` (`INBOUND_RECEIPT_CONSUMER_GROUP`, books `Good` only) |
-| `com.warehouse.wms.inbound-receiving.receipt.ReceiptClosed` | `receipt_id` / `asn_number` | `CloseReceipt` | `receipt_id`, `asn_number`, `closed_at`, `discrepancies[]` = `{line_no, sku, kind, expected_qty, received_qty, damaged_qty}` | none |
+| `com.warehouse.wms.inbound-receiving.asn.ASNRegistered` | `asn_number` / `asn_number` | `RegisterAsn` | `asn_number`, `supplier_ref`, `owner_ref?`, `expected_arrival?`, `lines[]` = `{line_no, sku, expected_qty}`, `cartons[]?` | `dock-scheduling` (`ASN_CONSUMER_GROUP`), `yard-management` (`INBOUND_RECEIVING_CONSUMER_GROUP`) |
+| `com.warehouse.wms.inbound-receiving.asn.ASNCancelled` | `asn_number` / `asn_number` | `CancelAsn` | `asn_number`, `reason?` | `dock-scheduling`, `yard-management` (same groups) |
+| `com.warehouse.wms.inbound-receiving.receipt.ReceiptOpened` | `receipt_id` / `asn_number` | `OpenReceipt` | `receipt_id`, `asn_number`, `appointment_id?`, `door_code?`, `opened_at` | `yard-management` |
+| `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived` | `receipt_id` / `asn_number` | `ReceiveLine`, `ReceiveScan` (a case or each scan) | `receipt_id`, `asn_number`, `line_no`, `sku`, `quantity`, `condition` (`Good` or `Damaged`), `received_at`, `owner_ref?`, `pack_gtin?`, `cases?`, `sscc?` | `inventory-storage` (`INBOUND_RECEIPT_CONSUMER_GROUP`, books `Good` only) |
+| `com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived` | `receipt_id` / `asn_number` | `ReceiveScan` (a carton accepted; identity only, books no quantity) | `receipt_id`, `asn_number`, `owner_ref?`, `sscc?`, `parent_sscc?`, `sealed`, `lpn`, `contents[]` = `{line_no, sku, gtin, qty, lot?, expiry?, condition}`, `received_at` | `inventory-storage`, `network-fulfillment` (`INBOUND_RECEIPT_CONSUMER_GROUP` in each) |
+| `com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised` | `receipt_id` / `asn_number` | `ReceiveScan` (a refused scan, one event per finding) and `CloseReceipt` (a `MissingCarton` finding for a manifest carton never accepted) | `receipt_id`, `sscc?`, `kind`, `expected?`, `actual?`, `at` | `exception-management` (`CARTON_DISCREPANCY_CONSUMER_GROUP`), `network-fulfillment` |
+| `com.warehouse.wms.inbound-receiving.receipt.ReceiptClosed` | `receipt_id` / `asn_number` | `CloseReceipt` | `receipt_id`, `asn_number`, `closed_at`, `discrepancies[]` = `{line_no, sku, kind, expected_qty, received_qty, damaged_qty}` | `yard-management`, `network-fulfillment` |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptStowCompleted` | `receipt_id` / `asn_number` | `ApplyVisitCheckedIn`, `ApplyContainerStowed`, `CloseReceipt` (whichever completes the evidence; ADR 0021) | `receipt_id`, `asn_number`, `appointment_id`, `arrived_at`, `closed_at`, `stowed_at`, `dock_to_stock_seconds`, `carton_count` | none yet (the projector folds the analytics copy) |
 
-`?` marks a field omitted when unset. `kind` is `Short`, `Over` or `Damaged`.
-`discrepancies` is present and empty (`[]`) when everything matched, and a line
-can appear once per kind; `received_qty` is good + damaged. Receipt events are
-keyed by `asn_number` so everything that happens while one ASN is received stays
-ordered on one partition. `DockAppointmentCompleted` is keyed by
-`appointment_id`, so its order relative to `ReceiptClosed` is **not guaranteed**:
-consumers must not depend on it. A breaking payload change is a new `.v2` type
-and dataschema, never a mutation of v1.
+`?` marks a field omitted when unset. The line-level discrepancy `kind` on
+`ReceiptClosed` is `Short`, `Over` or `Damaged`; the `kind` on
+`CartonDiscrepancyRaised` is one of the carton kinds (`UnexpectedCarton`,
+`MissingCarton`, `DuplicateSscc`, `UnknownGtin`, `CaseQtyMismatch`,
+`MixedCaseDeclaredAsCasePack`, `UnlabelledCarton`, `CartonOverLimit`,
+`MixedCartonContentMismatch`; `cartonKinds` in
+`internal/domain/receipt/carton_findings.go`). `discrepancies` is present and empty
+(`[]`) when everything matched, and a line can appear once per kind; `received_qty`
+is good + damaged. Every receipt event, and both ASN events, is keyed by
+`asn_number`, so everything that happens while one ASN is received stays ordered on
+one partition. The four `dockappointment.DockAppointment*` types are not in this
+table because nothing raises them any more (ADR 0022); the known-consumer column was
+read from the dispatch code (full-type constants) on each sibling's `origin/develop`
+on 2026-11-10, and no sibling code dispatches on them. A breaking payload change is a
+new `.v2` type and dataschema, never a mutation of v1.
 
 Example (the handover message):
 
@@ -67,9 +77,17 @@ Example (the handover message):
 | `com.warehouse.wms.product-master.product.ProductRegistered` | `warehouse.product-master.events` | `ProductConsumer` → `ApplyProductRegistered` | `PRODUCT_CONSUMER_GROUP` (required) | upsert the SKU into `known_skus` (uses `data.sku` only) |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotRegistered` | `warehouse.facility.events` | `DockDoorConsumer` → `ApplyLocationSlotRegistered` | `DOCK_DOOR_CONSUMER_GROUP` (required) | upsert into `dock_doors` when `role=Dock` and `dockFlow` is `Inbound` or `Both`; ignore otherwise |
 | `com.warehouse.wms.facility-layout.locationslot.LocationSlotDecommissioned` | `warehouse.facility.events` | `DockDoorConsumer` → `ApplyLocationSlotDecommissioned` | `DOCK_DOOR_CONSUMER_GROUP` | delete the row for `locationCode`; a code that is not a door is a no-op |
+| `com.warehouse.wms.product-master.product.ProductPackLevelDeclared` | `warehouse.product-master.events` | `PackagingConsumer` → `ApplyPackLevelDeclared` | `PACKAGING_CONSUMER_GROUP` (required) | upsert the declared pack level into the packaging view |
+| `com.warehouse.wms.product-master.product.ProductPackLevelRetired` | `warehouse.product-master.events` | `PackagingConsumer` → `ApplyPackLevelRetired` | `PACKAGING_CONSUMER_GROUP` | retire the pack level in the packaging view |
+| `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentBooked` | `warehouse.dock-scheduling.events` | `DockAppointmentConsumer` → `ApplyDockAppointmentBooked` | `DOCK_APPOINTMENT_CONSUMER_GROUP` (required) | upsert the `appointments` copy when `direction=INBOUND` (ADR 0019); outbound is ignored |
+| `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentCancelled` | `warehouse.dock-scheduling.events` | `DockAppointmentConsumer` → `ApplyDockAppointmentCancelled` | `DOCK_APPOINTMENT_CONSUMER_GROUP` | mark the stored appointment cancelled |
+| `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentRescheduled` | `warehouse.dock-scheduling.events` | `DockAppointmentConsumer` → `ApplyDockAppointmentRescheduled` | `DOCK_APPOINTMENT_CONSUMER_GROUP` | move the copy's door and window (ADR 0020) |
+| `com.warehouse.wms.dock-scheduling.dockappointment.DockAppointmentDoorReassigned` | `warehouse.dock-scheduling.events` | `DockAppointmentConsumer` → `ApplyDockAppointmentDoorReassigned` | `DOCK_APPOINTMENT_CONSUMER_GROUP` | move the copy's door (ADR 0020) |
+| `com.warehouse.wms.yard-management.yardvisit.VisitCheckedIn` | `warehouse.yard-management.events` | `VisitArrivalConsumer` → `ApplyVisitCheckedIn` | `VISIT_ARRIVAL_CONSUMER_GROUP` (required) | store the earliest `arrived_at` per appointment into `visit_arrivals`, then evaluate the dock-to-stock fact (ADR 0021) |
+| `com.warehouse.wms.inventory-storage.container.ContainerStowed` | `warehouse.inventory.events` | `CartonStowConsumer` → `ApplyContainerStowed` | `CARTON_STOW_CONSUMER_GROUP` (required) | store the earliest stow time per `lpn` into `carton_stows`, then evaluate the dock-to-stock fact (ADR 0021) |
 
 Facility-layout payloads are camelCase (`locationCode`, `role`, `dockFlow`);
-product-master's are snake_case. Each consumer dispatches on the FULL `type` and
+product-master's are snake_case. The six consumers always run (`startConsumers` in `cmd/api/workers.go`: product, packaging, dock door, dock appointment, visit arrival, carton stow). Each dispatches on the FULL `type` and
 ignores every other type on its topic, claims the CloudEvents `id` in
 `processed_events` in the SAME transaction as the effect, commits the offset only
 after that, and skips with a WARN anything that is not a valid CloudEvent. See
@@ -83,7 +101,19 @@ work and under the same CloudEvents `id`, `type`, `subject` and Kafka key, to
 `warehouse.inbound-receiving.analytics.dlq`) with
 `dataschema=urn:warehouse:inbound-receiving:analytics:<EventName>:v1` and a
 payload byte-for-byte equal to the integration payload (`FanoutEncoder`,
-`internal/adapters/outbound/kafka/analytics_encoder.go`). Its only consumer is
-this context's own `inbound-projector` (group `ANALYTICS_CONSUMER_GROUP`,
-default `inbound-receiving-analytics`); it is not an integration contract, so
-sibling contexts keep reading `warehouse.inbound-receiving.events`.
+`internal/adapters/outbound/kafka/analytics_encoder.go`). The topic therefore
+carries the same eight types as the integration topic; `apis/asyncapi.yaml`
+declares eight analytics messages. Its only consumer is this context's own
+`inbound-projector` (group `ANALYTICS_CONSUMER_GROUP`, default
+`inbound-receiving-analytics`); it is not an integration contract, so sibling
+contexts keep reading `warehouse.inbound-receiving.events`.
+
+The projector folds ten kinds (`report.Kinds()`): six of the eight current types
+(`ASNRegistered`, `ASNCancelled`, `ReceiptOpened`, `ReceiptLineReceived`,
+`ReceiptClosed`, `ReceiptStowCompleted`) and the four historical
+`dockappointment.DockAppointment*` types. It does not fold `ReceiptCartonReceived`
+or `CartonDiscrepancyRaised`: an unknown type is ignored (a DEBUG line). The four
+historical types stay in the projector on purpose ([ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)):
+a stream is append-only, so a rebuild from the topic may still read them, and the
+`appointments` block of the receiving-performance report stays frozen. Nothing
+produces new ones.

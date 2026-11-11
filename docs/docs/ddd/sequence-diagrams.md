@@ -64,102 +64,30 @@ Source: `internal/adapters/inbound/http/{server,idempotency}.go`,
 Omits: the other POSTs behave the same way in the middleware; the response is
 stored with the key in the same transaction.
 
-## Book a dock appointment
-
-```mermaid
-sequenceDiagram
-  autonumber
-  actor Op as Dock planner
-  participant H as HTTP adapter
-  participant UC as BookAppointment
-  participant D as DockAppointment aggregate
-  participant Dir as DockDoorDirectory
-  participant AR as AsnRepository
-  participant PR as AppointmentRepository
-  participant S as Schedule
-  participant O as Outbox
-
-  Op->>H: POST /appointments with Idempotency-Key
-  H->>UC: Handle(BookAppointmentCommand)
-  UC->>D: Book(id, door, carrier, window, asnNumbers, now)
-  D-->>UC: appointment at version 1 and DockAppointmentBooked
-  alt invalid window, door, carrier or ASN list
-    UC-->>Op: 400 invalid-window, window-in-past and the other slugs
-  end
-  alt DOCK_DOOR_MODE=kafka
-    UC->>Dir: Exists(door)
-    Dir-->>UC: false
-    UC-->>Op: 422 unknown-dock-door
-  end
-  UC->>PR: LockDoor(door) inside UoW
-  loop each covered ASN
-    UC->>AR: Get(number)
-    alt not found
-      UC-->>Op: 422 unknown-asn
-    else not Registered or Receiving
-      UC-->>Op: 409 asn-not-receivable
-    end
-  end
-  UC->>PR: ActiveOnDoor(door)
-  UC->>S: CheckNoOverlap(candidate, active)
-  alt window overlaps an active booking
-    S-->>UC: ErrWindowOverlap
-    UC-->>Op: 409 door-window-overlap
-  else free
-    UC->>PR: Save(appointment, loadedVersion 0)
-    UC->>O: Insert(encoded DockAppointmentBooked)
-    UC-->>Op: 201 with ETag and Location
-  end
-```
-
-Source: `internal/application/usecases/appointment.go`,
-`internal/domain/appointment/appointment.go`,
-`internal/adapters/outbound/postgres/appointment_repository.go` (`LockDoor` is
-`pg_advisory_xact_lock`). Omits: the idempotency middleware (see the first
-diagram).
-
-## Check in and cancel an appointment
+## Appointment writes (moved to dock-scheduling)
 
 ```mermaid
 sequenceDiagram
   autonumber
   actor Op as Operator
   participant H as HTTP adapter
-  participant UC as CheckInAppointment or CancelAppointment
-  participant PR as AppointmentRepository
-  participant D as DockAppointment aggregate
-  participant O as Outbox
+  participant DS as dock-scheduling
 
-  Op->>H: POST /appointments/{id}/check-ins or /cancellations
-  H->>UC: Handle(AppointmentActionCommand with If-Match)
-  UC->>PR: Get(id) inside UoW
-  alt not found
-    UC-->>Op: 404 appointment-not-found
-  end
-  alt If-Match differs from the loaded version
-    UC-->>Op: 412 version-mismatch
-  end
-  UC->>D: CheckIn(now) or Cancel(reason, now)
-  alt not Booked
-    D-->>UC: ErrNotBooked
-    UC-->>Op: 409 appointment-not-booked
-  else check-in outside 30 min before start .. end
-    D-->>UC: ErrOutsideCheckInWindow
-    UC-->>Op: 409 outside-check-in-window
-  else accepted
-    D-->>UC: DockAppointmentCheckedIn or DockAppointmentCancelled
-    UC->>PR: Save(appointment, loadedVersion)
-    alt lost the version race
-      UC-->>Op: 409 concurrent-modification
-    end
-    UC->>O: Insert(encoded event)
-    UC-->>Op: 200 with the new ETag
-  end
+  Op->>H: POST /appointments, /appointments/{id}/check-ins or /cancellations
+  H-->>Op: 410 appointment-moved (the detail names where the operation lives now)
+  Op->>DS: book or cancel there
 ```
 
-Source: `internal/application/usecases/appointment.go` (`Writer.act`),
-`internal/domain/appointment/appointment.go`. `ASN` cancel follows the same
-shape (`CancelAsn`, `ErrAsnInProgress` / `ErrAsnTerminal` instead).
+Source: `internal/adapters/inbound/http/handlers_appointment.go`
+(`appointmentWriteMoved`), `server.go`. There is no use case, aggregate call or
+outbox row behind these three routes: they answer `410` whatever the request, and
+this context raises no appointment event (ADR 0019; the encoders, `Replay` and the
+`republish-appointments` command were removed by
+[ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)).
+The deprecated `GET /appointments` and `GET /appointments/{appointmentId}` stay and
+read the local copy fed by dock-scheduling; removing them is a decision not taken
+yet (ADR 0022). `ASN` cancel follows the shape of the other creating `POST`s
+(`CancelAsn`, `ErrAsnInProgress` / `ErrAsnTerminal` on refusal).
 
 ## Open a receipt
 
@@ -187,8 +115,8 @@ sequenceDiagram
       UC-->>Dock: 422 unknown-appointment
     else ASN not covered
       UC-->>Dock: 422 asn-not-on-appointment
-    else not CheckedIn
-      UC-->>Dock: 409 appointment-not-checked-in
+    else Cancelled
+      UC-->>Dock: 409 appointment-cancelled
     end
   end
   UC->>RC: Open(id, asn.Snapshot(), appointmentId, door, now)
@@ -267,7 +195,6 @@ sequenceDiagram
   participant RR as ReceiptRepository
   participant RC as Receipt aggregate
   participant AR as AsnRepository
-  participant PR as AppointmentRepository
   participant O as Outbox
 
   Dock->>H: POST /receipts/{id}/closures
@@ -281,18 +208,16 @@ sequenceDiagram
     RC-->>UC: ReceiptClosed with the discrepancies
   end
   UC->>AR: Get(asn), Complete(), Save(asn)
-  opt the receipt came from an appointment
-    UC->>PR: Get(appointment), Complete(now), Save(appointment)
-    UC->>O: Insert(encoded DockAppointmentCompleted)
-  end
   UC->>RR: Save(receipt, loadedVersion)
-  UC->>O: Insert(encoded ReceiptClosed)
+  UC->>O: Insert(encoded CartonDiscrepancyRaised for each missing carton, then ReceiptClosed)
+  opt the dock-to-stock evidence is complete
+    UC->>O: Insert(encoded ReceiptStowCompleted)
+  end
   UC-->>Dock: 200 with the closed receipt
 ```
 
 Source: `internal/application/usecases/receipt.go` (`CloseReceipt.Handle`,
-`completeAsn`, `completeAppointment`). The ASN completion raises no event. All
-three saves and every outbox row commit together or not at all. Each
+`completeAsn`), `internal/application/usecases/stow.go` (`completeStow`). The ASN completion raises no event, and the use case no longer completes the appointment (ADR 0019). The ASN and receipt saves and every outbox row commit together or not at all. Each
 `Insert(encoded ...)` writes two rows, one per topic (`FanoutEncoder`, ADR 0006).
 
 ## Local-copy consumer (product and dock door)
