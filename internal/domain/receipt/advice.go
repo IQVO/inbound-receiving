@@ -52,6 +52,10 @@ type AdviceLine struct {
 	SSCCs          []gs1.SSCC
 	SSCCsTruncated bool
 	Discrepancies  []AdviceDiscrepancy
+	// EarliestBestBefore and EarliestExpiry are the earliest dates of the accepted
+	// cartons of the line, "" when none had one (ADR 0024).
+	EarliestBestBefore string
+	EarliestExpiry     string
 }
 
 // ReceivingAdviceIssued is raised once, when a receipt closes (ADR 0023): the
@@ -152,6 +156,8 @@ func (r *Receipt) adviceLine(l Line, incorrect int64) AdviceLine {
 		Accepted: l.receivedGood - l.held, Rejected: l.receivedDamaged, Held: l.held,
 		Discrepancies: make([]AdviceDiscrepancy, 0, 5),
 	}
+	dates := r.LineDates(l.lineNo)
+	out.EarliestBestBefore, out.EarliestExpiry = dates.BestBefore, dates.Expiry
 	add := func(kind Kind, qty int64) {
 		coding, _ := CodingOf(kind)
 		out.Discrepancies = append(out.Discrepancies, AdviceDiscrepancy{Kind: kind, Quantity: qty, Coding: coding})

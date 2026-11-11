@@ -1603,6 +1603,15 @@ components:
                       expiry: { type: string }
                       condition: { type: string, enum: [Good, Damaged] }
                 received_at: { type: string, format: date-time }
+                sscc_source: { type: string, enum: [supplier, receiver], description: "Who gave the carton its SSCC (ADR 0024). `receiver` is an SSCC assigned by AssignSscc under the receiver's own GS1 company prefix. Additive and optional." }
+                best_before: { type: string, format: date, description: "AI 15 of the scanned label, as an ISO date; a day 00 is the last day of the month (ADR 0024). Optional." }
+                expiry: { type: string, format: date, description: "AI 17 of the scanned label (ADR 0024). Optional." }
+                production_date: { type: string, format: date, description: "AI 11 of the scanned label (ADR 0024). Optional." }
+                packaging_date: { type: string, format: date, description: "AI 13 of the scanned label (ADR 0024). Optional." }
+                serial: { type: string, description: "AI 21 of the scanned label (ADR 0024). Optional." }
+                purchase_order: { type: string, description: "AI 400 of the scanned label (ADR 0024). Optional." }
+                ship_to_gln: { type: string, pattern: '^[0-9]{13}$', description: "AI 410 of the scanned label (ADR 0024). Optional." }
+                ship_for_gln: { type: string, pattern: '^[0-9]{13}$', description: "AI 413 of the scanned label; stored, never enforced (ADR 0024). Optional." }
 
     CartonDiscrepancyRaisedEvent:
       allOf:
@@ -1617,12 +1626,13 @@ components:
                 sscc: { type: string, description: Omitted when the finding has no SSCC. }
                 kind:
                   type: string
-                  enum: [UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch]
-                expected: { type: string, description: "A count, a SKU, or `sku:qty` / `grossWeightG:<n>` pairs (CartonOverLimit: the breached limits; MixedCartonContentMismatch: the manifest)." }
-                actual: { type: string, description: The counterpart of `expected`. }
+                  enum: [UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch, LabelNonCompliant, WrongDestination]
+                expected: { type: string, description: "A count, a SKU, or `sku:qty` / `grossWeightG:<n>` pairs (CartonOverLimit: the breached limits; MixedCartonContentMismatch: the manifest; LabelNonCompliant: the reason code, e.g. `conflicting_ais`)." }
+                actual: { type: string, description: "The counterpart of `expected` (LabelNonCompliant: the raw scan; WrongDestination: the GLN the label named)." }
                 at: { type: string, format: date-time }
-                w13_code: { type: string, enum: ["01", "02", "03", "05", "09"], description: "X12 W13 receiving condition code (ADR 0023). Absent when the standard has no code for the kind." }
-                cbv_disposition: { type: string, description: "GS1 CBV disposition (ADR 0023), derived from the kind." }
+                w13_code: { type: string, enum: ["01", "02", "03", "05", "09"], description: "X12 W13 receiving condition code (ADR 0023). Absent when the standard has no code for the kind (LabelNonCompliant and WrongDestination have none)." }
+                cbv_disposition: { type: string, description: "GS1 CBV disposition (ADR 0023, 0024), derived from the kind." }
+                supplier_ref: { type: string, description: "The supplier of the ASN; set on LabelNonCompliant and WrongDestination so a first-pass rate can be told per supplier (ADR 0024). Optional." }
 
     ReceiptClosedEvent:
       allOf:
@@ -1681,6 +1691,8 @@ components:
                         maxItems: 1000
                         items: { type: string, pattern: '^[0-9]{18}$' }
                       ssccs_truncated: { type: boolean, description: "True when ssccs lists fewer than sscc_count. Omitted when false." }
+                      earliest_best_before: { type: string, format: date, description: "The earliest best-before date (AI 15) of the accepted cartons of the line (ADR 0024). Omitted when none carried one." }
+                      earliest_expiry: { type: string, format: date, description: "The earliest expiry date (AI 17) of the accepted cartons of the line (ADR 0024). Omitted when none carried one." }
                       discrepancies:
                         type: array
                         items:
@@ -1707,6 +1719,7 @@ components:
                       at: { type: string, format: date-time }
                       w13_code: { type: string, enum: ["01", "02", "03", "05", "09"], description: Absent for a kind with no W13 code. }
                       cbv_disposition: { type: string }
+                      supplier_ref: { type: string, description: Set on label findings (ADR 0024). }
                 carton_findings_total: { type: integer, minimum: 0 }
 
     ReceivingAdviceOverdueEvent:

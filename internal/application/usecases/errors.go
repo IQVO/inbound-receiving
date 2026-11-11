@@ -61,6 +61,9 @@ var (
 	// ErrCartonNotFound is returned when a receipt has no accepted carton
 	// with the requested license plate.
 	ErrCartonNotFound = errors.New("carton not found on the receipt")
+	// ErrUnknownGtin is returned by AssignSscc for a GTIN the PackagingView
+	// does not know: nothing can be received and no SSCC is allocated.
+	ErrUnknownGtin = errors.New("gtin is not in the packaging view")
 )
 
 // detailed is an error with a caller-facing message that still matches its

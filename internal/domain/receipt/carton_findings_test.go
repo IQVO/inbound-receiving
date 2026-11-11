@@ -209,7 +209,8 @@ func TestRehydrateRefusesAMalformedCartonDiscrepancy(t *testing.T) {
 		})
 	}
 	for _, kind := range []Kind{KindUnexpectedCarton, KindMissingCarton, KindDuplicateSscc, KindUnknownGtin, KindCaseQtyMismatch,
-		KindMixedCaseDeclaredAsCasePack, KindUnlabelledCarton, KindCartonOverLimit, KindMixedCartonContentMismatch} {
+		KindMixedCaseDeclaredAsCasePack, KindUnlabelledCarton, KindCartonOverLimit, KindMixedCartonContentMismatch,
+		KindLabelNonCompliant, KindWrongDestination} {
 		if _, err := Rehydrate(withFinding(base, CartonFindingState{Kind: string(kind), At: at(1)})); err != nil {
 			t.Fatalf("kind %s must rehydrate: %v", kind, err)
 		}
@@ -219,4 +220,23 @@ func TestRehydrateRefusesAMalformedCartonDiscrepancy(t *testing.T) {
 func withFinding(p Persisted, f CartonFindingState) Persisted {
 	p.CartonDiscrepancies = []CartonFindingState{f}
 	return p
+}
+
+func TestPersistedRoundTripsTheSupplierOfALabelFinding(t *testing.T) {
+	r := openedCartons(t)
+	if _, err := r.RejectLabel(LabelViolation{Reason: ReasonUnknownAI, Scanned: "]C199ABC"}, "ACME", at(1)); err != nil {
+		t.Fatal(err)
+	}
+	p := r.Persisted()
+	want := CartonFindingState{Kind: "LabelNonCompliant", Expected: "unknown_ai", Actual: "]C199ABC", SupplierRef: "ACME", At: at(1)}
+	if len(p.CartonDiscrepancies) != 1 || p.CartonDiscrepancies[0] != want {
+		t.Fatalf("persisted = %+v, want %+v", p.CartonDiscrepancies, want)
+	}
+	back, err := Rehydrate(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := back.CartonDiscrepancies(); len(got) != 1 || got[0].SupplierRef != "ACME" || got[0].Kind != KindLabelNonCompliant {
+		t.Fatalf("rehydrated = %+v", got)
+	}
 }

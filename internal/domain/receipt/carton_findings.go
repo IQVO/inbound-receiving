@@ -21,17 +21,18 @@ type CartonFinding struct {
 // CartonFindingState is the stored shape of a CartonFinding. SSCC, Expected
 // and Actual are empty when they do not apply.
 type CartonFindingState struct {
-	Kind     string
-	SSCC     string
-	Expected string
-	Actual   string
-	At       time.Time
+	Kind        string
+	SSCC        string
+	Expected    string
+	Actual      string
+	SupplierRef string
+	At          time.Time
 }
 
 var cartonKinds = map[Kind]bool{
 	KindUnexpectedCarton: true, KindMissingCarton: true, KindDuplicateSscc: true, KindUnknownGtin: true,
 	KindCaseQtyMismatch: true, KindMixedCaseDeclaredAsCasePack: true, KindUnlabelledCarton: true,
-	KindCartonOverLimit: true, KindMixedCartonContentMismatch: true,
+	KindCartonOverLimit: true, KindMixedCartonContentMismatch: true, KindLabelNonCompliant: true, KindWrongDestination: true,
 }
 
 // CartonDiscrepancies returns every carton discrepancy raised on the receipt,
@@ -66,7 +67,7 @@ func buildFindings(states []CartonFindingState) ([]CartonFinding, error) {
 			return nil, ErrInvalidCartonDiscrepancy
 		}
 		out = append(out, CartonFinding{
-			CartonDiscrepancy: CartonDiscrepancy{Kind: Kind(s.Kind), SSCC: sscc, Expected: s.Expected, Actual: s.Actual},
+			CartonDiscrepancy: CartonDiscrepancy{Kind: Kind(s.Kind), SSCC: sscc, Expected: s.Expected, Actual: s.Actual, SupplierRef: s.SupplierRef},
 			At:                s.At.UTC(),
 		})
 	}
@@ -77,7 +78,7 @@ func findingStates(in []CartonFinding) []CartonFindingState {
 	out := make([]CartonFindingState, 0, len(in))
 	for _, f := range in {
 		out = append(out, CartonFindingState{
-			Kind: string(f.Kind), SSCC: f.SSCC.String(), Expected: f.Expected, Actual: f.Actual, At: f.At,
+			Kind: string(f.Kind), SSCC: f.SSCC.String(), Expected: f.Expected, Actual: f.Actual, SupplierRef: f.SupplierRef, At: f.At,
 		})
 	}
 	return out

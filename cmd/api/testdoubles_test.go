@@ -19,7 +19,7 @@ func testDoubleAdapters(t *testing.T) adapters {
 	stows, advice := memory.NewStowStore(receipts), memory.NewAdviceStore(receipts)
 	return adapters{
 		asns: asns, appointments: appts, receipts: receipts, outbox: ob, outboxStore: ob, processed: processed, stows: stows, advice: advice,
-		skus: skus, doors: doors, packaging: memory.NewPackagingView(), idempotency: memory.NewIdempotencyStore(),
+		skus: skus, doors: doors, packaging: memory.NewPackagingView(), idempotency: memory.NewIdempotencyStore(), ssccSerials: memory.NewSsccSerials(),
 		uow: memory.NewUnitOfWork(asns, appts, receipts, skus, doors, ob, processed, stows, advice),
 	}
 }

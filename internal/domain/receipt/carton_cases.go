@@ -14,6 +14,28 @@ import (
 // on ReceiptCartonReceived. Against a carton ASN a case without an SSCC also
 // raises UnlabelledCarton; against a flat ASN nobody promised a label.
 func (r *Receipt) ReceiveCases(in CaseScan, at time.Time) (ScanResult, error) {
+	if !in.AssignedSSCC.IsZero() {
+		return ScanResult{}, ErrScanMismatch // an assigned SSCC goes through AssignSscc
+	}
+	return r.receiveCases(in, at)
+}
+
+// AssignSscc receives ONE case that arrived without a label under the SSCC the
+// receiver allocated (ADR 0024): it is booked exactly like a case scan of one
+// case, but the carton gets the assigned SSCC as its SSCC and its LPN and is
+// marked receiver-assigned; against a carton ASN it still raises UnlabelledCarton,
+// because the carton did arrive without a label. The SSCC must be new to the ledger.
+func (r *Receipt) AssignSscc(in CaseScan, at time.Time) (ScanResult, error) {
+	if in.AssignedSSCC.IsZero() || in.Cases != 1 || len(in.LPNs) != 1 || in.LPNs[0] != in.AssignedSSCC.String() {
+		return ScanResult{}, ErrScanMismatch
+	}
+	if r.cartonIndex(in.AssignedSSCC) >= 0 {
+		return ScanResult{}, ErrScanMismatch
+	}
+	return r.receiveCases(in, at)
+}
+
+func (r *Receipt) receiveCases(in CaseScan, at time.Time) (ScanResult, error) {
 	if err := r.requireOpen(); err != nil {
 		return ScanResult{}, err
 	}
@@ -41,13 +63,17 @@ func (r *Receipt) ReceiveCases(in CaseScan, at time.Time) (ScanResult, error) {
 	labelled := r.hasManifest()
 	events := []Event{ReceiptLineReceived{
 		Header: r.header(at), LineNo: lineNo, SKU: in.SKU, Quantity: qty, Condition: in.Condition,
-		OwnerRef: r.ownerRef, PackGTIN: in.Pack.GTIN, Cases: in.Cases,
+		OwnerRef: r.ownerRef, PackGTIN: in.Pack.GTIN, Cases: in.Cases, SSCC: in.AssignedSSCC,
 	}}
 	res := ScanResult{Accepted: true}
 	for _, lpn := range in.LPNs {
 		c := Carton{
-			lpn: lpn, kind: asn.CartonHomogeneousCase, status: CartonAccepted, sealed: true, receivedAt: at.UTC(),
+			lpn: lpn, sscc: in.AssignedSSCC, kind: asn.CartonHomogeneousCase, status: CartonAccepted, sealed: true, receivedAt: at.UTC(),
+			label:    in.Label,
 			contents: []CartonContent{{LineNo: lineNo, SKU: in.SKU, GTIN: in.ChildGTIN, Qty: in.Pack.UnitsPerPack, Lot: in.Lot, Expiry: in.Expiry, Condition: in.Condition}},
+		}
+		if !in.AssignedSSCC.IsZero() {
+			c.ssccSource = SsccReceiver
 		}
 		r.cartons = append(r.cartons, c)
 		res.Cartons = append(res.Cartons, c)

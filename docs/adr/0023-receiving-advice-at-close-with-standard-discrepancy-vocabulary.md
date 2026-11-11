@@ -70,6 +70,8 @@ fails the build).
 | `MixedCartonContentMismatch` | carton | **unmapped** | `mismatch_quantity` | see below |
 | `UnlabelledCarton` | carton | **unmapped** | `non_conformant` | see below |
 | `CartonOverLimit` | carton | **unmapped** | `non_conformant` | see below |
+| `LabelNonCompliant` (ADR 0024) | carton | **unmapped** | `non_conformant` | the scanned label breaks the GS1 rules; refused at the scan, nothing booked |
+| `WrongDestination` (ADR 0024) | carton | **unmapped** | `mismatch_instance` | the label's ship-to GLN (AI 410) is not a site of this receiving; refused at the scan |
 
 **`unmapped` is a decision, not a gap.** W13 describes the condition of *goods*
 at receipt. Five of our carton kinds describe the *scan or the packaging*, and no

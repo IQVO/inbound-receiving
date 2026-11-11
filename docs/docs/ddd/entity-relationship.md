@@ -93,11 +93,14 @@ erDiagram
     boolean sealed
     jsonb contents
     timestamptz received_at "nullable; set exactly when Accepted"
+    text sscc_source "nullable; receiver for an AssignSscc carton, 0008"
+    jsonb label "nullable; the dates and ids the scanned label carried, 0008"
   }
   receipt_carton_discrepancies {
     text receipt_id PK
     int position PK "raise order on the receipt, 0004"
-    text kind "UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch"
+    text kind "UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch, LabelNonCompliant, WrongDestination (0008)"
+    text supplier_ref "nullable; the ASN supplier on label findings, 0008"
     text sscc "nullable; NULL when the finding is not about a scanned SSCC"
     text expected "nullable"
     text actual "nullable"

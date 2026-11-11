@@ -108,9 +108,36 @@ only. A refused scan books nothing, answers `200` with `accepted=false` and rais
 | `UnlabelledCarton` | a case with no SSCC arrives against a carton ASN; it gets an internal `LPN-<ulid>` | yes |
 | `CartonOverLimit` | declared weight or longest side is above `CARTON_MAX_GROSS_WEIGHT_G` / `CARTON_MAX_LONGEST_SIDE_MM` | yes |
 | `MixedCartonContentMismatch` | `countedContents` of a MIXED carton differ from its manifest per SKU; the counted quantity is received | yes |
+| `LabelNonCompliant` | a raw `scan` breaks the GS1 rules (bad check digit, AI 01 with AI 02, a missing mandatory AI, ...); `expected` is the reason code, `actual` the raw scan | no |
+| `WrongDestination` | the label's ship-to GLN (AI 410) is not in `RECEIVING_SITE_GLNS`; `actual` is that GLN | no |
+
+The last two are raised **at the scan** ([ADR 0024](/docs/adr/0024-gs1-label-receiving-validation-destination-earliest-best-before-and-receiver-assigned-sscc)): nothing is booked, the finding keeps the ASN's
+`supplierRef` so a first-pass rate per supplier can be computed, and neither has a W13 code (their CBV
+dispositions are `non_conformant` and `mismatch_instance`). A label with no AI 410 is never refused for its
+destination, and the destination rule is off while `RECEIVING_SITE_GLNS` is empty.
 
 The label data of an accepted carton (`lpn`, `CODE128`, human readable text, SKU, units) is
 `GET /receipts/{receiptId}/cartons/{lpn}/label`; the floor client renders and prints it.
+
+### Dates on the label and mixed pallets
+
+An accepted carton keeps what its label said: `bestBefore` (AI 15), `expiry` (AI 17), `productionDate` (AI 11),
+`packagingDate` (AI 13), `serial` (AI 21), `purchaseOrder` (AI 400), `shipToGln` (AI 410) and `shipForGln`
+(AI 413, stored, never enforced). `GET /receipts/{receiptId}` reports the earliest `bestBefore` and `expiry` of
+the accepted cartons per line (`lines[].earliestBestBefore` / `earliestExpiry`) and per pallet
+(`pallets[]` = `{parentSscc, cartonCount, earliestBestBefore?, earliestExpiry?}`): the date a mixed pallet must
+be picked by. A day `00` is the last day of its month. The same earliest dates ride on each line of
+`ReceivingAdviceIssued` ([ADR 0024](/docs/adr/0024-gs1-label-receiving-validation-destination-earliest-best-before-and-receiver-assigned-sscc)).
+
+### A case with no label: AssignSscc
+
+`POST /receipts/{receiptId}/sscc-assignments` with the case `gtin` receives ONE case under an SSCC the receiver
+builds from its own GS1 company prefix (extension digit 0, a serial from a never-reused per-prefix Postgres
+sequence, a valid check digit) and answers `201` with `sscc`, `humanReadable`, `elementString` and
+`symbology` for the floor client to print. The carton is `ssccSource: receiver` and still raises
+`UnlabelledCarton` against a carton ASN. It answers **409 `sscc-prefix-not-configured`** until the business
+supplies `RECEIVER_GS1_COMPANY_PREFIX` (a licensed asset: no default), and 409 `sscc-serial-exhausted` when
+the prefix's serials are used up.
 
 ## Carton screens in the console
 
@@ -120,7 +147,7 @@ eaches; a homogeneous case reads "Case of N eaches".
 | Screen | Route under `/inbound-receiving` | Data |
 | --- | --- | --- |
 | ASN carton tree | `asns/:asnNumber/cartons` | `GET /asns/{asnNumber}/cartons`: pallet SSCC → carton SSCC → contents per SKU, status `Expected` / `Accepted` / `Missing` |
-| Carton discrepancies | `receipts/:receiptId/discrepancies` | `GET /receipts/{receiptId}` (`cartonDiscrepancies`) and `POST /receipts/{receiptId}/scans` (a scan form); explains all nine kinds with what to do |
+| Carton discrepancies | `receipts/:receiptId/discrepancies` | `GET /receipts/{receiptId}` (`cartonDiscrepancies`) and `POST /receipts/{receiptId}/scans` (a scan form); explains the nine kinds of ADR 0012/0014 with what to do (the two label kinds of ADR 0024 are listed by the receipt read but not yet explained on this screen: `web/` is a separate change) |
 | Carton label | `receipts/:receiptId/cartons/:lpn/label` | `GET /receipts/{receiptId}/cartons/{lpn}/label`; Code 128 drawn as inline SVG (GS1-128 for an SSCC), printed with `window.print()` and a print stylesheet |
 
 The receipt keeps every carton discrepancy it raises (ADR 0015): `GET /receipts/{receiptId}` lists them as

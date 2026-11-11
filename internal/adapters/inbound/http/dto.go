@@ -80,6 +80,15 @@ type receiveScanRequest struct {
 	CountedContents []countedContentRequest `json:"countedContents"`
 }
 
+// assignSsccRequest is POST /receipts/{id}/sscc-assignments: the case GTIN of a
+// case that arrived without an SSCC label (ADR 0024).
+type assignSsccRequest struct {
+	GTIN      string `json:"gtin"`
+	Condition string `json:"condition"`
+	Lot       string `json:"lot"`
+	Expiry    string `json:"expiry"`
+}
+
 type countedContentRequest struct {
 	SKU string `json:"sku"`
 	Qty int64  `json:"qty"`
