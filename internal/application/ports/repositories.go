@@ -6,6 +6,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/claudioed/inbound-receiving/internal/application/repository"
 	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
@@ -31,6 +32,11 @@ type AsnRepository interface {
 	// ExistingSsccs returns the given SSCCs (carton and pallet) that already
 	// appear on an ASN that is not Cancelled, so an SSCC stays unique per site.
 	ExistingSsccs(ctx context.Context, ssccs []gs1.SSCC) ([]gs1.SSCC, error)
+	// MarkLateArrival inserts the exactly-once marker of the ASN's
+	// AsnLateForArrival (ADR 0025): it reports true only for the call that
+	// inserted the row, so only that call raises the event. Inside a
+	// UnitOfWork it joins the transaction carried in ctx.
+	MarkLateArrival(ctx context.Context, number asn.Number, appointmentID, visitID string, raisedAt time.Time) (first bool, err error)
 }
 
 // AppointmentRepository reads the appointments local copy: dock-scheduling's

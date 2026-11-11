@@ -35,6 +35,11 @@ type StowStore interface {
 	// Evidence reads the arrival of the receipt's appointment and the stow
 	// of each of its Good cartons.
 	Evidence(ctx context.Context, r *receipt.Receipt) (repository.StowEvidence, error)
+	// Arrival reads the stored gate arrival of the appointment from the
+	// visit_arrivals copy: the visit id and the EARLIEST arrived_at seen. It
+	// reports false when no arrival was seen for the appointment yet (ADR
+	// 0025; the ASN-timeliness fact then stays unraised).
+	Arrival(ctx context.Context, appointmentID appointment.ID) (repository.Arrival, bool, error)
 	// Complete records that the receipt's ReceiptStowCompleted was raised. It
 	// reports true only for the call that inserted the marker, so the event
 	// is raised exactly once.

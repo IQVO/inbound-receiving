@@ -522,4 +522,5 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	w.registerLabels(sc)
 	w.registerStows(sc)
 	w.registerAdvice(sc)
+	w.registerAsnTimeliness(sc)
 }

@@ -139,8 +139,10 @@ registration. What changes is the scan:
     no manifest, so without AI 02 there is nothing to resolve the carton
     against. `LabelNonCompliant` (ADR 0024) does NOT fit: its closed reason-code
     set is derived from the gs1 package's PARSE errors, and this scan parses
-    fine. `sscc` is carried (the SSCC parsed), `actual` the scan's count when
-    AI 37 was present.
+    fine. `sscc` is carried (the SSCC parsed); `expected` and `actual` stay
+    empty. (A raw label carrying AI 37 without AI 02 never reaches this rule:
+    the gs1 package refuses it as a `missing_ai` violation, which is a real
+    `LabelNonCompliant`.)
   - a flat-ASN scan whose **AI 02 resolves to no line of the ASN** (the GTIN
     is unknown to the PackagingView, or maps to a SKU the ASN does not carry)
     is refused as **`UnknownGtin`** with the content GTIN in `actual` — the

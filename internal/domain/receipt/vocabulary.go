@@ -67,6 +67,9 @@ var codings = map[Kind]Coding{
 	// ADR 0024: the label kinds have no W13 code either.
 	KindLabelNonCompliant: {"", DispositionNonConformant},
 	KindWrongDestination:  {"", DispositionMismatchInstance},
+	// ADR 0025: a flat-ASN scan without AI 02. No W13 code exists for a label
+	// that lacks an AI (the same reasoning as UnlabelledCarton).
+	KindMissingContentGtin: {"", DispositionNonConformant},
 }
 
 // CodingOf returns the W13 code and CBV disposition of a kind. It reports false
@@ -77,12 +80,12 @@ func CodingOf(k Kind) (Coding, bool) {
 }
 
 // AllKinds returns every kind the aggregate can raise: the three line kinds of
-// ReceiptClosed, the two of the advice and the eleven carton kinds.
+// ReceiptClosed, the two of the advice and the twelve carton kinds.
 func AllKinds() []Kind {
 	return []Kind{
 		KindShort, KindOver, KindDamaged, KindIncorrectProduct, KindHold,
 		KindUnexpectedCarton, KindMissingCarton, KindDuplicateSscc, KindUnknownGtin, KindCaseQtyMismatch,
 		KindMixedCaseDeclaredAsCasePack, KindUnlabelledCarton, KindCartonOverLimit, KindMixedCartonContentMismatch,
-		KindLabelNonCompliant, KindWrongDestination,
+		KindLabelNonCompliant, KindWrongDestination, KindMissingContentGtin,
 	}
 }

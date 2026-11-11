@@ -141,19 +141,24 @@ type Asn struct {
 	supplierRef     string
 	ownerRef        shared.OwnerRef
 	expectedArrival time.Time
-	lines           []Line
-	cartons         []Carton
-	state           State
-	version         int64
+	// registeredAt is when the ASN was registered here (ADR 0025); the zero
+	// time on a row persisted before that ADR.
+	registeredAt time.Time
+	lines        []Line
+	cartons      []Carton
+	state        State
+	version      int64
 }
 
 // Draft is the unvalidated description of an ASN to register: the flat
-// fields plus the optional owner reference and carton tree.
+// fields plus the optional owner reference and carton tree. RegisteredAt is
+// the zero time for a legacy persisted row (ADR 0025).
 type Draft struct {
 	Number          string
 	SupplierRef     string
 	OwnerRef        string
 	ExpectedArrival time.Time
+	RegisteredAt    time.Time
 	Lines           []LineInput
 	Cartons         []CartonInput
 }
@@ -172,8 +177,10 @@ func Register(number, supplierRef string, expectedArrival time.Time, lines []Lin
 }
 
 // RegisterDraft creates an ASN, with its optional owner and cartons, at
-// version 1 in state Registered and raises ASNRegistered.
+// version 1 in state Registered and raises ASNRegistered. The same now stamps
+// the ASN's registered_at and the event (ADR 0025).
 func RegisterDraft(d Draft, now time.Time) (*Asn, []Event, error) {
+	d.RegisteredAt = now.UTC()
 	a, err := build(Persisted{Draft: d, State: Registered, Version: 1})
 	if err != nil {
 		return nil, nil, err
@@ -183,6 +190,7 @@ func RegisterDraft(d Draft, now time.Time) (*Asn, []Event, error) {
 		SupplierRef:     a.supplierRef,
 		OwnerRef:        a.ownerRef,
 		ExpectedArrival: a.expectedArrival,
+		RegisteredAt:    a.registeredAt,
 		Lines:           a.Lines(),
 		Cartons:         a.Cartons(),
 	}
@@ -202,7 +210,7 @@ func (a *Asn) Persisted() Persisted {
 	return Persisted{
 		Draft: Draft{
 			Number: string(a.number), SupplierRef: a.supplierRef, OwnerRef: string(a.ownerRef),
-			ExpectedArrival: a.expectedArrival, Lines: lines, Cartons: cartons,
+			ExpectedArrival: a.expectedArrival, RegisteredAt: a.registeredAt, Lines: lines, Cartons: cartons,
 		},
 		State: a.state, Version: a.version,
 	}
@@ -252,6 +260,7 @@ func build(p Persisted) (*Asn, error) {
 		supplierRef:     p.SupplierRef,
 		ownerRef:        owner,
 		expectedArrival: p.ExpectedArrival.UTC(),
+		registeredAt:    p.RegisteredAt.UTC(),
 		lines:           lines,
 		cartons:         cartons,
 		state:           p.State,
@@ -307,6 +316,10 @@ func (a *Asn) OwnerRef() shared.OwnerRef { return a.ownerRef }
 // ExpectedArrival returns the announced arrival, or the zero time when none
 // was given.
 func (a *Asn) ExpectedArrival() time.Time { return a.expectedArrival }
+
+// RegisteredAt returns when the ASN was registered here (ADR 0025), or the
+// zero time on a row persisted before that fact was kept.
+func (a *Asn) RegisteredAt() time.Time { return a.registeredAt }
 
 // Lines returns a copy of the lines in line-number order.
 func (a *Asn) Lines() []Line { return append([]Line(nil), a.lines...) }
@@ -369,8 +382,8 @@ func (a *Asn) BeginReceiving() error {
 	return nil
 }
 
-// Complete moves a Receiving ASN to Closed when its receipt closes. It is an
-// internal transition and raises no event.
+// Complete moves a Receiving ASN to Closed when its receipt closes. It is
+// an internal transition and raises no event.
 func (a *Asn) Complete() error {
 	if a.state != Receiving {
 		return ErrAsnNotReceiving
@@ -378,6 +391,28 @@ func (a *Asn) Complete() error {
 	a.state = Closed
 	a.version++
 	return nil
+}
+
+// LateForArrival evaluates the ASN against the arrival of the visit it was
+// received under (ADR 0025): the fact is raised when the ASN was registered
+// strictly AFTER the visit arrived at the gate. It is pure (no clock read:
+// now only stamps the event) and changes nothing on the aggregate. It returns
+// nil when the ASN was on time (equal or earlier than the arrival), when no
+// arrival was seen yet or when the registration time is unknown (a legacy
+// row): none of those is late.
+func (a *Asn) LateForArrival(appointmentID, visitID string, arrivedAt time.Time, now time.Time) *AsnLateForArrival {
+	if arrivedAt.IsZero() || a.registeredAt.IsZero() || !a.registeredAt.After(arrivedAt) {
+		return nil
+	}
+	return &AsnLateForArrival{
+		Header:          a.header(now),
+		SupplierRef:     a.supplierRef,
+		AppointmentID:   appointmentID,
+		VisitID:         visitID,
+		AsnRegisteredAt: a.registeredAt,
+		ArrivedAt:       arrivedAt.UTC(),
+		LatenessSeconds: int64(a.registeredAt.Sub(arrivedAt) / time.Second),
+	}
 }
 
 func (a *Asn) header(now time.Time) Header {

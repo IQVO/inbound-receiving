@@ -51,7 +51,7 @@ func goldenEvents(t *testing.T) []goldenCase {
 	rcptData := `"receipt_id":"` + rcptID + `","asn_number":"ASN-1001"`
 	return []goldenCase{
 		asnCase("ASNRegistered", "2026-10-08T12:00:00Z",
-			`{"asn_number":"ASN-1001","supplier_ref":"ACME","expected_arrival":"2026-10-09T08:00:00Z","lines":[{"line_no":1,"sku":"SKU-1","expected_qty":40},{"line_no":2,"sku":"SKU-2","expected_qty":5}]}`,
+			`{"asn_number":"ASN-1001","supplier_ref":"ACME","expected_arrival":"2026-10-09T08:00:00Z","registered_at":"2026-10-08T12:00:00Z","lines":[{"line_no":1,"sku":"SKU-1","expected_qty":40},{"line_no":2,"sku":"SKU-2","expected_qty":5}]}`,
 			registeredAsn(t, at(9, 8, 0))),
 		asnCase("ASNCancelled", "2026-10-08T12:30:00Z", `{"asn_number":"ASN-1001","reason":"Supplier cancelled the shipment"}`,
 			asn.ASNCancelled{Header: asn.Header{Number: "ASN-1001", At: at(8, 12, 30)}, Reason: "Supplier cancelled the shipment"}),

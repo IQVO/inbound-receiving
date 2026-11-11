@@ -52,7 +52,7 @@ func TestEncodeAsnRegisteredWithCartons(t *testing.T) {
 		t.Fatalf("EncodeAsn = %v, %v", msgs, err)
 	}
 	want := envelope("asn", "ASNRegistered", "ASN-1001", "2026-10-08T12:00:00Z",
-		`{"asn_number":"ASN-1001","supplier_ref":"ACME","owner_ref":"tenant-7f3a",`+
+		`{"asn_number":"ASN-1001","supplier_ref":"ACME","owner_ref":"tenant-7f3a","registered_at":"2026-10-08T12:00:00Z",`+
 			`"lines":[{"line_no":1,"sku":"SKU-1","expected_qty":12}],`+
 			`"cartons":[{"sscc":"`+testSSCC+`","parent_sscc":"`+testPallet+`","kind":"HOMOGENEOUS_CASE",`+
 			`"contents":[{"line_no":1,"sku":"SKU-1","gtin":"`+testEach+`","qty":12,"lot":"L2310","expiry":"2027-10-31"}],`+
@@ -66,7 +66,7 @@ func TestEncodeFlatAsnRegisteredIsUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := envelope("asn", "ASNRegistered", "ASN-1001", "2026-10-08T12:00:00Z",
-		`{"asn_number":"ASN-1001","supplier_ref":"ACME","expected_arrival":"2026-10-09T08:00:00Z",`+
+		`{"asn_number":"ASN-1001","supplier_ref":"ACME","expected_arrival":"2026-10-09T08:00:00Z","registered_at":"2026-10-08T12:00:00Z",`+
 			`"lines":[{"line_no":1,"sku":"SKU-1","expected_qty":40},{"line_no":2,"sku":"SKU-2","expected_qty":5}]}`)
 	assertRow(t, msgs[0], "asn.ASNRegistered", "ASN-1001", "ASN-1001", want)
 }

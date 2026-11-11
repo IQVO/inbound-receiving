@@ -38,6 +38,7 @@ type asnRegisteredData struct {
 	SupplierRef     string          `json:"supplier_ref"`
 	OwnerRef        string          `json:"owner_ref,omitempty"`
 	ExpectedArrival string          `json:"expected_arrival,omitempty"`
+	RegisteredAt    string          `json:"registered_at,omitempty"`
 	Lines           []asnLineData   `json:"lines"`
 	Cartons         []asnCartonData `json:"cartons,omitempty"`
 }
@@ -45,6 +46,17 @@ type asnRegisteredData struct {
 type asnCancelledData struct {
 	AsnNumber string `json:"asn_number"`
 	Reason    string `json:"reason,omitempty"`
+}
+
+// asnLateData is the payload of AsnLateForArrival (ADR 0025).
+type asnLateData struct {
+	AsnNumber       string `json:"asn_number"`
+	SupplierRef     string `json:"supplier_ref"`
+	AppointmentID   string `json:"appointment_id"`
+	VisitID         string `json:"visit_id"`
+	AsnRegisteredAt string `json:"asn_registered_at"`
+	ArrivedAt       string `json:"arrived_at"`
+	LatenessSeconds int64  `json:"lateness_seconds"`
 }
 
 type receiptOpenedData struct {

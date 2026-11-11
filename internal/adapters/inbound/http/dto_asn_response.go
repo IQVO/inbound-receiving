@@ -45,14 +45,17 @@ type cartonResponse struct {
 }
 
 type asnResponse struct {
-	AsnNumber       string            `json:"asnNumber"`
-	SupplierRef     string            `json:"supplierRef"`
-	OwnerRef        string            `json:"ownerRef,omitempty"`
-	ExpectedArrival *time.Time        `json:"expectedArrival,omitempty"`
-	State           string            `json:"state"`
-	Lines           []asnLineResponse `json:"lines"`
-	Cartons         []cartonResponse  `json:"cartons,omitempty"`
-	Version         int64             `json:"version"`
+	AsnNumber       string     `json:"asnNumber"`
+	SupplierRef     string     `json:"supplierRef"`
+	OwnerRef        string     `json:"ownerRef,omitempty"`
+	ExpectedArrival *time.Time `json:"expectedArrival,omitempty"`
+	// RegisteredAt is when the ASN was registered here (ADR 0025); omitted on
+	// a legacy row persisted before that fact was kept.
+	RegisteredAt *time.Time        `json:"registeredAt,omitempty"`
+	State        string            `json:"state"`
+	Lines        []asnLineResponse `json:"lines"`
+	Cartons      []cartonResponse  `json:"cartons,omitempty"`
+	Version      int64             `json:"version"`
 }
 
 type asnCartonsResponse struct {
@@ -106,6 +109,10 @@ func toAsn(a *asn.Asn) asnResponse {
 	}
 	if t := a.ExpectedArrival(); !t.IsZero() {
 		out.ExpectedArrival = &t
+	}
+	if t := a.RegisteredAt(); !t.IsZero() {
+		utc := t.UTC()
+		out.RegisteredAt = &utc
 	}
 	return out
 }

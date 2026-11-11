@@ -35,7 +35,10 @@ type ASNRegistered struct {
 	OwnerRef shared.OwnerRef
 	// ExpectedArrival is the zero time when the supplier gave none.
 	ExpectedArrival time.Time
-	Lines           []Line
+	// RegisteredAt is when the ASN was registered here (ADR 0025); the zero
+	// time never happens on a newly raised event.
+	RegisteredAt time.Time
+	Lines        []Line
 	// Cartons is empty for a flat ASN.
 	Cartons []Carton
 }
@@ -52,3 +55,25 @@ type ASNCancelled struct {
 
 // EventName returns "ASNCancelled".
 func (ASNCancelled) EventName() string { return "ASNCancelled" }
+
+// AsnLateForArrival is raised, once per ASN, when the ASN was registered
+// after the visit it was received under had already arrived at the gate
+// (ADR 0025). The trigger is OpenReceipt, the only place an ASN and an
+// appointment meet; the arrival comes from the visit_arrivals local copy.
+type AsnLateForArrival struct {
+	Header
+	SupplierRef string
+	// AppointmentID is the appointment the receipt was opened from and
+	// VisitID the yard visit whose arrival was the earliest seen for it.
+	AppointmentID   string
+	VisitID         string
+	AsnRegisteredAt time.Time
+	ArrivedAt       time.Time
+	// LatenessSeconds is registered_at - arrived_at, whole seconds, >= 1 by
+	// construction (an equal or earlier registration is on time and raises
+	// nothing).
+	LatenessSeconds int64
+}
+
+// EventName returns "AsnLateForArrival".
+func (AsnLateForArrival) EventName() string { return "AsnLateForArrival" }
