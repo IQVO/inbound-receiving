@@ -69,7 +69,7 @@ Feature: Receive cartons by scan (ADR 0012)
     Given I scanned the carton "003456789012345670"
     When I POST "/receipts/{receipt}/closures" with body ''
     Then the response status is 200
-    And the outbox event types are "asn.ASNRegistered, receipt.ReceiptOpened, receipt.ReceiptLineReceived, receipt.ReceiptCartonReceived, receipt.CartonDiscrepancyRaised, receipt.ReceiptClosed"
+    And the outbox event types are "asn.ASNRegistered, receipt.ReceiptOpened, receipt.ReceiptLineReceived, receipt.ReceiptCartonReceived, receipt.CartonDiscrepancyRaised, receipt.ReceiptClosed, receipt.ReceivingAdviceIssued"
     When I GET "/asns/ASN-C/cartons"
     Then the response field "cartons.0.status" is "accepted"
     And the response field "cartons.1.status" is "missing"

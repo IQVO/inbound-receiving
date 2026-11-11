@@ -840,10 +840,10 @@ components:
         `owner_ref` the 3PL depositor (omitted for fleet-owned stock). `last_carton_at`
         is when the last unit was received (the receipt's opening when nothing
         was); `within_sla` is `issued_at - last_carton_at <= sla_seconds`
-        (`RECEIVING_ADVICE_SLA`, default 24 h). Per line: `accepted_qty` is the
-        Good units, `rejected_qty` the Damaged ones and `held_qty` the Good units
-        declared held (a subset of `accepted_qty`); `received_qty` is accepted plus
-        rejected. `discrepancies` carry the line kinds `Short`, `Over`, `Damaged`,
+        (`RECEIVING_ADVICE_SLA`, default 24 h). Per line the three quantities are
+        exclusive: `accepted_qty` is the Good units not held, `rejected_qty` the
+        Damaged ones and `held_qty` the Good units declared held; `received_qty`
+        is their sum. `discrepancies` carry the line kinds `Short`, `Over`, `Damaged`,
         `IncorrectProduct` and `Hold` with `w13_code` and `cbv_disposition`.
         The payload is bounded because a message the broker refuses blocks the
         outbox (ADR 0007): at most 1000 lines (lines with exceptions first, then
@@ -1671,10 +1671,10 @@ components:
                       sku: { type: string }
                       gtin: { type: string, pattern: '^[0-9]{14}$', description: Omitted when the line has no known GTIN. }
                       expected_qty: { type: integer, minimum: 0 }
-                      received_qty: { type: integer, minimum: 0, description: Accepted plus rejected. }
-                      accepted_qty: { type: integer, minimum: 0, description: The Good units. }
+                      received_qty: { type: integer, minimum: 0, description: "Accepted plus rejected plus held." }
+                      accepted_qty: { type: integer, minimum: 0, description: The Good units that are not held. }
                       rejected_qty: { type: integer, minimum: 0, description: The Damaged units. }
-                      held_qty: { type: integer, minimum: 0, description: "The Good units declared held (a subset of accepted_qty)." }
+                      held_qty: { type: integer, minimum: 0, description: "The Good units declared held by the Hold command." }
                       sscc_count: { type: integer, minimum: 0, description: The real number of SSCCs received on the line. }
                       ssccs:
                         type: array
