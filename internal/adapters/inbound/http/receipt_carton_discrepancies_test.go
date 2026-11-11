@@ -53,8 +53,8 @@ func TestGetReceiptListsTheCartonFindingsRaisedByScans(t *testing.T) {
 
 	got := cartonDiscrepancies(t, f.get(t, "/receipts/"+id))
 	want := []any{
-		map[string]any{"kind": "UnexpectedCarton", "sscc": "340123450000000017", "at": "2026-10-09T07:15:00Z"},
-		map[string]any{"kind": "UnknownGtin", "actual": "10001234567892", "at": "2026-10-09T07:20:00Z"},
+		map[string]any{"kind": "UnexpectedCarton", "sscc": "340123450000000017", "at": "2026-10-09T07:15:00Z", "w13Code": "05", "cbvDisposition": "mismatch_instance"},
+		map[string]any{"kind": "UnknownGtin", "actual": "10001234567892", "at": "2026-10-09T07:20:00Z", "w13Code": "05", "cbvDisposition": "mismatch_class"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("cartonDiscrepancies = %v, want %v", got, want)

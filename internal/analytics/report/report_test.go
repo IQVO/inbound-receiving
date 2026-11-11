@@ -222,7 +222,7 @@ func TestNewDockToStockDefinesTheShare(t *testing.T) {
 
 func TestKinds(t *testing.T) {
 	want := []Kind{"ASNRegistered", "ASNCancelled", "DockAppointmentBooked", "DockAppointmentCheckedIn",
-		"DockAppointmentCancelled", "DockAppointmentCompleted", "ReceiptOpened", "ReceiptLineReceived", "ReceiptClosed", "ReceiptStowCompleted"}
+		"DockAppointmentCancelled", "DockAppointmentCompleted", "ReceiptOpened", "ReceiptLineReceived", "ReceiptClosed", "ReceiptStowCompleted", "ReceivingAdviceIssued"}
 	if !reflect.DeepEqual(Kinds(), want) {
 		t.Fatalf("Kinds() = %v", Kinds())
 	}
@@ -281,6 +281,9 @@ func valid(kind Kind) Event {
 	}
 	if kind == KindReceiptLineReceived {
 		e.Line = &LineReceived{LineNo: 1, SKU: "SKU-1", Quantity: 5, Condition: ConditionGood}
+	}
+	if kind == KindReceivingAdviceIssued {
+		e.Advice = &AdviceIssued{WithinSLA: true}
 	}
 	return e
 }
@@ -367,7 +370,14 @@ var invalidEvents = map[string]func() Event{
 		e.Stow.CartonCount = 0
 		return e
 	},
-	"stow without a receipt": func() Event { e := valid(KindReceiptStowCompleted); e.ReceiptID = ""; return e },
+	"advice kind without an advice": func() Event { e := valid(KindReceivingAdviceIssued); e.Advice = nil; return e },
+	"advice on another kind": func() Event {
+		e := valid(KindReceiptClosed)
+		e.Advice = &AdviceIssued{WithinSLA: true}
+		return e
+	},
+	"advice without a receipt": func() Event { e := valid(KindReceivingAdviceIssued); e.ReceiptID = ""; return e },
+	"stow without a receipt":   func() Event { e := valid(KindReceiptStowCompleted); e.ReceiptID = ""; return e },
 	"unknown discrepancy kind": func() Event {
 		e := valid(KindReceiptClosed)
 		e.Discrepancies = []Discrepancy{{LineNo: 1, Kind: "Wrong"}}
@@ -399,5 +409,31 @@ func TestConditionAndKindValidity(t *testing.T) {
 	}
 	if !DiscrepancyShort.Valid() || !DiscrepancyOver.Valid() || !DiscrepancyDamaged.Valid() || DiscrepancyKind("x").Valid() {
 		t.Fatal("DiscrepancyKind.Valid is wrong")
+	}
+}
+
+func TestNewAdviceSummaryDefinesTheShare(t *testing.T) {
+	if got := NewAdviceSummary(0, 0); got.Count != 0 || got.WithinSLA != 0 || got.ShareWithinSLA != nil {
+		t.Fatalf("no advice, no share: %+v", got)
+	}
+	got := NewAdviceSummary(4, 3)
+	if got.Count != 4 || got.WithinSLA != 3 || got.ShareWithinSLA == nil || *got.ShareWithinSLA != 0.75 {
+		t.Fatalf("got %+v", got)
+	}
+	if all := NewAdviceSummary(2, 2); *all.ShareWithinSLA != 1 {
+		t.Fatalf("every advice inside the SLA is 100%%: %+v", all)
+	}
+	if none := NewAdviceSummary(2, 0); none.ShareWithinSLA == nil || *none.ShareWithinSLA != 0 {
+		t.Fatalf("no advice inside the SLA is 0%%, not null: %+v", none)
+	}
+}
+
+func TestAdviceOfCountsTheOnesInsideTheSLA(t *testing.T) {
+	if got := AdviceOf(nil); got.Count != 0 || got.ShareWithinSLA != nil {
+		t.Fatalf("got %+v", got)
+	}
+	got := AdviceOf([]bool{true, false, true, true})
+	if got.Count != 4 || got.WithinSLA != 3 || *got.ShareWithinSLA != 0.75 {
+		t.Fatalf("got %+v", got)
 	}
 }

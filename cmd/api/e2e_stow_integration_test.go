@@ -97,6 +97,7 @@ func phaseDockToStock(t *testing.T, s *service, w *world) {
 		expectedEvent{"receipt", "ReceiptLineReceived", opened.ReceiptID, asnNumber},
 		expectedEvent{"receipt", "ReceiptCartonReceived", opened.ReceiptID, asnNumber},
 		expectedEvent{"receipt", "ReceiptClosed", opened.ReceiptID, asnNumber},
+		expectedEvent{"receipt", "ReceivingAdviceIssued", opened.ReceiptID, asnNumber},
 		expectedEvent{"receipt", "ReceiptStowCompleted", opened.ReceiptID, asnNumber},
 	)
 }

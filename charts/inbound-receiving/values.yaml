@@ -151,6 +151,12 @@ config:
   # Keep it above the consumed topics' retention (Kafka default 7 days): an
   # older redelivery would be applied again.
   processedEventsRetention: "720h"
+  # RECEIVING_ADVICE_SLA (ADR 0023): the committed window after the last unit
+  # received for the receiving advice. The advice is issued at close, so it is
+  # late only when the close comes after this window; the housekeeping tick
+  # raises ReceivingAdviceOverdue once for an Open receipt past it. A Go
+  # duration (or plain seconds); zero, negative or malformed = 24h.
+  receivingAdviceSla: "24h"
   # PRODUCT_MODE (ADR 0003, ADR 0011): "kafka" is the ONLY mode. The local
   # SKU copy, fed from warehouse.product-master.events, is always enforced
   # when an ASN is registered, and the product consumer always runs.

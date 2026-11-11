@@ -118,6 +118,10 @@ func assertDay(t *testing.T, got, want report.PerformanceDay) {
 	got.ReceiptCycle, want.ReceiptCycle, got.DockDwell, want.DockDwell = report.Timing{}, report.Timing{}, report.Timing{}, report.Timing{}
 	assertDockToStock(t, want.Day, got.DockToStock, want.DockToStock)
 	got.DockToStock, want.DockToStock = report.DockToStock{}, report.DockToStock{}
+	if got.Advice.Count != want.Advice.Count || got.Advice.WithinSLA != want.Advice.WithinSLA || !approx(got.Advice.ShareWithinSLA, want.Advice.ShareWithinSLA) {
+		t.Fatalf("%s advice = %+v, want %+v", want.Day.Format("2006-01-02"), got.Advice, want.Advice)
+	}
+	got.Advice, want.Advice = report.AdviceSummary{}, report.AdviceSummary{}
 	got.Day = want.Day
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("day = %+v, want %+v", got, want)
@@ -240,6 +244,33 @@ var contractScenarios = []struct {
 		d6.DockToStock = report.NewDockToStock(3, f(7200), f(7200+0.8*(43200-7200)), 2)
 		assertDays(t, perf(t, s, "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z"), []report.PerformanceDay{d5, d6})
 	}},
+	{"advice: counted in the UTC day it was issued, one row per receipt, share inside the SLA", func(t *testing.T, s store) {
+		mustApply(t, s,
+			adviceEv("a1", "R-1", "2026-10-06T09:00:00Z", true),
+			adviceEv("a2", "R-2", "2026-10-06T10:00:00Z", false),
+			adviceEv("a3", "R-3", "2026-10-06T23:59:59Z", true),
+			adviceEv("a4", "R-4", "2026-10-05T23:59:59Z", false), // the day before
+			adviceEv("a5", "R-1", "2026-10-06T09:00:00Z", false), // another id for the same receipt: first wins
+		)
+		d5, d6 := zeroDay("2026-10-05"), zeroDay("2026-10-06")
+		d5.Advice = report.NewAdviceSummary(1, 0)
+		d6.Advice = report.NewAdviceSummary(3, 2)
+		assertDays(t, perf(t, s, "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z"), []report.PerformanceDay{d5, d6})
+		// An advice is not a receipt close: the closed-receipt count is untouched.
+		if d := perf(t, s, "2026-10-06T00:00:00Z", "2026-10-07T00:00:00Z"); d[0].ReceiptsClosed != 0 {
+			t.Fatalf("receipts closed = %d", d[0].ReceiptsClosed)
+		}
+	}},
+	{"an advice the schema forbids is rejected and leaves nothing behind", func(t *testing.T, s store) {
+		bad := adviceEv("bad", "R-9", "2026-10-06T07:00:00Z", true)
+		bad.Advice = nil
+		if _, err := s.Apply(context.Background(), bad); !errors.Is(err, report.ErrRejected) {
+			t.Fatalf("an advice without its detail must be rejected, got %v", err)
+		}
+		if last, _ := s.LastEventAt(context.Background()); last != nil {
+			t.Fatalf("the rejected event was marked processed: %v", last)
+		}
+	}},
 	{"a stow the schema forbids is rejected and leaves nothing behind", func(t *testing.T, s store) {
 		bad := stowEv("bad", "R-9", "2026-10-06T07:00:00Z", "2026-10-06T09:00:00Z", 7200, 0)
 		if _, err := s.Apply(context.Background(), bad); !errors.Is(err, report.ErrRejected) {
@@ -313,6 +344,13 @@ var contractScenarios = []struct {
 func stowEv(id, receipt, arrived, stowed string, seconds int64, cartons int) report.Event {
 	e := rcptEv(id, report.KindReceiptStowCompleted, receipt, "ASN-X", stowed)
 	e.Stow = &report.StowCompleted{ArrivedAt: at(arrived), StowedAt: at(stowed), DockToStockSeconds: seconds, CartonCount: cartons}
+	return e
+}
+
+// adviceEv is a ReceivingAdviceIssued issued at the given time.
+func adviceEv(id, receipt, issued string, within bool) report.Event {
+	e := rcptEv(id, report.KindReceivingAdviceIssued, receipt, "ASN-X", issued)
+	e.Advice = &report.AdviceIssued{WithinSLA: within}
 	return e
 }
 

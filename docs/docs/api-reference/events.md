@@ -44,7 +44,10 @@ Topic `warehouse.inbound-receiving.events`, written by the outbox relay.
 | `receipt.ReceiptClosed` | `POST /receipts/{receiptId}/closures` | `receipt_id`, `asn_number`, `closed_at`, `discrepancies[]` = `{line_no, sku, kind, expected_qty, received_qty, damaged_qty}` |
 | `receipt.ReceiptStowCompleted` | no request: raised by the `visit-arrival` and `carton-stow` consumers, or by `POST /receipts/{receiptId}/closures`, once a closed receipt opened from an appointment has the gate arrival and a stow for every Good carton (ADR 0021) | `receipt_id`, `asn_number`, `appointment_id`, `arrived_at`, `closed_at`, `stowed_at`, `dock_to_stock_seconds`, `carton_count` |
 
-`?` marks a field omitted when unset. `kind` is `Short`, `Over` or `Damaged`;
+| `receipt.ReceivingAdviceIssued` | no request: raised by `POST /receipts/{receiptId}/closures`, in the same transaction, right after `ReceiptClosed` (ADR 0023) | `receipt_id`, `asn_number`, `despatch_advice_ref`, `supplier_ref`, `owner_ref?`, `issued_at`, `last_carton_at`, `sla_seconds`, `within_sla`, `lines[]` = `{line_no, sku, gtin?, expected_qty, received_qty, accepted_qty, rejected_qty, held_qty, sscc_count, ssccs?, ssccs_truncated?, discrepancies[]}` (each `{kind, quantity, w13_code?, cbv_disposition}`), `lines_total`, `lines_truncated?`, `carton_findings[]`, `carton_findings_total` |
+| `receipt.ReceivingAdviceOverdue` | no request: raised by the housekeeping sweep, once per Open receipt past `RECEIVING_ADVICE_SLA` (ADR 0023) | `receipt_id`, `asn_number`, `last_carton_at`, `due_at`, `sla_seconds`, `overdue_at` |
+
+`?` marks a field omitted when unset. `kind` is `Short`, `Over` or `Damaged` (each with `w13_code` and `cbv_disposition`, ADR 0023);
 `discrepancies` is present and empty when everything matched. `received_qty` is
 good + damaged. `ReceiptLineReceived` is the **handover event**:
 inventory-storage books `condition=Good` quantities only.

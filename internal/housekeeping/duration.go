@@ -14,6 +14,9 @@ const (
 	EnvIdempotencyKeyTTL        = "IDEMPOTENCY_KEY_TTL"
 	EnvOutboxRetention          = "OUTBOX_RETENTION"
 	EnvProcessedEventsRetention = "PROCESSED_EVENTS_RETENTION"
+	// EnvReceivingAdviceSLA is the committed window of the receiving advice
+	// (ADR 0023), read by cmd/api for the close and for the overdue sweep.
+	EnvReceivingAdviceSLA = "RECEIVING_ADVICE_SLA"
 )
 
 // Duration reads key via env as a Go duration ("720h") or plain seconds

@@ -46,6 +46,7 @@ the chart and warehouse-infra set them, but their only legal value is `kafka`.
 | `IDEMPOTENCY_KEY_TTL` | `24h` | no | `idempotency_keys` rows older than this are deleted: a retry after the TTL runs the handler again. `0` keeps keys forever. Chart: `config.idempotencyKeyTTL`. | `internal/adapters/outbound/postgres/sweeper.go` |
 | `OUTBOX_RETENTION` | `168h` | no | PUBLISHED `outbox_events` rows older than this are deleted. Unpublished rows (including rows excluded at the attempt cap) are never swept. `0` keeps them forever. Chart: `config.outboxRetention`. | `internal/adapters/outbound/postgres/sweeper.go` |
 | `PROCESSED_EVENTS_RETENTION` | `720h` | no | `processed_events` dedupe marks older than this are deleted. Keep it above the consumed topics' retention (Kafka default 7 days), or an older redelivery is applied again. `0` keeps marks forever. Chart: `config.processedEventsRetention`. | `internal/adapters/outbound/postgres/sweeper.go` |
+| `RECEIVING_ADVICE_SLA` | `24h` | no | Committed window of the receiving advice after the last unit received ([ADR 0023](/docs/adr/0023-receiving-advice-at-close-with-standard-discrepancy-vocabulary)). The advice is issued at close, so `within_sla` is false only when the close comes later; the housekeeping tick raises `ReceivingAdviceOverdue` once for an Open receipt past the window. Go duration or plain seconds; zero, negative or malformed values log a warning and use `24h`. Chart: `config.receivingAdviceSla` (ConfigMap, `envFrom`). | `cmd/api/config.go`, `cmd/api/wire.go` |
 | `PRODUCT_MODE` | `kafka` | no | The only mode is `kafka` (the default): the product consumer always runs and `POST /asns` rejects SKUs that are not in the local copy (ADR 0003). `permissive` and `off` are boot errors (`PRODUCT_MODE=permissive is not supported: this context runs on real Kafka`); any other value is a boot error too. | `cmd/api/main.go` |
 | `PRODUCT_CONSUMER_GROUP` | unset | **yes** | Stable consumer group of the product consumer. Missing = boot error. There is no default on purpose: a random group would re-read the topic on every restart. | `cmd/api/main.go` |
 | `DOCK_DOOR_MODE` | `kafka` | no | The only mode is `kafka` (the default): the dock-door consumer always runs and `GET /docks` lists the known inbound doors. `permissive` and `off` are boot errors. `GET /docks` always reports `mode: kafka`. | `cmd/api/main.go` |
@@ -187,7 +188,7 @@ The chart ConfigMap (`templates/configmap.yaml`, named `<release>`) holds the
 non-secret `cmd/api` variables (`HTTP_ADDR`, `LOG_LEVEL`, `EVENT_PUBLISHER`,
 the modes and groups, `OUTBOX_RELAY_INTERVAL`, `OUTBOX_MAX_ATTEMPTS`, the
 housekeeping knobs `HOUSEKEEPING_INTERVAL`, `IDEMPOTENCY_KEY_TTL`,
-`OUTBOX_RETENTION`, `PROCESSED_EVENTS_RETENTION`,
+`OUTBOX_RETENTION`, `PROCESSED_EVENTS_RETENTION`, `RECEIVING_ADVICE_SLA`,
 `SHUTDOWN_DRAIN_DELAY`, `CORS_ALLOWED_ORIGINS`, `ENVIRONMENT`,
 `OTEL_EXPORTER_OTLP_ENDPOINT`, `KAFKA_BROKERS`). The api Deployment mounts it
 with `envFrom` (gap fix D14), so every `config.*` value really reaches the

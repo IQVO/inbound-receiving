@@ -14,11 +14,12 @@ import (
 	"time"
 )
 
-// Kind is which of the ten published events a fact came from. The names are
+// Kind is which of the eleven projected events a fact came from. The names are
 // the CloudEvents event names (the last segment of `type`).
 type Kind string
 
-// The ten events the analytics topic carries.
+// The eleven events the projection folds; the analytics topic carries more (the
+// advice overdue alarm is ignored).
 const (
 	KindAsnRegistered        Kind = "ASNRegistered"
 	KindAsnCancelled         Kind = "ASNCancelled"
@@ -31,6 +32,9 @@ const (
 	KindReceiptClosed        Kind = "ReceiptClosed"
 	// KindReceiptStowCompleted is the dock-to-stock fact (ADR 0021).
 	KindReceiptStowCompleted Kind = "ReceiptStowCompleted"
+	// KindReceivingAdviceIssued is the receiving advice issued at close; the
+	// KPI "% receipts with advice inside the SLA" folds it (ADR 0023).
+	KindReceivingAdviceIssued Kind = "ReceivingAdviceIssued"
 )
 
 // Kinds returns every projected kind, in catalogue order.
@@ -38,7 +42,7 @@ func Kinds() []Kind {
 	return []Kind{
 		KindAsnRegistered, KindAsnCancelled,
 		KindAppointmentBooked, KindAppointmentCheckedIn, KindAppointmentCancelled, KindAppointmentCompleted,
-		KindReceiptOpened, KindReceiptLineReceived, KindReceiptClosed, KindReceiptStowCompleted,
+		KindReceiptOpened, KindReceiptLineReceived, KindReceiptClosed, KindReceiptStowCompleted, KindReceivingAdviceIssued,
 	}
 }
 
@@ -53,7 +57,8 @@ func (k Kind) IsAppointment() bool {
 
 // IsReceipt reports whether k is a receipt event.
 func (k Kind) IsReceipt() bool {
-	return k == KindReceiptOpened || k == KindReceiptLineReceived || k == KindReceiptClosed || k == KindReceiptStowCompleted
+	return k == KindReceiptOpened || k == KindReceiptLineReceived || k == KindReceiptClosed || k == KindReceiptStowCompleted ||
+		k == KindReceivingAdviceIssued
 }
 
 // Condition is the condition of a received quantity.
@@ -108,6 +113,12 @@ type StowCompleted struct {
 	CartonCount        int
 }
 
+// AdviceIssued is the part of a ReceivingAdviceIssued the report reads: whether
+// the advice was inside the SLA (ADR 0023).
+type AdviceIssued struct {
+	WithinSLA bool
+}
+
 // Event is one decoded analytics event ready to project. Only the fields of
 // its Kind are set.
 type Event struct {
@@ -129,6 +140,8 @@ type Event struct {
 	Discrepancies []Discrepancy
 	// Stow is set exactly on a ReceiptStowCompleted.
 	Stow *StowCompleted
+	// Advice is set exactly on a ReceivingAdviceIssued.
+	Advice *AdviceIssued
 }
 
 // ErrInvalidEvent marks an event that can never be projected (the consumer
@@ -176,6 +189,10 @@ func (e Event) validateDetail() error {
 		}
 	case KindReceiptStowCompleted:
 		return e.validateStow()
+	case KindReceivingAdviceIssued:
+		if e.Advice == nil {
+			return fmt.Errorf("%w: %s %s without an advice", ErrInvalidEvent, e.Kind, e.EventID)
+		}
 	case KindReceiptClosed:
 		for _, d := range e.Discrepancies {
 			if d.LineNo < 1 || !d.Kind.Valid() {
@@ -193,6 +210,8 @@ func (e Event) strayDetail() string {
 		return "a received line"
 	case e.Kind != KindReceiptStowCompleted && e.Stow != nil:
 		return "a stow"
+	case e.Kind != KindReceivingAdviceIssued && e.Advice != nil:
+		return "an advice"
 	case e.Kind != KindReceiptClosed && len(e.Discrepancies) > 0:
 		return "discrepancies"
 	}
@@ -340,6 +359,9 @@ type PerformanceDay struct {
 	// DockToStock is the gate-arrival-to-last-Good-carton-stowed time of the
 	// receipts whose stow completed in the window (ADR 0021).
 	DockToStock DockToStock
+	// Advice is the receiving advices issued in the window and how many of them
+	// were inside the SLA (ADR 0023).
+	Advice AdviceSummary
 }
 
 // CurrentCounts is the state right now, independent of the report range.

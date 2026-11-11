@@ -262,7 +262,8 @@ the numbers are illustrative):
       "receipt_cycle": {"count": 3, "p50_seconds": 5400, "p95_seconds": 9000},
       "appointments": {"booked": 4, "checked_in": 3, "cancelled": 1, "completed": 3},
       "dock_dwell": {"count": 3, "p50_seconds": 4200, "p95_seconds": 7100},
-      "dock_to_stock": {"count": 2, "p50_seconds": 9300, "p90_seconds": 12100, "under_target": 1, "share_under_target": 0.5}
+      "dock_to_stock": {"count": 2, "p50_seconds": 9300, "p90_seconds": 12100, "under_target": 1, "share_under_target": 0.5},
+      "advice": {"count": 3, "within_sla": 3, "share_within_sla": 1}
     }
   ],
   "current": {"open_receipts": 2, "expected_today": 5, "expected_today_started": 3}
@@ -284,6 +285,21 @@ null when `count` is 0, `under_target` counts the facts at or under
 receipts (no appointment arrival) and receipts without cartons have no
 dock-to-stock and are not counted. The `dock_to_stock_facts` table is rebuilt by
 replaying the analytics topic under a new `ANALYTICS_CONSUMER_GROUP`.
+
+`advice` (ADR 0023) counts the receiving advices (`ReceivingAdviceIssued`)
+issued in the day: `count`, `within_sla` (issued inside `RECEIVING_ADVICE_SLA`,
+default 24 h, after the last unit received) and `share_within_sla`
+(`within_sla / count`, null when `count` is 0). The `advice_facts` table is
+rebuilt by the same replay. A receipt closed before the advice existed has none.
+
+### Receiving advice overdue
+
+An Open receipt whose last unit was received (or, with none, whose opening) is
+older than `RECEIVING_ADVICE_SLA` raises `ReceivingAdviceOverdue` once, from the
+housekeeping tick, with a WARN `receiving advice overdue` and the
+`inbound_receiving.advice.overdue` counter. Close the receipt (the advice then
+goes out with `within_sla` false) or cancel its ASN; the alarm is not repeated.
+Detection runs on `HOUSEKEEPING_INTERVAL`; `0` disables it with the sweeper.
 
 ### `GET /reports/freshness`
 

@@ -41,7 +41,12 @@ func seededReportsStore(t *testing.T) *analyticsstore.Memory {
 	stow.Stow = &report.StowCompleted{
 		ArrivedAt: at("2026-10-06T05:00:00Z"), StowedAt: at("2026-10-06T09:00:00Z"), DockToStockSeconds: 14400, CartonCount: 2,
 	}
+	advIn := rcpt(report.KindReceivingAdviceIssued, "v1", "R-1", "ASN-0", "2026-10-06T10:00:00Z")
+	advIn.Advice = &report.AdviceIssued{WithinSLA: true}
+	advLate := rcpt(report.KindReceivingAdviceIssued, "v2", "R-3", "ASN-3", "2026-10-06T12:00:00Z")
+	advLate.Advice = &report.AdviceIssued{WithinSLA: false}
 	events := []report.Event{
+		advIn, advLate,
 		{Kind: report.KindAsnRegistered, EventID: "a1", At: at("2026-10-01T08:00:00Z"), AsnNumber: "ASN-1", ExpectedArrival: arrival("2026-10-07T08:00:00Z")},
 		{Kind: report.KindAsnRegistered, EventID: "a2", At: at("2026-10-01T08:00:00Z"), AsnNumber: "ASN-2", ExpectedArrival: arrival("2026-10-07T09:00:00Z")},
 		{Kind: report.KindAsnCancelled, EventID: "a3", At: at("2026-10-02T08:00:00Z"), AsnNumber: "ASN-2"},
@@ -72,13 +77,15 @@ func TestReports_ReceivingPerformance(t *testing.T) {
 		`"receipt_cycle":{"count":1,"p50_seconds":7200,"p95_seconds":7200},` +
 		`"appointments":{"booked":0,"checked_in":1,"cancelled":0,"completed":1},` +
 		`"dock_dwell":{"count":1,"p50_seconds":10800,"p95_seconds":10800},` +
-		`"dock_to_stock":{"count":1,"p50_seconds":14400,"p90_seconds":14400,"under_target":0,"share_under_target":0}},` +
+		`"dock_to_stock":{"count":1,"p50_seconds":14400,"p90_seconds":14400,"under_target":0,"share_under_target":0},` +
+		`"advice":{"count":2,"within_sla":1,"share_within_sla":0.5}},` +
 		`{"day":"2026-10-07","receipts_closed":0,"lines_received":0,"units_good":0,"units_damaged":0,` +
 		`"discrepancies":{"short":0,"over":0,"damaged":0},` +
 		`"receipt_cycle":{"count":0,"p50_seconds":null,"p95_seconds":null},` +
 		`"appointments":{"booked":0,"checked_in":0,"cancelled":0,"completed":0},` +
 		`"dock_dwell":{"count":0,"p50_seconds":null,"p95_seconds":null},` +
-		`"dock_to_stock":{"count":0,"p50_seconds":null,"p90_seconds":null,"under_target":0,"share_under_target":null}}],` +
+		`"dock_to_stock":{"count":0,"p50_seconds":null,"p90_seconds":null,"under_target":0,"share_under_target":null},` +
+		`"advice":{"count":0,"within_sla":0,"share_within_sla":null}}],` +
 		`"current":{"open_receipts":1,"expected_today":1,"expected_today_started":1}}` + "\n"
 	if rec.Body.String() != want {
 		t.Fatalf("body:\n got %s\nwant %s", rec.Body, want)

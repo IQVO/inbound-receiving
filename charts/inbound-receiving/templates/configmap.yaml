@@ -32,6 +32,7 @@ data:
   IDEMPOTENCY_KEY_TTL: {{ .Values.config.idempotencyKeyTTL | quote }}
   OUTBOX_RETENTION: {{ .Values.config.outboxRetention | quote }}
   PROCESSED_EVENTS_RETENTION: {{ .Values.config.processedEventsRetention | quote }}
+  RECEIVING_ADVICE_SLA: {{ .Values.config.receivingAdviceSla | quote }}
   {{- with .Values.config.shutdownDrainDelay }}
   SHUTDOWN_DRAIN_DELAY: {{ . | quote }}
   {{- end }}

@@ -38,7 +38,7 @@ func entityOf(k report.Kind) string {
 	}
 }
 
-// analyticsKinds maps the FULL CloudEvents type of the ten published events
+// analyticsKinds maps the FULL CloudEvents type of the eleven projected events
 // to their report.Kind. Every other type on the topic is acknowledged and
 // ignored.
 var analyticsKinds = func() map[string]report.Kind {
@@ -61,6 +61,7 @@ type analyticsData struct {
 	StowedAt        time.Time  `json:"stowed_at"`
 	DockToStockSecs int64      `json:"dock_to_stock_seconds"`
 	CartonCount     int        `json:"carton_count"`
+	WithinSLA       *bool      `json:"within_sla"`
 	LineNo          int        `json:"line_no"`
 	SKU             string     `json:"sku"`
 	Quantity        int64      `json:"quantity"`
@@ -209,6 +210,10 @@ func applyReceiptDetail(e *report.Event, d analyticsData) {
 	case report.KindReceiptStowCompleted:
 		e.Stow = &report.StowCompleted{
 			ArrivedAt: d.ArrivedAt.UTC(), StowedAt: d.StowedAt.UTC(), DockToStockSeconds: d.DockToStockSecs, CartonCount: d.CartonCount,
+		}
+	case report.KindReceivingAdviceIssued:
+		if d.WithinSLA != nil { // an advice without within_sla stays detail-less and fails Validate
+			e.Advice = &report.AdviceIssued{WithinSLA: *d.WithinSLA}
 		}
 	case report.KindReceiptClosed:
 		e.Discrepancies = make([]report.Discrepancy, 0, len(d.Discrepancies))

@@ -22,6 +22,7 @@ type Memory struct {
 	receipts     map[string]*memReceipt
 	lines        []memLine
 	stows        map[string]report.StowCompleted // by receipt id
+	advices      map[string]memAdvice            // by receipt id
 	discrepancy  map[discrepancyKey]time.Time
 	lastAt       *time.Time
 }
@@ -42,6 +43,11 @@ type memLine struct {
 	condition report.Condition
 }
 
+type memAdvice struct {
+	issuedAt  time.Time
+	withinSLA bool
+}
+
 type discrepancyKey struct {
 	receiptID string
 	lineNo    int
@@ -57,6 +63,7 @@ func NewMemory() *Memory {
 		receipts:     map[string]*memReceipt{},
 		discrepancy:  map[discrepancyKey]time.Time{},
 		stows:        map[string]report.StowCompleted{},
+		advices:      map[string]memAdvice{},
 	}
 }
 
@@ -134,6 +141,12 @@ func (m *Memory) foldReceipt(e report.Event, at time.Time) {
 		}
 		return
 	}
+	if e.Kind == report.KindReceivingAdviceIssued {
+		if _, exists := m.advices[e.ReceiptID]; !exists { // one row per receipt: the first wins
+			m.advices[e.ReceiptID] = memAdvice{issuedAt: at, withinSLA: e.Advice.WithinSLA}
+		}
+		return
+	}
 	r, ok := m.receipts[e.ReceiptID]
 	if !ok {
 		r = &memReceipt{}
@@ -172,6 +185,9 @@ func checkLikeTheDatabase(e report.Event) error {
 	}
 	if s := e.Stow; s != nil && (s.DockToStockSeconds < 0 || s.CartonCount < 1) {
 		return fmt.Errorf("%w: stow of %s violates a check constraint", report.ErrRejected, e.ReceiptID)
+	}
+	if e.Kind == report.KindReceivingAdviceIssued && e.Advice == nil {
+		return fmt.Errorf("%w: advice of %s has no within_sla (a NOT NULL column)", report.ErrRejected, e.ReceiptID)
 	}
 	return nil
 }
@@ -220,6 +236,7 @@ func (m *Memory) PerformanceDays(_ context.Context, r report.Range) ([]report.Pe
 		m.countDiscrepancies(&d, w)
 		m.countAppointments(&d, w)
 		m.countStows(&d, w)
+		m.countAdvices(&d, w)
 		out = append(out, d)
 	}
 	return out, nil
@@ -277,6 +294,16 @@ func (m *Memory) countStows(d *report.PerformanceDay, w report.DayWindow) {
 		}
 	}
 	d.DockToStock = report.DockToStockOf(secs)
+}
+
+func (m *Memory) countAdvices(d *report.PerformanceDay, w report.DayWindow) {
+	var within []bool
+	for _, a := range m.advices {
+		if inWindowAt(a.issuedAt, w) {
+			within = append(within, a.withinSLA)
+		}
+	}
+	d.Advice = report.AdviceOf(within)
 }
 
 func (m *Memory) countReceipts(d *report.PerformanceDay, w report.DayWindow) {
