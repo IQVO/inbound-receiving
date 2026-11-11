@@ -87,6 +87,20 @@ grep -q 'RECEIVING_ADVICE_SLA: "24h"' <<<"$configmap" || fail "ConfigMap is miss
 advice_tuned="$(helm template "$release" "$chart_dir" "${base[@]}" --set config.receivingAdviceSla=36h --show-only templates/configmap.yaml)"
 grep -q 'RECEIVING_ADVICE_SLA: "36h"' <<<"$advice_tuned" || fail "the tuned config.receivingAdviceSla is not rendered"
 
+# ADR 0024: the label settings are optional (unset = not rendered), reach the api through
+# the ConfigMap when set, and a malformed company prefix refuses to render.
+if grep -q 'RECEIVING_SITE_GLNS\|RECEIVER_GS1_COMPANY_PREFIX' <<<"$configmap"; then
+  fail "the label settings must not be rendered when unset (ADR 0024)"
+fi
+label_set="$(helm template "$release" "$chart_dir" "${base[@]}" --set-string config.receivingSiteGlns=4012345000009 --set-string config.receiverGs1CompanyPrefix=0614141 --show-only templates/configmap.yaml)"
+grep -q 'RECEIVING_SITE_GLNS: "4012345000009"' <<<"$label_set" || fail "config.receivingSiteGlns is not rendered (ADR 0024)"
+grep -q 'RECEIVER_GS1_COMPANY_PREFIX: "0614141"' <<<"$label_set" || fail "config.receiverGs1CompanyPrefix lost its leading zero or is not rendered (ADR 0024)"
+for bad in 061414 06141411234 06141A1; do
+  if helm template "$release" "$chart_dir" "${base[@]}" --set-string config.receiverGs1CompanyPrefix="$bad" >/dev/null 2>&1; then
+    fail "config.receiverGs1CompanyPrefix=$bad must be refused (7 to 10 digits)"
+  fi
+done
+
 # The other workloads read their own explicit env and must NOT inherit the
 # api's ConfigMap (reports and projector would bind the api's HTTP_ADDR).
 for template in reports-deployment.yaml projector-deployment.yaml mcp-deployment.yaml a2a-deployment.yaml; do

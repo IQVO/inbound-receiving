@@ -157,6 +157,18 @@ config:
   # raises ReceivingAdviceOverdue once for an Open receipt past it. A Go
   # duration (or plain seconds); zero, negative or malformed = 24h.
   receivingAdviceSla: "24h"
+  # RECEIVING_SITE_GLNS (ADR 0024): comma-separated GLNs of the sites this
+  # receiving serves. When set, a scanned GS1-128 label whose ship-to GLN
+  # (AI 410) names another GLN is refused as a WrongDestination finding and
+  # nothing is booked. A label with no AI 410 is never refused for it. Empty =
+  # the destination rule is off.
+  receivingSiteGlns: ""
+  # RECEIVER_GS1_COMPANY_PREFIX (ADR 0024): the GS1 company prefix, 7 to 10
+  # digits, that the receiver builds its own SSCCs from (POST
+  # /receipts/{id}/sscc-assignments). It is a LICENSED GS1 asset: there is no
+  # default, and the business supplies it. Empty = that endpoint answers 409
+  # sscc-prefix-not-configured. Quote it: a leading zero is part of the prefix.
+  receiverGs1CompanyPrefix: ""
   # PRODUCT_MODE (ADR 0003, ADR 0011): "kafka" is the ONLY mode. The local
   # SKU copy, fed from warehouse.product-master.events, is always enforced
   # when an ASN is registered, and the product consumer always runs.

@@ -724,6 +724,16 @@ paths:
         `expectedKind` with a raw scan) is the kind the screen expects: a scan
         of another kind is 422 `scan-kind-mismatch` and changes nothing.
 
+        A raw `scan` is also validated as a GS1 logistic label (ADR 0024): a
+        label that breaks the GS1 rules (a bad check digit, AI 01 with AI 02,
+        a missing mandatory AI, ...) is refused with the finding
+        `LabelNonCompliant` (`expected` = the reason code, `actual` = the raw
+        scan, `supplierRef` = the ASN's supplier); with `RECEIVING_SITE_GLNS` set,
+        a label whose ship-to GLN (AI 410) is not one of the sites is refused
+        with `WrongDestination`. Both are findings, not errors, and nothing is
+        booked. A label that says no ship-to is never refused for it. The dates
+        the label carries (AI 15, 17, 11, 13) are kept on the carton.
+
         A scan that cannot be accepted because of a finding (an SSCC not on the
         manifest or already received, an unknown GTIN, a quantity that
         contradicts the pack) is NOT an error: it books nothing, raises the
@@ -853,6 +863,77 @@ paths:
           $ref: "#/components/responses/Conflict"
         "412":
           $ref: "#/components/responses/VersionMismatch"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /receipts/{receiptId}/sscc-assignments:
+    parameters:
+      - $ref: "#/components/parameters/ReceiptId"
+    post:
+      operationId: assignSscc
+      summary: Receive a case that has no label under an SSCC of our own
+      description: |
+        For a case that arrived with no SSCC label (ADR 0024). Give the case
+        GTIN; the service receives ONE case of the active CASE pack under a new
+        SSCC of the **receiver's own GS1 company prefix** (extension digit 0, a
+        serial from a never-reused per-prefix sequence, a valid check digit),
+        raises `UnlabelledCarton` against a carton ASN as always, and answers
+        **201** with what a printer needs: `sscc`, `humanReadable`
+        (`(00)<sscc>`), `elementString` (the GS1-128 data) and `symbology`. The
+        service has no printer driver: the floor client prints. The carton
+        carries `ssccSource: receiver` on `ReceiptCartonReceived`.
+
+        **409 `sscc-prefix-not-configured`** until the business supplies a GS1
+        company prefix (`RECEIVER_GS1_COMPANY_PREFIX`, 7 to 10 digits): the
+        prefix is a licensed asset and there is no default. **409
+        `sscc-serial-exhausted`** when every serial of the prefix is used.
+        Not naturally idempotent, so the `Idempotency-Key` is required: a retry
+        with the same key replays the same SSCC and receives nothing twice.
+      tags: [Receipts]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignSsccRequest"
+            example:
+              gtin: "20001234567851"
+      responses:
+        "201":
+          description: The case was received under the new SSCC.
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SsccAssignment"
+              example:
+                lpn: "006141410000000012"
+                sscc: "006141410000000012"
+                humanReadable: "(00)006141410000000012"
+                elementString: "00006141410000000012"
+                symbology: GS1-128
+                ssccSource: receiver
+                sku: SKU-1
+                units: 20
+                discrepancies: []
+                version: 4
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/VersionMismatch"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1279,7 +1360,8 @@ components:
       description: |
         The request conflicts with current state: `asn-already-exists`,
         `asn-in-progress`, `asn-terminal`, `asn-not-receivable`,
-        `appointment-cancelled`, `receipt-already-open`, `receipt-closed`, a write that lost a race
+        `appointment-cancelled`, `receipt-already-open`, `receipt-closed`, `sscc-prefix-not-configured` and
+        `sscc-serial-exhausted` (receiver-assigned SSCCs, ADR 0024), a write that lost a race
         (`concurrent-modification`), or an `Idempotency-Key` already used with
         a different request (`idempotency-key-reused`).
       content:
@@ -1371,7 +1453,7 @@ components:
         `asn-not-on-appointment`, `line-not-on-asn`, `invalid-sscc`,
         `duplicate-sscc`, `homogeneous-carton-mixed`, `carton-contents-mismatch`,
         `scan-kind-mismatch`, `unsupported-pack-level`,
-        `counted-contents-not-mixed` or `counted-sku-unknown`.
+        `counted-contents-not-mixed`, `counted-sku-unknown` or `unknown-gtin`.
       content:
         application/problem+json:
           schema:
@@ -1562,6 +1644,33 @@ components:
       type: string
       description: What a scan resolves to. `qty` counts cases for `CASE_GTIN` and eaches for `EACH_GTIN`.
       enum: [SSCC, CASE_GTIN, EACH_GTIN]
+    AssignSsccRequest:
+      type: object
+      additionalProperties: false
+      required: [gtin]
+      properties:
+        gtin: { type: string, pattern: '^[0-9]{14}$', description: "The CASE GTIN of the case (it must be in the PackagingView at the CASE level)." }
+        condition: { $ref: "#/components/schemas/Condition" }
+        lot: { type: string, maxLength: 20 }
+        expiry: { type: string, description: "`YYYY-MM-DD`." }
+    SsccAssignment:
+      type: object
+      required: [lpn, sscc, humanReadable, elementString, symbology, ssccSource, units, discrepancies, version]
+      description: The new SSCC and what a printer needs to render it (ADR 0024).
+      properties:
+        lpn: { type: string, description: The SSCC. }
+        sscc: { type: string, pattern: "^[0-9]{18}$" }
+        humanReadable: { type: string, description: "`(00)<sscc>`." }
+        elementString: { type: string, description: "The data of the GS1-128 symbol: AI 00 and the 18 digits, without parentheses." }
+        symbology: { type: string, enum: [GS1-128] }
+        ssccSource: { type: string, enum: [receiver] }
+        sku: { type: string }
+        units: { type: integer, format: int64, description: Eaches in the case. }
+        discrepancies:
+          type: array
+          description: Findings of the receiving (`UnlabelledCarton` against a carton ASN).
+          items: { $ref: "#/components/schemas/CartonDiscrepancy" }
+        version: { type: integer, format: int64 }
     ReceiveScanRequest:
       type: object
       additionalProperties: false
@@ -1632,6 +1741,15 @@ components:
           type: array
           items: { $ref: "#/components/schemas/ReceiptCartonContent" }
         receivedAt: { type: string, format: date-time }
+        ssccSource: { type: string, enum: [supplier, receiver], description: "Who gave the carton its SSCC (ADR 0024). Absent on a carton that has none." }
+        bestBefore: { type: string, format: date, description: "AI 15 of the scanned label (a day 00 is the last day of the month). Absent when the label had none." }
+        expiry: { type: string, format: date, description: "AI 17 of the scanned label." }
+        productionDate: { type: string, format: date, description: "AI 11 of the scanned label." }
+        packagingDate: { type: string, format: date, description: "AI 13 of the scanned label." }
+        serial: { type: string, description: "AI 21 of the scanned label." }
+        purchaseOrder: { type: string, description: "AI 400 of the scanned label." }
+        shipToGln: { type: string, pattern: "^[0-9]{13}$", description: "AI 410 of the scanned label." }
+        shipForGln: { type: string, pattern: "^[0-9]{13}$", description: "AI 413 of the scanned label; stored, never enforced." }
     CartonDiscrepancyKind:
       type: string
       description: |
@@ -1651,8 +1769,15 @@ components:
         as `grossWeightG:<n>` / `longestSideMm:<n>` joined by commas);
         `MixedCartonContentMismatch` = the `countedContents` of a MIXED carton
         differ from its manifest for a SKU (`expected` and `actual` are
-        `<sku>:<qty>`, one finding per SKU).
-      enum: [UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch]
+        `<sku>:<qty>`, one finding per SKU);
+        `LabelNonCompliant` = the scanned label breaks the GS1 rules (`expected`
+        is the reason code: `bad_check_digit`, `invalid_identifier`,
+        `conflicting_ais`, `missing_ai`, `unknown_ai`, ...; `actual` the raw
+        scan; nothing is booked); `WrongDestination` = the label's ship-to GLN
+        (AI 410) is not a site of this receiving (`actual` is the GLN; nothing
+        is booked). Neither kind has a W13 code; their CBV dispositions are
+        `non_conformant` and `mismatch_instance` (ADR 0024).
+      enum: [UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch, LabelNonCompliant, WrongDestination]
     CartonDiscrepancy:
       type: object
       required: [kind]
@@ -1663,6 +1788,7 @@ components:
         actual: { type: string }
         w13Code: { $ref: "#/components/schemas/W13Code" }
         cbvDisposition: { $ref: "#/components/schemas/CbvDisposition" }
+        supplierRef: { type: string, description: "The ASN's supplier; set on `LabelNonCompliant` and `WrongDestination` (ADR 0024)." }
     ReceiptCartonDiscrepancy:
       type: object
       description: |
@@ -1680,6 +1806,7 @@ components:
         at: { type: string, format: date-time }
         w13Code: { $ref: "#/components/schemas/W13Code" }
         cbvDisposition: { $ref: "#/components/schemas/CbvDisposition" }
+        supplierRef: { type: string, description: "The ASN's supplier; set on `LabelNonCompliant` and `WrongDestination` (ADR 0024)." }
     ScanResult:
       type: object
       required: [kind, accepted, lines, cartons, discrepancies, version]
@@ -1832,6 +1959,17 @@ components:
           type: integer
           format: int64
           minimum: 0
+        earliestBestBefore: { type: string, format: date, description: "The earliest best-before (AI 15) of the accepted cartons of the line (ADR 0024). Absent when none carried one." }
+        earliestExpiry: { type: string, format: date, description: "The earliest expiry (AI 17) of the accepted cartons of the line (ADR 0024). Absent when none carried one." }
+    PalletDates:
+      type: object
+      required: [parentSscc, cartonCount]
+      description: The accepted cartons of one pallet and their earliest dates (ADR 0024).
+      properties:
+        parentSscc: { type: string, pattern: "^[0-9]{18}$" }
+        cartonCount: { type: integer, minimum: 1 }
+        earliestBestBefore: { type: string, format: date, description: "The earliest AI 15 of the pallet's accepted cartons. Absent when none carried one." }
+        earliestExpiry: { type: string, format: date, description: "The earliest AI 17 of the pallet's accepted cartons. Absent when none carried one." }
     Discrepancy:
       type: object
       required: [lineNo, sku, kind, expectedQty, receivedQty, damagedQty]
@@ -1914,6 +2052,15 @@ components:
             three line-level kinds.
           items:
             $ref: "#/components/schemas/ReceiptCartonDiscrepancy"
+        pallets:
+          type: array
+          description: |
+            The accepted cartons grouped by parent SSCC, in the order the pallets
+            first appear, each with its earliest best-before and expiry: what the
+            putaway needs to pick by first-expired-first-out on a mixed pallet
+            (ADR 0024). Absent when no accepted carton has a pallet.
+          items:
+            $ref: "#/components/schemas/PalletDates"
         version:
           type: integer
           format: int64
