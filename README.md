@@ -181,6 +181,8 @@ returns 503 while draining. `/healthz` is liveness only.
 | `OUTBOX_MAX_ATTEMPTS` | `20` | Failures before the relay excludes a row (`0` = unlimited) |
 | `CARTON_MAX_GROSS_WEIGHT_G` | `0` (unchecked) | CartonOverLimit weight limit in grams (ADR 0014) |
 | `CARTON_MAX_LONGEST_SIDE_MM` | `0` (unchecked) | CartonOverLimit longest-side limit in mm (ADR 0014) |
+| `RECEIVING_SITE_GLNS` | empty (rule off) | Comma-separated site GLNs; a scanned label for another GLN is a `WrongDestination` finding (ADR 0024) |
+| `RECEIVER_GS1_COMPANY_PREFIX` | empty | 7 to 10 digit GS1 company prefix for receiver-assigned SSCCs; unset = `POST .../sscc-assignments` answers 409 (a licensed asset, no default; ADR 0024) |
 | `HOUSEKEEPING_INTERVAL` | `1h` | Sweeper interval (`0` = sweeper off, ADR 0010) |
 | `IDEMPOTENCY_KEY_TTL` | `24h` | `idempotency_keys` row lifetime (`0` = keep forever) |
 | `OUTBOX_RETENTION` | `168h` | Published `outbox_events` retention (`0` = keep forever) |
@@ -250,7 +252,8 @@ over 19 paths:
 | GET | `/receipts/{receiptId}` | GetReceipt |
 | POST | `/receipts/{receiptId}/lines` | ReceiveLine |
 | GET | `/receipts/{receiptId}/cartons/{lpn}/label` | printable carton label (ADR 0014) |
-| POST | `/receipts/{receiptId}/scans` | case-level scan receiving |
+| POST | `/receipts/{receiptId}/scans` | case-level scan receiving (validates a raw GS1 label, ADR 0024) |
+| POST | `/receipts/{receiptId}/sscc-assignments` | AssignSscc: receive an unlabelled case under a receiver-assigned SSCC (ADR 0024; 409 until a company prefix is configured) |
 | POST | `/receipts/{receiptId}/closures` | CloseReceipt |
 | GET | `/docks` | ListDocks |
 | GET | `/healthz`, `/readyz` | liveness; readiness (503 while draining) |

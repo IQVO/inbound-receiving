@@ -95,6 +95,14 @@ fi
 label_set="$(helm template "$release" "$chart_dir" "${base[@]}" --set-string config.receivingSiteGlns=4012345000009 --set-string config.receiverGs1CompanyPrefix=0614141 --show-only templates/configmap.yaml)"
 grep -q 'RECEIVING_SITE_GLNS: "4012345000009"' <<<"$label_set" || fail "config.receivingSiteGlns is not rendered (ADR 0024)"
 grep -q 'RECEIVER_GS1_COMPANY_PREFIX: "0614141"' <<<"$label_set" || fail "config.receiverGs1CompanyPrefix lost its leading zero or is not rendered (ADR 0024)"
+api_label="$(helm template "$release" "$chart_dir" "${base[@]}" --set-string config.receivingSiteGlns=4012345000009 --set-string config.receiverGs1CompanyPrefix=0614141 --show-only templates/deployment.yaml)"
+grep -A1 'name: RECEIVING_SITE_GLNS' <<<"$api_label" | grep -q 'value: "4012345000009"' || fail "api Deployment does not set RECEIVING_SITE_GLNS (ADR 0024)"
+grep -A1 'name: RECEIVER_GS1_COMPANY_PREFIX' <<<"$api_label" | grep -q 'value: "0614141"' || fail "api Deployment does not set RECEIVER_GS1_COMPANY_PREFIX (ADR 0024)"
+if grep -q 'RECEIVING_SITE_GLNS\|RECEIVER_GS1_COMPANY_PREFIX' <<<"$api_deployment"; then
+  fail "the api Deployment must not render the label settings when unset (ADR 0024)"
+fi
+all_label="$(helm template "$release" "$chart_dir" "${base[@]}" "${analytics[@]}" -f "$chart_dir/ci/all-components-values.yaml" --show-only templates/configmap.yaml)"
+grep -q 'RECEIVER_GS1_COMPANY_PREFIX: "0614141"' <<<"$all_label" || fail "the all-components values do not render the company prefix"
 for bad in 061414 06141411234 06141A1; do
   if helm template "$release" "$chart_dir" "${base[@]}" --set-string config.receiverGs1CompanyPrefix="$bad" >/dev/null 2>&1; then
     fail "config.receiverGs1CompanyPrefix=$bad must be refused (7 to 10 digits)"

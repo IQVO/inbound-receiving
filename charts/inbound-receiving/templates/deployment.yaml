@@ -108,6 +108,15 @@ spec:
               value: {{ .Values.config.cartonMaxGrossWeightG | int64 | quote }}
             - name: CARTON_MAX_LONGEST_SIDE_MM
               value: {{ .Values.config.cartonMaxLongestSideMm | int64 | quote }}
+            {{- /* ADR 0024: optional, rendered only when set; the prefix is a licensed GS1 asset with no default. */}}
+            {{- with .Values.config.receivingSiteGlns }}
+            - name: RECEIVING_SITE_GLNS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.config.receiverGs1CompanyPrefix }}
+            - name: RECEIVER_GS1_COMPANY_PREFIX
+              value: {{ . | toString | quote }}
+            {{- end }}
             {{- with .Values.config.shutdownDrainDelay }}
             - name: SHUTDOWN_DRAIN_DELAY
               value: {{ . | quote }}
