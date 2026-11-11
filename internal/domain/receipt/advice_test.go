@@ -529,6 +529,9 @@ func TestAdviceSsccBudgetIsSharedAcrossLinesInLineOrder(t *testing.T) {
 			t.Errorf("budget %d: line 1 %d/%v line 2 %d/%v, want %d/%v %d/%v", tc.budget,
 				len(l1.SSCCs), l1.SSCCsTruncated, len(l2.SSCCs), l2.SSCCsTruncated, tc.l1, tc.l1Truncated, tc.l2, tc.l2Truncated)
 		}
+		if tc.l2 == 0 && l2.SSCCs != nil {
+			t.Errorf("budget %d: a line with nothing listed has no list (nil), got %v", tc.budget, l2.SSCCs)
+		}
 		if l1.SSCCCount != 3 || l2.SSCCCount != 1 {
 			t.Errorf("budget %d: counts stay exact, got %d and %d", tc.budget, l1.SSCCCount, l2.SSCCCount)
 		}
@@ -604,6 +607,38 @@ func TestAdviceLinesAreCappedWithTheExceptionsFirst(t *testing.T) {
 	if len(ev.Lines) != 5 || !ev.LinesTruncated || ev.Lines[4].LineNo != 5 {
 		t.Fatalf("one under the total: %d lines, last %d", len(ev.Lines), ev.Lines[len(ev.Lines)-1].LineNo)
 	}
+}
+
+func TestAdviceLinesWithMoreExceptionsThanTheCapKeepTheFirstOnes(t *testing.T) {
+	r := manyShortLinesReceipt(t, 5) // five exceptions for a cap of three
+	ev := adviceWith(t, r, adviceBounds{lines: 3, sscc: 10, findings: 10})
+	var got []int
+	for _, l := range ev.Lines {
+		got = append(got, l.LineNo)
+	}
+	if !reflect.DeepEqual(got, []int{1, 2, 3}) || ev.LinesTotal != 5 || !ev.LinesTruncated {
+		t.Fatalf("lines kept = %v total %d truncated %v, want [1 2 3] of 5", got, ev.LinesTotal, ev.LinesTruncated)
+	}
+}
+
+func manyShortLinesReceipt(t *testing.T, n int) *Receipt {
+	t.Helper()
+	inputs := make([]asn.LineInput, 0, n)
+	for i := 1; i <= n; i++ {
+		inputs = append(inputs, asn.LineInput{LineNo: i, SKU: fmt.Sprintf("SKU-%d", i), ExpectedQty: 2})
+	}
+	a, _, err := asn.Register(asnNum, "ACME", time.Time{}, inputs, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, _, err := Open(rid, a.Snapshot(), "", "", t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Close(at(1)); err != nil { // nothing received: every line is short
+		t.Fatal(err)
+	}
+	return r
 }
 
 func TestIssueAdviceUsesTheRealBounds(t *testing.T) {

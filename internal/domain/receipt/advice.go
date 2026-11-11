@@ -235,11 +235,8 @@ func (r *Receipt) listSSCCs(l *AdviceLine, budget int) int {
 }
 
 // capAdviceLines keeps at most limit lines, the ones with an exception first and
-// then the others, always in line order. It returns lines unchanged when they fit.
+// then the others, always in line order; every line is kept when they fit.
 func capAdviceLines(lines []AdviceLine, limit int) []AdviceLine {
-	if len(lines) <= limit {
-		return lines
-	}
 	keep := make([]bool, len(lines))
 	kept := 0
 	for i, l := range lines {
