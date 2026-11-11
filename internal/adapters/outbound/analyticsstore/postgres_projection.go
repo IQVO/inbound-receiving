@@ -69,6 +69,13 @@ const upsertDockToStockSQL = `
 	VALUES ($1, $2, $3, $4, $5, $6)
 	ON CONFLICT (receipt_id) DO NOTHING`
 
+// An advice fact is one row per receipt (ADR 0023); the first one seen wins, so
+// a redelivery under a new id cannot move it.
+const upsertAdviceSQL = `
+	INSERT INTO advice_facts (receipt_id, asn_number, issued_at, within_sla)
+	VALUES ($1, $2, $3, $4)
+	ON CONFLICT (receipt_id) DO NOTHING`
+
 const insertLineSQL = `
 	INSERT INTO receipt_line_events (event_id, receipt_id, line_no, sku, quantity, condition, occurred_at)
 	VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -134,6 +141,13 @@ func foldReceipt(ctx context.Context, tx pgx.Tx, e report.Event) error {
 	if e.Kind == report.KindReceiptStowCompleted {
 		s := e.Stow
 		_, err := tx.Exec(ctx, upsertDockToStockSQL, e.ReceiptID, e.AsnNumber, s.ArrivedAt.UTC(), s.StowedAt.UTC(), s.DockToStockSeconds, s.CartonCount)
+		return err
+	}
+	if e.Kind == report.KindReceivingAdviceIssued {
+		if e.Advice == nil { // never happens past Validate; a nil must not become a NULL write
+			return fmt.Errorf("%w: advice of %s has no detail", report.ErrRejected, e.ReceiptID)
+		}
+		_, err := tx.Exec(ctx, upsertAdviceSQL, e.ReceiptID, e.AsnNumber, e.At.UTC(), e.Advice.WithinSLA)
 		return err
 	}
 	t := report.ReceiptTimesOf(e)

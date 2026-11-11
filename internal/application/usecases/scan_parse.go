@@ -2,7 +2,9 @@ package usecases
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
 )
 
@@ -16,7 +18,7 @@ func parseScanKind(value string) (ScanKind, error) {
 }
 
 // parseScan turns the command into a scanInput without touching any port.
-func parseScan(cmd ReceiveScanCommand) (scanInput, error) {
+func parseScan(cmd ReceiveScanCommand, year int) (scanInput, error) {
 	in := scanInput{qty: cmd.Qty, lot: cmd.Lot, expiry: cmd.Expiry, counted: cmd.CountedContents}
 	if len(in.counted) > MaxCountedContents {
 		return scanInput{}, fmt.Errorf("%w: at most %d counted contents", ErrInvalidScan, MaxCountedContents)
@@ -25,7 +27,7 @@ func parseScan(cmd ReceiveScanCommand) (scanInput, error) {
 		if cmd.Kind != "" || cmd.ID != "" {
 			return scanInput{}, fmt.Errorf("%w: give either a raw scan or a kind and id, not both", ErrInvalidScan)
 		}
-		return parseRawScan(in, cmd)
+		return parseRawScan(in, cmd, year)
 	}
 	kind, err := parseScanKind(cmd.Kind)
 	if err != nil {
@@ -47,7 +49,7 @@ func parseScan(cmd ReceiveScanCommand) (scanInput, error) {
 	return in, nil
 }
 
-func parseRawScan(in scanInput, cmd ReceiveScanCommand) (scanInput, error) {
+func parseRawScan(in scanInput, cmd ReceiveScanCommand, year int) (scanInput, error) {
 	if cmd.ExpectedKind != "" {
 		kind, err := parseScanKind(cmd.ExpectedKind)
 		if err != nil {
@@ -55,11 +57,23 @@ func parseRawScan(in scanInput, cmd ReceiveScanCommand) (scanInput, error) {
 		}
 		in.expected = kind
 	}
-	scan, err := gs1.ParseScan(cmd.Scan)
+	scan, err := gs1.ParseScanAt(cmd.Scan, year)
 	if err != nil {
+		if receipt.IsElementString(cmd.Scan) {
+			// A GS1-128 element string that breaks the standard is a label finding,
+			// not a request error (ADR 0024); junk stays a 400.
+			v := receipt.NewLabelViolation(cmd.Scan, err)
+			in.violation, in.startsWithSSCC = &v, strings.HasPrefix(cmd.Scan, "]C100")
+			return in, nil
+		}
 		return scanInput{}, fmt.Errorf("%w: %w", ErrInvalidScan, err)
 	}
 	in.sscc, in.gtin, in.labelGTIN, in.labelQty = scan.SSCC, scan.GTIN, scan.ContentGTIN, int64(scan.Count)
+	in.shipTo = scan.ShipToGLN
+	in.label = receipt.LabelData{
+		BestBefore: scan.BestBefore.String(), ProductionDate: scan.ProductionDate.String(), PackagingDate: scan.PackagingDate.String(),
+		Serial: scan.Serial, PurchaseOrder: scan.PurchaseOrder, ShipToGLN: scan.ShipToGLN.String(), ShipForGLN: scan.ShipForGLN.String(),
+	}
 	if len(in.counted) > 0 && in.sscc.IsZero() {
 		return scanInput{}, fmt.Errorf("%w: countedContents apply to an SSCC scan only", ErrInvalidScan)
 	}
@@ -69,6 +83,7 @@ func parseRawScan(in scanInput, cmd ReceiveScanCommand) (scanInput, error) {
 	if in.expiry == "" {
 		in.expiry = scan.Expiry.String()
 	}
+	in.label.Expiry = in.expiry
 	return in, nil
 }
 

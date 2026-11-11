@@ -8,7 +8,7 @@ sidebar_position: 12
 # Bounded context canvas
 
 :::caution[DockAppointment moved (ADR 0019)]
-The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (only the one-shot `api republish-appointments` backfill does). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
+The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (the one-shot `api republish-appointments` backfill that re-announced them was removed, [ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
 :::
 
 Following the ddd-crew [Bounded Context Canvas v5](https://github.com/ddd-crew/bounded-context-canvas).
@@ -91,18 +91,27 @@ flowchart LR
     subgraph OUT["Outbound - whom it calls or notifies"]
         direction TB
         out0["inventory-storage"]:::ctx
-        out1["warehouse-planning"]:::ctx
-        out2["no consumer today"]:::none
-        out3["own inbound-projector"]:::self
+        out1["yard-management"]:::ctx
+        out2["dock-scheduling"]:::ctx
+        out3["network-fulfillment"]:::ctx
+        out4["exception-management"]:::ctx
+        out5["no consumer today"]:::none
+        out6["own inbound-projector"]:::self
     end
-    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>ReceiptLineReceived"| out0
-    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>DockAppointmentBooked,<br/>DockAppointmentCancelled"| out1
-    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>ASNRegistered, ASNCancelled,<br/>DockAppointmentCheckedIn,<br/>DockAppointmentCompleted,<br/>ReceiptOpened, ReceiptClosed"| out2
-    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.analytics<br/>all eleven events (analytics<br/>copy)"| out3
+    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>ReceiptLineReceived,<br/>ReceiptCartonReceived"| out0
+    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>ASNRegistered, ASNCancelled,<br/>ReceiptOpened, ReceiptClosed"| out1
+    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>ASNRegistered, ASNCancelled"| out2
+    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>ReceiptCartonReceived,<br/>CartonDiscrepancyRaised,<br/>ReceiptClosed"| out3
+    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>CartonDiscrepancyRaised"| out4
+    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>ReceiptStowCompleted"| out5
+    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.analytics<br/>all eight events (analytics<br/>copy)"| out6
     linkStyle 0 stroke:#e8590c,stroke-width:2.5px
     linkStyle 1 stroke:#e8590c,stroke-width:2.5px
     linkStyle 2 stroke:#e8590c,stroke-width:2.5px
     linkStyle 3 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 4 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 5 stroke:#e8590c,stroke-width:2.5px
+    linkStyle 6 stroke:#e8590c,stroke-width:2.5px
 ```
 
 Source: the Inbound Communication and Outbound Communication tables of this
@@ -175,12 +184,15 @@ outbox and the relay in `cmd/api`.
 
 | Collaborator | Message | Type | Channel | Relationship |
 | --- | --- | --- | --- | --- |
-| `inventory-storage` | `ReceiptLineReceived` | Event | Kafka `warehouse.inbound-receiving.events`, `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived` | This context upstream, OHS + Published Language; inventory-storage books `condition=Good` only (its ADR 0037) |
-| none today | `ASNRegistered`, `ASNCancelled` | Event | same topic, `...asn.*` | OHS + PL |
-| `warehouse-planning` | `DockAppointmentBooked`, `DockAppointmentCancelled` | Event | same topic, `...dockappointment.DockAppointmentBooked` and `...DockAppointmentCancelled` | OHS + PL; consumed as inbound-labour demand by warehouse-planning's `InboundDemandConsumer` (its ADR 0017), group `warehouse-planning-inbound-demand` |
-| none today | `DockAppointmentCheckedIn`, `DockAppointmentCompleted` | Event | same topic, `...dockappointment.*` | OHS + PL |
-| none today | `ReceiptOpened`, `ReceiptClosed` | Event | same topic, `...receipt.*` | OHS + PL |
-| this context's own `inbound-projector` | all eleven events, same `type` and `id` | Event | Kafka `warehouse.inbound-receiving.analytics` (DLQ `.dlq`), `dataschema=urn:warehouse:inbound-receiving:analytics:<EventName>:v1` | internal data stream, not an integration contract (ADR 0006) |
+| `inventory-storage` | `ReceiptLineReceived`, `ReceiptCartonReceived` | Event | Kafka `warehouse.inbound-receiving.events`, `com.warehouse.wms.inbound-receiving.receipt.*` | This context upstream, OHS + Published Language; inventory-storage books `condition=Good` only (its ADR 0037) and links the carton identity (its ADR 0045) |
+| `yard-management` | `ASNRegistered`, `ASNCancelled`, `ReceiptOpened`, `ReceiptClosed` | Event | same topic, `...asn.*` and `...receipt.*` | OHS + PL; group `INBOUND_RECEIVING_CONSUMER_GROUP` |
+| `dock-scheduling` | `ASNRegistered`, `ASNCancelled` | Event | same topic, `...asn.*` | OHS + PL; group `ASN_CONSUMER_GROUP` |
+| `network-fulfillment` | `ReceiptCartonReceived`, `CartonDiscrepancyRaised`, `ReceiptClosed` | Event | same topic, `...receipt.*` | OHS + PL; group `INBOUND_RECEIPT_CONSUMER_GROUP` |
+| `exception-management` | `CartonDiscrepancyRaised` | Event | same topic, `...receipt.CartonDiscrepancyRaised` | OHS + PL; group `CARTON_DISCREPANCY_CONSUMER_GROUP` |
+| none today | `ReceiptStowCompleted` | Event | same topic, `...receipt.ReceiptStowCompleted` | OHS + PL |
+| this context's own `inbound-projector` | all eight events, same `type` and `id` (it folds six of them plus the four historical `dockappointment` types and ignores the two carton types) | Event | Kafka `warehouse.inbound-receiving.analytics` (DLQ `.dlq`), `dataschema=urn:warehouse:inbound-receiving:analytics:<EventName>:v1` | internal data stream, not an integration contract (ADR 0006) |
+
+The four `dockappointment.DockAppointment*` types are not an outbound message any more: ADR 0022 retired them and no sibling's dispatch code reads them. The full list with payloads is on [Domain events](/docs/ddd/domain-events).
 
 ## Ubiquitous Language
 
@@ -213,16 +225,17 @@ Over / Damaged), **Walk-in**, **Snapshot**, **Local copy**, **Version**.
 
 - ASNs arrive through the REST API already structured: no EDI parsing, purchase
   orders or supplier master data here (ADR 0001).
-- Consumers of the receipt events can live with the ordering caveat: receipt
-  events are keyed by `asn_number`, `DockAppointmentCompleted` by
-  `appointment_id`, so their relative order is not guaranteed (ADR 0004).
+- Consumers of the receipt events can rely on per-ASN order: all eight published
+  types are keyed by `asn_number` (`asnRow` and `receiptRow` in the encoder). The
+  four retired `dockappointment` types were keyed by `appointment_id`, so their
+  order relative to receipt events was never guaranteed (ADR 0004).
 - The far side handles its own failures (inventory-storage skips and logs); this
   context has no compensation flow in v1 (ADR 0003).
 
 ## Verification Metrics
 
 - Golden exact-JSON tests per published type (`TestEncoderGoldenAsnEvents`,
-  `TestEncoderGoldenAppointmentEvents`, `TestEncoderGoldenReceiptEvents`,
+  `TestEncoderGoldenReceiptEvents`,
   `internal/adapters/outbound/kafka/encoder_test.go`).
 - `TestEventCatalogueMatchesContract` checks ADR 0004 against
   `apis/asyncapi.yaml`; `TestHexagonalArchitecture` enforces the layering.

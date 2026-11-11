@@ -7,11 +7,10 @@ sidebar_position: 1
 # Downstream consumers
 
 `inbound-receiving` publishes on `warehouse.inbound-receiving.events`: eight
-current types (`ASNRegistered`, `ASNCancelled`, `ReceiptOpened`,
+types (`ASNRegistered`, `ASNCancelled`, `ReceiptOpened`,
 `ReceiptLineReceived`, `ReceiptCartonReceived`, `CartonDiscrepancyRaised`,
-`ReceiptClosed`) plus `ReceiptStowCompleted` (below) and the four legacy `DockAppointment*` types, which it no
-longer raises ([ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling))
-except through the one-shot `api republish-appointments` backfill. None of its
+`ReceiptClosed`, `ReceiptStowCompleted`) and no longer the four legacy `DockAppointment*` types ([ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling),
+retired from the contract by [ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)). None of its
 consumers calls this service at request time: each keeps what it needs from
 the events (ADR 0001, ADR 0003). The table reflects each consumer's code on its
 `develop` branch (verified 2026-11-09 by a literal scan of every fleet repo's
@@ -23,11 +22,20 @@ non-test Go for `com.warehouse.wms.inbound-receiving.*` types).
 | `network-fulfillment` (fleet side of the retail network) | `receipt.ReceiptCartonReceived`, `receipt.CartonDiscrepancyRaised`, `receipt.ReceiptClosed` | `INBOUND_RECEIPT_CONSUMER_GROUP` (warehouse-infra pins `network-fulfillment-inbound-receiving`) | closes the seller inbound loop: the receipt of a seller shipment (cartons accepted, their findings, the closing line kinds) goes back to the vendor as the shipment's receipt with its discrepancies | 0028 |
 | `exception-management` | `receipt.CartonDiscrepancyRaised` | `CARTON_DISCREPANCY_CONSUMER_GROUP` | opens and routes one exception case per carton finding | 0006 |
 | `yard-management` | `asn.ASNRegistered`, `asn.ASNCancelled`, `receipt.ReceiptOpened`, `receipt.ReceiptClosed` | `INBOUND_RECEIVING_CONSUMER_GROUP` | keeps a local copy of expected inbound ASNs and of receipts per door; a closed receipt auto-completes the unload at the door (AutoCompleteUnload) | 0003, 0009 |
-| `dock-scheduling` | `asn.ASNRegistered`, `asn.ASNCancelled`; legacy `dockappointment.DockAppointmentBooked` / `CheckedIn` / `Cancelled` / `Completed` | `ASN_CONSUMER_GROUP`; `DOCK_LEGACY_IMPORT_CONSUMER_GROUP` | ASN copy (an appointment can only cover a known, not-cancelled ASN; CANCELLED is sticky); the legacy importer rebuilds the appointments this context owned before ADR 0019 (strangler stage A, removed at stage E) | 0003, 0009 |
+| `dock-scheduling` | `asn.ASNRegistered`, `asn.ASNCancelled` | `ASN_CONSUMER_GROUP` | ASN copy (an appointment can only cover a known, not-cancelled ASN; CANCELLED is sticky); its legacy importer of the `dockappointment` types was removed (dock-scheduling ADR 0011) | 0003, 0009 |
 
 `receipt.ReceiptStowCompleted` (the dock-to-stock fact, [ADR 0021](/docs/adr/0021-dock-to-stock-kpi-from-yard-arrival-and-inventory-stow-facts))
 has **no consumer yet** outside this service's own projector, which folds its
 analytics copy into `GET /reports/receiving-performance`.
+
+`receipt.ReceivingAdviceIssued` and `receipt.ReceivingAdviceOverdue` (the receiving
+advice with W13/CBV-coded discrepancies and its SLA alarm,
+[ADR 0023](/docs/adr/0023-receiving-advice-at-close-with-standard-discrepancy-vocabulary))
+have **none yet, partner-connectivity planned (D-3)**: it will render the advice
+as EANCOM RECADV / X12 861 (supplier) or X12 944 (3PL depositor) and deliver it;
+this service owns the domain fact only. Rollout order: projector, then `cmd/api`,
+then `cmd/inbound-reports` (the ADR). No consumer group is added; the only new
+environment variable is `RECEIVING_ADVICE_SLA` on `cmd/api`.
 
 `warehouse-planning` no longer reads this topic: its inbound labour demand
 comes from dock-scheduling's appointments (its ADR 0020, strangler stage D),
@@ -39,8 +47,7 @@ Evidence (each consumer's `develop`): inventory-storage
 `internal/adapters/inbound/kafka/carton_discrepancy_consumer.go` and
 `internal/application/usecases/carton_discrepancy.go`; yard-management
 `internal/adapters/inbound/kafka/inbound_receiving_consumer.go`; dock-scheduling
-`internal/adapters/inbound/kafka/asn_consumer.go` and
-`internal/adapters/inbound/kafka/legacy_import_consumer.go`; warehouse-planning
+`internal/adapters/inbound/kafka/asn_consumer.go`; warehouse-planning
 `internal/adapters/inbound/kafka/dock_appointment_consumer.go`. A brand-new
 group starts at the earliest offset. Every consumer commits past the types it
 does not act on.
@@ -86,8 +93,10 @@ plan, not here.
 
 ## Events with no consumer yet
 
-Every current type has at least one consumer. The four `DockAppointment*`
-types are read only by dock-scheduling's legacy importer and go at stage E.
+Seven of the eight current types have at least one consumer (the table above);
+`ReceiptStowCompleted` has none yet (see above). The four retired
+`DockAppointment*` types have none: dock-scheduling's importer is removed
+(its ADR 0011) and this context no longer declares them (ADR 0022).
 All types are also copied to the internal analytics topic, whose only consumer
 is this context's own `inbound-projector`
 ([ADR 0006](/docs/adr/0006-analytics-read-side)); it is not an integration

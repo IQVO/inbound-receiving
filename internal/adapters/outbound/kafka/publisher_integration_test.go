@@ -26,7 +26,6 @@ import (
 
 	"github.com/claudioed/inbound-receiving/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/kafka"
-	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
@@ -110,15 +109,6 @@ func TestKafkaPublisherCloudEventsContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("register asn: %v", err)
 	}
-	// The legacy DockAppointment events exist only to be replayed by the stage
-	// B backfill (ADR 0019): build them the same way it does.
-	booked, err := appointment.Rehydrate(
-		"appt-1b4e28ba-2fa1-4d3c-8f6e-0a1b2c3d4e5f", "DOOR-1", "ACME Freight",
-		at.Add(2*time.Hour), at.Add(3*time.Hour), []string{"ASN-K1"}, appointment.Booked, 0)
-	if err != nil {
-		t.Fatalf("appointment: %v", err)
-	}
-	apptEvents := booked.Replay(appointment.Timeline{BookedAt: at, ChangedAt: at})
 	opened, rcptEvents, err := receipt.Open(
 		"rcpt-1b4e28ba-2fa1-4d3c-8f6e-0a1b2c3d4e5f", registered.Snapshot(),
 		"", "", at)
@@ -131,10 +121,6 @@ func TestKafkaPublisherCloudEventsContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode asn events: %v", err)
 	}
-	apptMsgs, err := encoder.EncodeAppointment(apptEvents...)
-	if err != nil {
-		t.Fatalf("encode appointment events: %v", err)
-	}
 	rcptMsgs, err := encoder.EncodeReceipt(rcptEvents...)
 	if err != nil {
 		t.Fatalf("encode receipt events: %v", err)
@@ -142,7 +128,7 @@ func TestKafkaPublisherCloudEventsContract(t *testing.T) {
 
 	sink := kafka.NewRelaySink(bs)
 	t.Cleanup(func() { _ = sink.Close() })
-	all := append(append(asnMsgs, apptMsgs...), rcptMsgs...)
+	all := append(asnMsgs, rcptMsgs...)
 	if err := sink.Send(ctx, all...); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
@@ -167,14 +153,6 @@ func TestKafkaPublisherCloudEventsContract(t *testing.T) {
 				"lines": []any{map[string]any{
 					"line_no": 1.0, "sku": "SKU-K", "expected_qty": 10.0,
 				}},
-			},
-		},
-		{
-			eventType: cloudevents.Type(kafka.EntityAppointment, "DockAppointmentBooked"),
-			key:       string(booked.ID()), subject: string(booked.ID()),
-			payload: map[string]any{
-				"appointment_id": string(booked.ID()), "door_code": "DOOR-1",
-				"carrier": "ACME Freight", "asn_numbers": []any{"ASN-K1"},
 			},
 		},
 		{

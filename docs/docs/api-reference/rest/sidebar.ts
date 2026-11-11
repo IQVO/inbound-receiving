@@ -136,6 +136,12 @@ const sidebar: SidebarsConfig = {
           label: "Close a receipt",
           className: "api-method post",
         },
+        {
+          type: "doc",
+          id: "api-reference/rest/assign-sscc",
+          label: "Receive a case that has no label under an SSCC of our own",
+          className: "api-method post",
+        },
       ],
     },
     {

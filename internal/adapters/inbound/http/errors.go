@@ -103,6 +103,9 @@ var problemCatalogue = []struct {
 	{asn.ErrAsnNotReceiving, conflict("asn-not-receivable", "ASN is not being received")},
 	{repository.ErrReceiptAlreadyOpen, conflict("receipt-already-open", "ASN already has an open receipt")},
 	{receipt.ErrReceiptClosed, conflict("receipt-closed", "Receipt is closed")},
+	// ADR 0024: no company prefix is configured (a licensed asset, no default), or its serials are used up.
+	{receipt.ErrCompanyPrefixNotConfigured, conflict("sscc-prefix-not-configured", "No GS1 company prefix is configured for receiver-assigned SSCCs")},
+	{repository.ErrSsccSerialsExhausted, conflict("sscc-serial-exhausted", "Every SSCC serial of the company prefix has been used")},
 	{repository.ErrConcurrentModification, conflict("concurrent-modification", "The resource was modified by another request; re-fetch the latest version and retry")},
 
 	{usecases.ErrUnknownSKU, unprocessable("unknown-sku", "SKU is not a registered product")},
@@ -118,6 +121,7 @@ var problemCatalogue = []struct {
 	{usecases.ErrCountedSkuUnknown, unprocessable("counted-sku-unknown", "A counted SKU has no each GTIN in the packaging view")},
 	{usecases.ErrScanKindMismatch, unprocessable("scan-kind-mismatch", "The scan is not of the kind the screen expects")},
 	{usecases.ErrUnsupportedPackLevel, unprocessable("unsupported-pack-level", "Only EACH and CASE pack levels can be received by scan")},
+	{usecases.ErrUnknownGtin, unprocessable("unknown-gtin", "The GTIN is not in the packaging view")},
 
 	{usecases.ErrVersionMismatch, problem{http.StatusPreconditionFailed, "version-mismatch", "The If-Match version is stale"}},
 }

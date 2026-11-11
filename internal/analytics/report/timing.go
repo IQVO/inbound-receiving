@@ -91,3 +91,34 @@ func TimingOf(seconds []float64) Timing {
 
 // Seconds is d in seconds as a float.
 func Seconds(d time.Duration) float64 { return d.Seconds() }
+
+// AdviceSummary counts the receiving advices (ADR 0023) issued in a window and
+// how many were inside the SLA: the KPI "% receipts with advice inside the SLA".
+// ShareWithinSLA is nil while Count is 0.
+type AdviceSummary struct {
+	Count          int
+	WithinSLA      int
+	ShareWithinSLA *float64
+}
+
+// NewAdviceSummary builds the summary from what a store counted. It is where
+// the share is defined, so every store agrees.
+func NewAdviceSummary(count, withinSLA int) AdviceSummary {
+	a := AdviceSummary{Count: count, WithinSLA: withinSLA}
+	if count > 0 {
+		share := float64(withinSLA) / float64(count)
+		a.ShareWithinSLA = &share
+	}
+	return a
+}
+
+// AdviceOf summarises advices given as "was it inside the SLA" flags.
+func AdviceOf(withinSLA []bool) AdviceSummary {
+	within := 0
+	for _, w := range withinSLA {
+		if w {
+			within++
+		}
+	}
+	return NewAdviceSummary(len(withinSLA), within)
+}

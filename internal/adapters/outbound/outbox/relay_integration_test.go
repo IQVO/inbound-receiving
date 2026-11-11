@@ -26,7 +26,6 @@ import (
 	relay "github.com/claudioed/inbound-receiving/internal/adapters/outbound/outbox"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/postgres"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
-	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 )
 
 // The relay is proven end to end against real infrastructure, both started
@@ -120,8 +119,8 @@ func createTopic(t *testing.T, broker, topic string) {
 }
 
 // step is one expected message: the Kafka key is the asn_number for ASN and
-// receipt events and the appointment id for the (legacy, backfilled) appointment events, while the
-// CloudEvents subject is always the aggregate instance id.
+// receipt events, while the CloudEvents subject is always the aggregate
+// instance id.
 type step struct {
 	eventType, key, subject string
 }
@@ -148,20 +147,6 @@ func TestRelayRealPostgresAndKafkaPublishesCloudEventsWithTheRightTypeAndKey(t *
 		AsnNumber: "ASN-1", SupplierRef: "ACME", Lines: []usecases.AsnLineInput{{LineNo: 1, SKU: "SKU-1", ExpectedQty: 10}},
 	})
 	must(err)
-	start := time.Now().UTC().Add(2 * time.Hour)
-	// A legacy appointment (version 0) and the stage B backfill: the legacy
-	// DockAppointmentBooked reaches Kafka through the same outbox and relay.
-	const apptID = "appt-00000000-0000-4000-8000-000000000001"
-	legacy, err := appointment.Rehydrate(apptID, "DOOR-1", "ACME Freight", start, start.Add(time.Hour), []string{"ASN-1"}, appointment.Booked, 0)
-	must(err)
-	appts := postgres.NewAppointmentRepo(pool)
-	_, err = appts.ApplyBooked(ctx, legacy)
-	must(err)
-	n, err := (&usecases.RepublishAppointments{Records: appts, Encoder: &outboundkafka.Encoder{Topic: topic}, Outbox: w.Outbox, UoW: w.UoW}).Execute(ctx)
-	must(err)
-	if n != 1 {
-		t.Fatalf("republished %d appointments, want 1", n)
-	}
 	rcpt, err := (&usecases.OpenReceipt{Writer: w}).Handle(ctx, usecases.OpenReceiptCommand{AsnNumber: "ASN-1"})
 	must(err)
 	_, err = (&usecases.ReceiveLine{Writer: w}).Handle(ctx, usecases.ReceiveLineCommand{ReceiptID: string(rcpt.ID()), LineNo: 1, Quantity: 8, Condition: "Good"})
@@ -185,7 +170,6 @@ func TestRelayRealPostgresAndKafkaPublishesCloudEventsWithTheRightTypeAndKey(t *
 	prefix := "com.warehouse.wms.inbound-receiving."
 	want := []step{
 		{prefix + "asn.ASNRegistered", "ASN-1", "ASN-1"},
-		{prefix + "dockappointment.DockAppointmentBooked", apptID, apptID},
 		{prefix + "receipt.ReceiptOpened", "ASN-1", string(rcpt.ID())},
 		{prefix + "receipt.ReceiptLineReceived", "ASN-1", string(rcpt.ID())},
 		{prefix + "receipt.ReceiptClosed", "ASN-1", string(rcpt.ID())},

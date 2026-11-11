@@ -68,10 +68,8 @@ func (r *Receipt) CompleteStow(arrivedAt time.Time, stows map[string]time.Time) 
 			last = at
 		}
 	}
-	seconds := int64(last.Sub(arrivedAt) / time.Second)
-	if seconds < 0 {
-		seconds = 0
-	}
+	// A stow before the arrival (clock skew between contexts) is clamped to 0.
+	seconds := max(int64(last.Sub(arrivedAt)/time.Second), 0)
 	return StowCompletion{
 		ArrivedAt: arrivedAt.UTC(), ClosedAt: r.closedAt, StowedAt: last.UTC(),
 		DockToStockSeconds: seconds, CartonCount: len(lpns),

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -39,6 +40,9 @@ type SweepResult struct {
 	IdempotencyKeys int64
 	OutboxEvents    int64
 	ProcessedEvents int64
+	// AdviceOverdue is how many Open receipts the pass raised
+	// ReceivingAdviceOverdue for (ADR 0023).
+	AdviceOverdue int64
 }
 
 // Sweeper is the periodic housekeeping job that bounds the three
@@ -62,6 +66,8 @@ type Sweeper struct {
 	outboxRetention    time.Duration
 	processedRetention time.Duration
 	batchSize          int
+	// adviceOverdue is the overdue half of the tick (ADR 0023); nil = none.
+	adviceOverdue func(context.Context) (int, error)
 }
 
 // SweeperOption configures a Sweeper beyond its required pool.
@@ -96,6 +102,14 @@ func WithSweepBatchSize(n int) SweeperOption {
 			s.batchSize = n
 		}
 	}
+}
+
+// WithAdviceOverdue adds the receiving-advice overdue sweep to every tick (ADR
+// 0023): f raises ReceivingAdviceOverdue once per receipt that is still Open
+// past the advice SLA and returns how many it raised. It needs the domain and
+// the outbox, so the composition root supplies it.
+func WithAdviceOverdue(f func(context.Context) (int, error)) SweeperOption {
+	return func(s *Sweeper) { s.adviceOverdue = f }
 }
 
 // WithSweeperLogger overrides the default slog.Default().
@@ -135,11 +149,11 @@ func (s *Sweeper) Run(ctx context.Context) error {
 		case err != nil && ctx.Err() == nil:
 			s.logger.Error("housekeeping sweep failed", "error", err,
 				"idempotency_keys_deleted", res.IdempotencyKeys, "outbox_events_deleted", res.OutboxEvents,
-				"processed_events_deleted", res.ProcessedEvents)
+				"processed_events_deleted", res.ProcessedEvents, "advice_overdue_raised", res.AdviceOverdue)
 		case res != (SweepResult{}):
 			s.logger.Info("housekeeping sweep",
 				"idempotency_keys_deleted", res.IdempotencyKeys, "outbox_events_deleted", res.OutboxEvents,
-				"processed_events_deleted", res.ProcessedEvents)
+				"processed_events_deleted", res.ProcessedEvents, "advice_overdue_raised", res.AdviceOverdue)
 		}
 
 		select {
@@ -199,6 +213,13 @@ func (s *Sweeper) SweepOnce(ctx context.Context) (SweepResult, error) {
 		*p.into = n
 		if err != nil {
 			return res, err
+		}
+	}
+	if s.adviceOverdue != nil {
+		n, err := s.adviceOverdue(ctx)
+		res.AdviceOverdue = int64(n)
+		if err != nil {
+			return res, fmt.Errorf("advice overdue sweep: %w", err)
 		}
 	}
 	return res, nil

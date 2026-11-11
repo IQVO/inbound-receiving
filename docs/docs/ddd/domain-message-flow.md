@@ -8,7 +8,7 @@ sidebar_position: 15
 # Domain message flow
 
 :::caution[DockAppointment moved (ADR 0019)]
-The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (only the one-shot `api republish-appointments` backfill does). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
+The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (the one-shot `api republish-appointments` backfill that re-announced them was removed, [ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
 :::
 
 Following ddd-crew [Domain Message Flow Modelling](https://github.com/ddd-crew/domain-message-flow-modelling).
@@ -26,14 +26,15 @@ sequenceDiagram
   actor Dock as Dock staff
   participant IR as inbound-receiving
   participant K as Kafka
+  participant DS as dock-scheduling
   participant INV as inventory-storage
 
   Sup->>IR: cmd: POST /asns
   IR-->>K: evt: ASNRegistered
-  Plan->>IR: cmd: POST /appointments
-  IR-->>K: evt: DockAppointmentBooked
-  Plan->>IR: cmd: POST /appointments/{id}/check-ins
-  IR-->>K: evt: DockAppointmentCheckedIn
+  K-->>DS: evt: ASNRegistered (ASN copy)
+  Plan->>DS: cmd: POST /appointments (dock-scheduling)
+  DS-->>K: evt: DockAppointmentBooked
+  K-->>IR: evt: DockAppointmentBooked (appointments copy)
   Dock->>IR: cmd: POST /receipts
   IR-->>K: evt: ReceiptOpened
   Dock->>IR: cmd: POST /receipts/{id}/lines
@@ -41,18 +42,21 @@ sequenceDiagram
   K-->>INV: evt: ReceiptLineReceived (Good lines are booked as staged stock)
   Dock->>IR: cmd: POST /receipts/{id}/closures
   IR-->>K: evt: ReceiptClosed
-  IR-->>K: evt: DockAppointmentCompleted
 ```
 
 Source: `internal/adapters/inbound/http/server.go`,
-`internal/application/usecases/{asn,appointment,receipt}.go`,
+`internal/application/usecases/{asn,receipt,consumers_appointment}.go`,
 `internal/adapters/outbound/kafka/encoder.go`, inventory-storage
-`internal/adapters/inbound/kafka/inbound_receipt_consumer.go`.
-Omits: the outbox relay hop between the use case and Kafka (every `evt:` leaves
-through `outbox_events`), the repeated `ReceiveLine` calls, and the cancel paths.
-`DockAppointmentCompleted` is raised only when the receipt was opened from an
-appointment. Its key is `appointment_id`, so its order relative to
-`ReceiptClosed` is not guaranteed.
+`internal/adapters/inbound/kafka/inbound_receipt_consumer.go`, dock-scheduling
+`internal/adapters/inbound/kafka/asn_consumer.go`.
+Omits: the outbox relay hop between the use case and Kafka (every `evt:` this
+context raises leaves through `outbox_events`), the repeated `ReceiveLine` calls,
+the scan path (`ReceiptCartonReceived`, `CartonDiscrepancyRaised`), the gate
+check-in and the dock-to-stock fact (`ReceiptStowCompleted`, ADR 0021), and the
+cancel paths. This context raises no appointment event: the four
+`dockappointment.DockAppointment*` types it used to raise were retired by
+[ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay),
+and `DockAppointmentBooked` here is dock-scheduling's own message.
 
 ## Scenario 2: the local copies behind the SKU and door checks
 

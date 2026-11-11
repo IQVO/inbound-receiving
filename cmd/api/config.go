@@ -12,6 +12,7 @@ import (
 	outboxrelay "github.com/claudioed/inbound-receiving/internal/adapters/outbound/outbox"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
+	"github.com/claudioed/inbound-receiving/internal/housekeeping"
 )
 
 // config is the validated, env-derived part of the wiring.
@@ -28,6 +29,11 @@ type config struct {
 	visitArrivalGroup string
 	cartonStowGroup   string
 	kafkaBrokers      []string
+	// siteGLNs is RECEIVING_SITE_GLNS (the destination rule, empty = off) and
+	// companyPrefix RECEIVER_GS1_COMPANY_PREFIX (the licensed prefix of the SSCCs
+	// the receiver assigns, empty = AssignSscc answers 409); both ADR 0024.
+	siteGLNs      receipt.SiteGLNs
+	companyPrefix receipt.CompanyPrefix
 }
 
 // Boot errors for the variables the context cannot run without. Each message
@@ -77,8 +83,23 @@ func loadConfig(env func(string) string) (config, error) {
 	if cfg.cartonStowGroup = env("CARTON_STOW_CONSUMER_GROUP"); cfg.cartonStowGroup == "" {
 		return config{}, errors.New("CARTON_STOW_CONSUMER_GROUP is required: the carton-stow consumer (carton_stows local copy fed by inventory-storage) always runs on real Kafka")
 	}
+	var err error
+	if cfg.siteGLNs, err = receipt.ParseSiteGLNs(env(envReceivingSiteGLNs)); err != nil {
+		return config{}, fmt.Errorf("%s: %w", envReceivingSiteGLNs, err)
+	}
+	if cfg.companyPrefix, err = receipt.ParseCompanyPrefix(env(envReceiverCompanyPrefix)); err != nil {
+		return config{}, fmt.Errorf("%s: %w", envReceiverCompanyPrefix, err)
+	}
 	return cfg, nil
 }
+
+// Env names of the label settings (ADR 0024). Both are optional: unset turns the
+// destination rule off, and an unset prefix makes AssignSscc answer 409. The
+// company prefix is a licensed GS1 asset the business supplies: there is no default.
+const (
+	envReceivingSiteGLNs     = "RECEIVING_SITE_GLNS"
+	envReceiverCompanyPrefix = "RECEIVER_GS1_COMPANY_PREFIX"
+)
 
 // splitBrokers splits KAFKA_BROKERS on commas, trimming blanks.
 func splitBrokers(raw string) []string {
@@ -165,6 +186,21 @@ func limitFromEnv(env func(string) string, name string, logger *slog.Logger) int
 		return 0
 	}
 	return n
+}
+
+// adviceSLA reads RECEIVING_ADVICE_SLA (ADR 0023): how long after the last unit
+// received the receiving advice is due. Unset, zero, negative or unparsable is
+// the 24h default (a zero window would make every advice late, so it is not
+// honoured as "off"; the advice is a commitment, not a feature flag).
+func adviceSLA(env func(string) string, logger *slog.Logger) time.Duration {
+	d := housekeeping.Duration(env, housekeeping.EnvReceivingAdviceSLA, usecases.DefaultAdviceSLA, logger)
+	if d <= 0 {
+		if env(housekeeping.EnvReceivingAdviceSLA) != "" {
+			logger.Warn("RECEIVING_ADVICE_SLA must be positive; using the default", "default", usecases.DefaultAdviceSLA)
+		}
+		return usecases.DefaultAdviceSLA
+	}
+	return d
 }
 
 // outboxMaxAttempts reads OUTBOX_MAX_ATTEMPTS (gap fix D12): how many times

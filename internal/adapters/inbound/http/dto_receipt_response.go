@@ -13,6 +13,18 @@ type receiptLineResponse struct {
 	ExpectedQty     int64  `json:"expectedQty"`
 	ReceivedGood    int64  `json:"receivedGood"`
 	ReceivedDamaged int64  `json:"receivedDamaged"`
+	// EarliestBestBefore and EarliestExpiry are derived from the accepted cartons
+	// of the line (ADR 0024); absent when none carried a date.
+	EarliestBestBefore string `json:"earliestBestBefore,omitempty"`
+	EarliestExpiry     string `json:"earliestExpiry,omitempty"`
+}
+
+// palletResponse is the earliest dates of the accepted cartons of one pallet.
+type palletResponse struct {
+	ParentSSCC         string `json:"parentSscc"`
+	CartonCount        int    `json:"cartonCount"`
+	EarliestBestBefore string `json:"earliestBestBefore,omitempty"`
+	EarliestExpiry     string `json:"earliestExpiry,omitempty"`
 }
 
 type discrepancyResponse struct {
@@ -22,6 +34,10 @@ type discrepancyResponse struct {
 	ExpectedQty int64  `json:"expectedQty"`
 	ReceivedQty int64  `json:"receivedQty"`
 	DamagedQty  int64  `json:"damagedQty"`
+	// W13Code and CBVDisposition are the standard coding of the kind (ADR 0023),
+	// derived from it; W13Code is absent for a kind the standard has no code for.
+	W13Code        string `json:"w13Code,omitempty"`
+	CBVDisposition string `json:"cbvDisposition,omitempty"`
 }
 
 type receiptResponse struct {
@@ -37,7 +53,10 @@ type receiptResponse struct {
 	// CartonDiscrepancies are the carton findings raised on the receipt, in
 	// raise order (ADR 0015); always present, [] when none.
 	CartonDiscrepancies []receiptCartonDiscrepancyResponse `json:"cartonDiscrepancies"`
-	Version             int64                              `json:"version"`
+	// Pallets are the accepted cartons grouped by parent SSCC with their earliest
+	// dates (ADR 0024); absent when no accepted carton has a pallet.
+	Pallets []palletResponse `json:"pallets,omitempty"`
+	Version int64            `json:"version"`
 }
 
 // receiptCartonDiscrepancyResponse is a carton discrepancy as the receipt
@@ -48,6 +67,11 @@ type receiptCartonDiscrepancyResponse struct {
 	Expected string    `json:"expected,omitempty"`
 	Actual   string    `json:"actual,omitempty"`
 	At       time.Time `json:"at"`
+	// W13Code and CBVDisposition: see discrepancyResponse (ADR 0023).
+	W13Code        string `json:"w13Code,omitempty"`
+	CBVDisposition string `json:"cbvDisposition,omitempty"`
+	// SupplierRef is set on the label findings of ADR 0024.
+	SupplierRef string `json:"supplierRef,omitempty"`
 }
 
 type receiptPageResponse struct {
@@ -58,24 +82,30 @@ type receiptPageResponse struct {
 func toReceipt(r *receipt.Receipt) receiptResponse {
 	lines := make([]receiptLineResponse, 0, len(r.Lines()))
 	for _, l := range r.Lines() {
+		dates := r.LineDates(l.LineNo())
 		lines = append(lines, receiptLineResponse{
 			LineNo: l.LineNo(), SKU: string(l.SKU()), ExpectedQty: l.ExpectedQty(),
 			ReceivedGood: l.ReceivedGood(), ReceivedDamaged: l.ReceivedDamaged(),
+			EarliestBestBefore: dates.BestBefore, EarliestExpiry: dates.Expiry,
 		})
 	}
 	ds := r.Discrepancies()
 	discrepancies := make([]discrepancyResponse, 0, len(ds))
 	for _, d := range ds {
+		w13, cbv := coding(d.Kind)
 		discrepancies = append(discrepancies, discrepancyResponse{
 			LineNo: d.LineNo, SKU: string(d.SKU), Kind: string(d.Kind),
 			ExpectedQty: d.ExpectedQty, ReceivedQty: d.ReceivedQty, DamagedQty: d.DamagedQty,
+			W13Code: w13, CBVDisposition: cbv,
 		})
 	}
 	findings := r.CartonDiscrepancies()
 	cartonDiscrepancies := make([]receiptCartonDiscrepancyResponse, 0, len(findings))
 	for _, f := range findings {
+		w13, cbv := coding(f.Kind)
 		cartonDiscrepancies = append(cartonDiscrepancies, receiptCartonDiscrepancyResponse{
 			Kind: string(f.Kind), SSCC: f.SSCC.String(), Expected: f.Expected, Actual: f.Actual, At: f.At,
+			W13Code: w13, CBVDisposition: cbv, SupplierRef: f.SupplierRef,
 		})
 	}
 	out := receiptResponse{
@@ -85,6 +115,12 @@ func toReceipt(r *receipt.Receipt) receiptResponse {
 	}
 	if t := r.ClosedAt(); !t.IsZero() {
 		out.ClosedAt = &t
+	}
+	for _, p := range r.Pallets() {
+		out.Pallets = append(out.Pallets, palletResponse{
+			ParentSSCC: p.ParentSSCC.String(), CartonCount: p.CartonCount,
+			EarliestBestBefore: p.Earliest.BestBefore, EarliestExpiry: p.Earliest.Expiry,
+		})
 	}
 	return out
 }
@@ -120,6 +156,17 @@ type receiptCartonResponse struct {
 	Sealed     bool                    `json:"sealed"`
 	Contents   []cartonContentResponse `json:"contents"`
 	ReceivedAt *time.Time              `json:"receivedAt,omitempty"`
+	// SSCCSource says who gave the carton its SSCC: supplier or receiver (ADR 0024).
+	SSCCSource string `json:"ssccSource,omitempty"`
+	// What the scanned label said (ADR 0024); every field is optional.
+	BestBefore     string `json:"bestBefore,omitempty"`
+	Expiry         string `json:"expiry,omitempty"`
+	ProductionDate string `json:"productionDate,omitempty"`
+	PackagingDate  string `json:"packagingDate,omitempty"`
+	Serial         string `json:"serial,omitempty"`
+	PurchaseOrder  string `json:"purchaseOrder,omitempty"`
+	ShipToGLN      string `json:"shipToGln,omitempty"`
+	ShipForGLN     string `json:"shipForGln,omitempty"`
 }
 
 type cartonDiscrepancyResponse struct {
@@ -127,6 +174,17 @@ type cartonDiscrepancyResponse struct {
 	SSCC     string `json:"sscc,omitempty"`
 	Expected string `json:"expected,omitempty"`
 	Actual   string `json:"actual,omitempty"`
+	// W13Code and CBVDisposition: see discrepancyResponse (ADR 0023).
+	W13Code        string `json:"w13Code,omitempty"`
+	CBVDisposition string `json:"cbvDisposition,omitempty"`
+	// SupplierRef is set on the label findings of ADR 0024.
+	SupplierRef string `json:"supplierRef,omitempty"`
+}
+
+// coding is the standard vocabulary of a kind (ADR 0023); empty for none.
+func coding(k receipt.Kind) (w13, cbv string) {
+	c, _ := receipt.CodingOf(k)
+	return string(c.W13), string(c.CBV)
 }
 
 // scanResponse answers POST /receipts/{id}/scans: the updated line totals, the
@@ -148,22 +206,65 @@ func toScan(o usecases.ScanOutcome) scanResponse {
 		Cartons: make([]receiptCartonResponse, 0, len(o.Result.Cartons)), Discrepancies: make([]cartonDiscrepancyResponse, 0, len(o.Result.Discrepancies)),
 	}
 	for _, c := range o.Result.Cartons {
-		rc := receiptCartonResponse{
-			Lpn: c.LPN(), SSCC: c.SSCC().String(), ParentSSCC: c.ParentSSCC().String(), Kind: string(c.Kind()),
-			Status: string(c.Status()), Sealed: c.Sealed(), Contents: make([]cartonContentResponse, 0, len(c.Contents())),
-		}
-		for _, x := range c.Contents() {
-			rc.Contents = append(rc.Contents, cartonContentResponse{
-				LineNo: x.LineNo, SKU: string(x.SKU), GTIN: x.GTIN.String(), Qty: x.Qty, Lot: x.Lot, Expiry: x.Expiry, Condition: string(x.Condition),
-			})
-		}
-		if t := c.ReceivedAt(); !t.IsZero() {
-			rc.ReceivedAt = &t
-		}
-		out.Cartons = append(out.Cartons, rc)
+		out.Cartons = append(out.Cartons, toReceiptCarton(c))
 	}
-	for _, d := range o.Result.Discrepancies {
-		out.Discrepancies = append(out.Discrepancies, cartonDiscrepancyResponse{Kind: string(d.Kind), SSCC: d.SSCC.String(), Expected: d.Expected, Actual: d.Actual})
+	out.Discrepancies = toCartonDiscrepancies(o.Result.Discrepancies)
+	return out
+}
+
+func toReceiptCarton(c receipt.Carton) receiptCartonResponse {
+	l := c.Label()
+	rc := receiptCartonResponse{
+		Lpn: c.LPN(), SSCC: c.SSCC().String(), ParentSSCC: c.ParentSSCC().String(), Kind: string(c.Kind()),
+		Status: string(c.Status()), Sealed: c.Sealed(), Contents: make([]cartonContentResponse, 0, len(c.Contents())),
+		SSCCSource: string(c.SSCCSource()), BestBefore: l.BestBefore, Expiry: l.Expiry, ProductionDate: l.ProductionDate,
+		PackagingDate: l.PackagingDate, Serial: l.Serial, PurchaseOrder: l.PurchaseOrder, ShipToGLN: l.ShipToGLN, ShipForGLN: l.ShipForGLN,
+	}
+	for _, x := range c.Contents() {
+		rc.Contents = append(rc.Contents, cartonContentResponse{
+			LineNo: x.LineNo, SKU: string(x.SKU), GTIN: x.GTIN.String(), Qty: x.Qty, Lot: x.Lot, Expiry: x.Expiry, Condition: string(x.Condition),
+		})
+	}
+	if t := c.ReceivedAt(); !t.IsZero() {
+		rc.ReceivedAt = &t
+	}
+	return rc
+}
+
+func toCartonDiscrepancies(in []receipt.CartonDiscrepancy) []cartonDiscrepancyResponse {
+	out := make([]cartonDiscrepancyResponse, 0, len(in))
+	for _, d := range in {
+		w13, cbv := coding(d.Kind)
+		out = append(out, cartonDiscrepancyResponse{
+			Kind: string(d.Kind), SSCC: d.SSCC.String(), Expected: d.Expected, Actual: d.Actual, W13Code: w13, CBVDisposition: cbv, SupplierRef: d.SupplierRef,
+		})
 	}
 	return out
+}
+
+// assignmentResponse answers POST /receipts/{id}/sscc-assignments: the SSCC and
+// what a printer needs to render it (ADR 0024). The service has no printer
+// driver and no ZPL: the floor client prints.
+type assignmentResponse struct {
+	Lpn           string `json:"lpn"`
+	SSCC          string `json:"sscc"`
+	HumanReadable string `json:"humanReadable"`
+	// ElementString is the data of the GS1-128 symbol: AI 00 and the 18 digits,
+	// without parentheses.
+	ElementString string                      `json:"elementString"`
+	Symbology     string                      `json:"symbology"`
+	SSCCSource    string                      `json:"ssccSource"`
+	SKU           string                      `json:"sku,omitempty"`
+	Units         int64                       `json:"units"`
+	Discrepancies []cartonDiscrepancyResponse `json:"discrepancies"`
+	Version       int64                       `json:"version"`
+}
+
+func toAssignment(o usecases.AssignOutcome) assignmentResponse {
+	label := usecases.LabelOf(o.Carton)
+	return assignmentResponse{
+		Lpn: o.Carton.LPN(), SSCC: o.SSCC.String(), HumanReadable: o.SSCC.HumanReadable(), ElementString: "00" + o.SSCC.String(),
+		Symbology: usecases.SsccLabelSymbology, SSCCSource: string(o.Carton.SSCCSource()), SKU: label.SKU, Units: label.Units,
+		Discrepancies: toCartonDiscrepancies(o.Result.Discrepancies), Version: o.Receipt.Version(),
+	}
 }

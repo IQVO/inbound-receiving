@@ -6,7 +6,6 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
-	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
@@ -16,7 +15,7 @@ import (
 // AnalyticsTopic + ".dlq".
 const AnalyticsTopic = "warehouse.inbound-receiving.analytics"
 
-// AnalyticsEncoder encodes the same nine events as Encoder onto
+// AnalyticsEncoder encodes the same events as Encoder onto
 // AnalyticsTopic, with dataschema
 // urn:warehouse:inbound-receiving:analytics:<EventName>:v1. The payloads equal
 // the integration payloads (ADR 0006 section 2): the row functions are shared,
@@ -37,21 +36,12 @@ func (e *AnalyticsEncoder) EncodeAsn(events ...asn.Event) ([]outbox.Message, err
 	return encodeStream(e.NewID, e.Topic, AnalyticsTopic, cloudevents.StreamAnalytics, events, asnRow)
 }
 
-// EncodeAppointment encodes legacy DockAppointment events in order. The
-// service no longer raises them (ADR 0019); the projector still ingests the
-// ones already on the stream, and this encoder builds their fixtures. The
-// running service's FanoutEncoder has no such method.
-func (e *AnalyticsEncoder) EncodeAppointment(events ...appointment.Event) ([]outbox.Message, error) {
-	return encodeStream(e.NewID, e.Topic, AnalyticsTopic, cloudevents.StreamAnalytics, events, appointmentRow)
-}
-
 // EncodeReceipt encodes Receipt events in order.
 func (e *AnalyticsEncoder) EncodeReceipt(events ...receipt.Event) ([]outbox.Message, error) {
 	return encodeStream(e.NewID, e.Topic, AnalyticsTopic, cloudevents.StreamAnalytics, events, receiptRow)
 }
 
-// FanoutEncoder is the encoder the use cases get (ASN and receipt events; it
-// has no DockAppointment method since ADR 0019): every domain event becomes
+// FanoutEncoder is the encoder the use cases get (ASN and receipt events): every domain event becomes
 // TWO outbox messages, the integration one first and the analytics one
 // second, carrying the SAME CloudEvents id (minted once here, persisted with
 // both rows) and the same `type`. Both rows are inserted by the use case's

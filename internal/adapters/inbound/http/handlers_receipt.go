@@ -155,6 +155,36 @@ func (s *Server) handleReceiveScan(w http.ResponseWriter, r *http.Request) {
 	writeVersioned(w, status, out.Receipt.Version(), toScan(out))
 }
 
+// handleAssignSscc backs POST /receipts/{receiptId}/sscc-assignments (201): it
+// receives one unlabelled case under an SSCC of the receiver's own prefix and
+// answers with what a printer needs. 409 sscc-prefix-not-configured until the
+// business supplies a prefix.
+func (s *Server) handleAssignSscc(w http.ResponseWriter, r *http.Request) {
+	id, err := pathParam(r, "receiptId")
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	var req assignSsccRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	version, err := expectedVersion(r)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	out, err := s.AssignSscc.Handle(r.Context(), usecases.AssignSsccCommand{
+		ReceiptID: id, GTIN: req.GTIN, Condition: req.Condition, Lot: req.Lot, Expiry: req.Expiry, ExpectedVersion: version,
+	})
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeVersioned(w, http.StatusCreated, out.Receipt.Version(), toAssignment(out))
+}
+
 // handleGetCartonLabel backs GET /receipts/{receiptId}/cartons/{lpn}/label:
 // the DATA of a license plate label (R11); the floor client prints it.
 func (s *Server) handleGetCartonLabel(w http.ResponseWriter, r *http.Request) {

@@ -96,3 +96,57 @@ func TestReceiptMetrics_RecordingNeverPanics(t *testing.T) {
 	metrics.LineReceived(context.Background(), "good", 1)
 	metrics.LineReceived(context.Background(), "damaged", 1)
 }
+
+func TestAdviceMetrics_CountsIssuedBySLAAndOverdue(t *testing.T) {
+	reader := metric.NewManualReader()
+	previous := otel.GetMeterProvider()
+	otel.SetMeterProvider(metric.NewMeterProvider(metric.WithReader(reader)))
+	t.Cleanup(func() { otel.SetMeterProvider(previous) })
+
+	m, err := telemetry.NewAdviceMetrics()
+	if err != nil {
+		t.Fatalf("NewAdviceMetrics: %v", err)
+	}
+	ctx := context.Background()
+	m.AdviceIssued(ctx, true)
+	m.AdviceIssued(ctx, true)
+	m.AdviceIssued(ctx, false)
+	m.AdviceOverdue(ctx)
+
+	var collected metricdata.ResourceMetrics
+	if err := reader.Collect(ctx, &collected); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	// The Prometheus exporter turns these names into
+	// inbound_receiving_advice_issued_total and inbound_receiving_advice_overdue_total.
+	issued := map[string]int64{}
+	for _, p := range adviceSum(t, collected, "inbound_receiving.advice.issued").DataPoints {
+		v, _ := p.Attributes.Value("within_sla")
+		issued[v.String()] = p.Value
+	}
+	if issued["true"] != 2 || issued["false"] != 1 {
+		t.Errorf("issued by within_sla = %v, want true=2 false=1", issued)
+	}
+	if dp := adviceSum(t, collected, "inbound_receiving.advice.overdue").DataPoints; len(dp) != 1 || dp[0].Value != 1 {
+		t.Errorf("overdue = %+v, want one point of 1", dp)
+	}
+}
+
+// adviceSum finds a monotonic int64 counter by name in what the reader collected.
+func adviceSum(t *testing.T, collected metricdata.ResourceMetrics, name string) metricdata.Sum[int64] {
+	t.Helper()
+	for _, scope := range collected.ScopeMetrics {
+		for _, mm := range scope.Metrics {
+			if mm.Name != name {
+				continue
+			}
+			sum, ok := mm.Data.(metricdata.Sum[int64])
+			if !ok || !sum.IsMonotonic {
+				t.Fatalf("%s is %T, want a monotonic int64 Sum", name, mm.Data)
+			}
+			return sum
+		}
+	}
+	t.Fatalf("%s not found", name)
+	return metricdata.Sum[int64]{}
+}

@@ -34,13 +34,20 @@ flowchart LR
   INV["inventory-storage<br/>Core"]
   WP["warehouse-planning<br/>Core"]
   DS["dock-scheduling"]
+  YM["yard-management"]
+  NF["network-fulfillment"]
+  EXC["exception-management"]
   OPS["warehouse-ops-agent"]
   CON["warehouse-console<br/>shell"]
 
   PM -- "ProductRegistered" --> IR
   FL -- "LocationSlotRegistered / Decommissioned" --> IR
-  IR -- "ReceiptLineReceived" --> INV
-  DS -- "DockAppointmentBooked / Cancelled" --> IR
+  IR -- "ReceiptLineReceived / ReceiptCartonReceived" --> INV
+  IR -- "ASNRegistered / ASNCancelled" --> DS
+  IR -- "ASNRegistered / ASNCancelled / ReceiptOpened / ReceiptClosed" --> YM
+  IR -- "ReceiptCartonReceived / CartonDiscrepancyRaised / ReceiptClosed" --> NF
+  IR -- "CartonDiscrepancyRaised" --> EXC
+  DS -- "DockAppointmentBooked / Cancelled / Rescheduled / DoorReassigned" --> IR
   DS -- "DockAppointmentBooked / Cancelled (stage D)" --> WP
   IR -- "MCP read tools" --> OPS
   IR -- "web remote inbound_mfe, REST through Kong" --> CON
@@ -53,17 +60,21 @@ Source: `docs/adr/0001-inbound-receiving-bounded-context.md` (Context map),
 `internal/adapters/outbound/kafka/encoder.go`, `web/vite.config.ts`; on the
 consumer side (on `develop`) inventory-storage
 `internal/adapters/inbound/kafka/inbound_receipt_consumer.go` and its ADR 0037,
-warehouse-planning `internal/adapters/inbound/kafka/inbound_demand_consumer.go`
-and its ADR 0017, warehouse-ops-agent ADR 0021 (`INBOUND_RECEIVING_MCP_ENDPOINT`)
+yard-management `internal/adapters/inbound/kafka/inbound_receiving_consumer.go`,
+dock-scheduling `internal/adapters/inbound/kafka/asn_consumer.go`,
+network-fulfillment `internal/adapters/inbound/kafka/receipt_consumer.go`,
+exception-management `internal/adapters/inbound/kafka/carton_discrepancy_consumer.go`,
+warehouse-ops-agent ADR 0021 (`INBOUND_RECEIVING_MCP_ENDPOINT`)
 and warehouse-console `vite.config.ts` (remote `inbound_mfe`).
 Omits: the Kafka broker, the internal analytics stream (consumed only by this
 context's own projector) and the patterns on each edge (see the
 [context map](/docs/ddd/context-map) for those). The dock appointment moved to
 dock-scheduling (ADR 0019): this context no longer raises `DockAppointment*`
-events and consumes dock-scheduling's `DockAppointmentBooked` /
-`DockAppointmentCancelled` into a read-only local copy. `warehouse-planning`
-switches its inbound-demand source to dock-scheduling (stage D); until then it
-still reads the legacy events this context published before the cutover. This
+events (ADR 0022 removed the last of the code that could) and consumes
+dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled` /
+`DockAppointmentRescheduled` / `DockAppointmentDoorReassigned` into a read-only
+local copy. `warehouse-planning`
+has switched its inbound-demand source to dock-scheduling (stage D). This
 repository never calls either and does not depend on them being up.
 
 ## No live cross-context lookup, in either direction

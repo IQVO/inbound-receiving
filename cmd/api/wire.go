@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -14,9 +15,11 @@ import (
 	outboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/outbound/kafka"
 	outboxrelay "github.com/claudioed/inbound-receiving/internal/adapters/outbound/outbox"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/postgres"
+	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/telemetry"
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 	"github.com/claudioed/inbound-receiving/internal/bootretry"
+	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
 
 // newReadiness builds the /readyz gate: the drain gate plus a Postgres ping
@@ -66,23 +69,58 @@ type adapters struct {
 	outboxStore  outboxrelay.Store
 	processed    ports.ProcessedEvents
 	stows        ports.StowStore
-	skus         skuCopy
-	doors        doorCopy
-	packaging    packagingView
-	idempotency  ports.IdempotencyStore
-	uow          ports.UnitOfWork
+	advice       ports.AdviceStore
+	// adviceSLA is RECEIVING_ADVICE_SLA (ADR 0023); zero = the default.
+	adviceSLA time.Duration
+	// adviceMetrics counts the advices issued and the overdue ones; nil = none.
+	adviceMetrics ports.AdviceMetrics
+	skus          skuCopy
+	doors         doorCopy
+	packaging     packagingView
+	idempotency   ports.IdempotencyStore
+	uow           ports.UnitOfWork
+	// ssccSerials allocates the serials of receiver-assigned SSCCs; siteGLNs and
+	// companyPrefix are RECEIVING_SITE_GLNS and RECEIVER_GS1_COMPANY_PREFIX (ADR 0024).
+	ssccSerials   ssccSerialStore
+	siteGLNs      receipt.SiteGLNs
+	companyPrefix receipt.CompanyPrefix
 	// sweeper is the housekeeping job (ADR 0010).
 	sweeper *postgres.Sweeper
 	// pool is the Postgres pool (the readiness check pings it).
 	pool *pgxpool.Pool
 }
 
+// ssccSerialStore allocates SSCC serials and can create the sequence of a prefix
+// ahead of the first request.
+type ssccSerialStore interface {
+	ports.SsccSerials
+	EnsureSequence(ctx context.Context, prefix receipt.CompanyPrefix) error
+}
+
+// withLabelSettings applies the validated label settings of the environment.
+func (a adapters) withLabelSettings(cfg config) adapters {
+	a.siteGLNs, a.companyPrefix = cfg.siteGLNs, cfg.companyPrefix
+	return a
+}
+
 func (a adapters) writer() usecases.Writer {
+	sla := a.adviceSLA
+	if sla <= 0 {
+		sla = usecases.DefaultAdviceSLA
+	}
 	return usecases.Writer{
 		Asns: a.asns, Appointments: a.appointments, Receipts: a.receipts, Stows: a.stows,
+		Advice: a.advice, AdviceSLA: sla,
 		Outbox: a.outbox, Encoder: outboundkafka.NewFanoutEncoder(), UoW: a.uow,
 		Clock: clock.System{}, IDs: idgen.UUID{},
 	}
+}
+
+// adviceOverdueSweep is the overdue half of the housekeeping tick (ADR 0023): it
+// raises ReceivingAdviceOverdue once for each Open receipt past the advice SLA.
+func (a adapters) adviceOverdueSweep(logger *slog.Logger) func(context.Context) (int, error) {
+	uc := (&usecases.SweepAdviceOverdue{Writer: a.writer(), Logger: logger}).WithMetrics(a.adviceMetrics)
+	return uc.Handle
 }
 
 func buildServer(ad adapters, readiness *inboundhttp.Readiness, metrics http.Handler, receiptMetrics ports.ReceiptMetrics) *inboundhttp.Server {
@@ -97,9 +135,10 @@ func buildServer(ad adapters, readiness *inboundhttp.Readiness, metrics http.Han
 		ListAppointments: &usecases.ListAppointments{Appointments: ad.appointments},
 		OpenReceipt:      &usecases.OpenReceipt{Writer: w},
 		ReceiveLine:      (&usecases.ReceiveLine{Writer: w}).WithMetrics(receiptMetrics),
-		ReceiveScan:      (&usecases.ReceiveScan{Writer: w, Packaging: ad.packaging, Limits: cartonLimits(os.Getenv, slog.Default())}).WithMetrics(receiptMetrics),
+		ReceiveScan:      (&usecases.ReceiveScan{Writer: w, Packaging: ad.packaging, Limits: cartonLimits(os.Getenv, slog.Default()), SiteGLNs: ad.siteGLNs}).WithMetrics(receiptMetrics),
+		AssignSscc:       &usecases.AssignSscc{Writer: w, Packaging: ad.packaging, Prefix: ad.companyPrefix, Serials: ad.ssccSerials},
 		GetCartonLabel:   &usecases.GetCartonLabel{Receipts: ad.receipts},
-		CloseReceipt:     &usecases.CloseReceipt{Writer: w},
+		CloseReceipt:     (&usecases.CloseReceipt{Writer: w}).WithMetrics(ad.adviceMetrics),
 		GetReceipt:       &usecases.GetReceipt{Receipts: ad.receipts},
 		ListReceipts:     &usecases.ListReceipts{Receipts: ad.receipts},
 		ListDocks:        &usecases.ListDocks{Doors: ad.doors, Mode: usecases.ModeKafka},
@@ -136,13 +175,23 @@ func buildAdapters(ctx context.Context, databaseURL string, logger *slog.Logger)
 	}
 	logger.Info("postgres adapters configured")
 	ob := postgres.NewOutboxRepo(pool)
-	return adapters{
+	ad := adapters{
 		asns: postgres.NewAsnRepo(pool), appointments: postgres.NewAppointmentRepo(pool), receipts: postgres.NewReceiptRepo(pool),
 		outbox: ob, outboxStore: ob, processed: postgres.NewProcessedEventRepo(pool), stows: postgres.NewStowRepo(pool),
+		advice: postgres.NewAdviceRepo(pool), adviceSLA: adviceSLA(os.Getenv, logger),
 		skus: postgres.NewKnownSkus(pool), doors: postgres.NewDockDoors(pool), packaging: postgres.NewPackagingView(pool),
-		idempotency: postgres.NewIdempotencyStore(pool), uow: postgres.NewUnitOfWork(pool),
-		sweeper: newSweeper(pool, os.Getenv, logger), pool: pool,
-	}, pool.Close, nil
+		idempotency: postgres.NewIdempotencyStore(pool), uow: postgres.NewUnitOfWork(pool), pool: pool,
+		ssccSerials: postgres.NewSsccSerials(pool),
+	}
+	// Run un-instrumented rather than not at all if the instruments cannot be registered.
+	if m, err := telemetry.NewAdviceMetrics(); err != nil {
+		logger.Warn("advice metrics are not registered; the advice KPI counters are off", "error", err)
+	} else {
+		ad.adviceMetrics = m
+	}
+	ad.sweeper = newSweeper(pool, os.Getenv, logger, postgres.WithAdviceOverdue(ad.adviceOverdueSweep(logger)))
+	logger.Info("receiving advice sla", "sla", ad.adviceSLA.String())
+	return ad, pool.Close, nil
 }
 
 // migrationsDatabaseURL returns MIGRATIONS_DATABASE_URL when set (a direct

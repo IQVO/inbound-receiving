@@ -44,6 +44,15 @@ var (
 	// ErrInvalidTimestamps is returned when opened_at is unset, or closed_at
 	// is set exactly when the receipt is not Closed.
 	ErrInvalidTimestamps = errors.New("receipt opened_at must be set and closed_at set if and only if the receipt is closed")
+	// ErrHoldExceedsGood is returned when holding more units than the Good
+	// units received on the line and not yet held (ADR 0023).
+	ErrHoldExceedsGood = errors.New("held units cannot exceed the good units received on the line")
+	// ErrInvalidHeld is returned when a persisted held quantity is negative or
+	// above the Good units received.
+	ErrInvalidHeld = errors.New("held quantity must be between 0 and the good units received")
+	// ErrReceiptNotClosed is returned when the receiving advice is asked for a
+	// receipt that is still Open.
+	ErrReceiptNotClosed = errors.New("receipt is not closed")
 )
 
 var idPattern = regexp.MustCompile(`^rcpt-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -116,6 +125,8 @@ type LineState struct {
 	ExpectedQty     int64
 	ReceivedGood    int64
 	ReceivedDamaged int64
+	// Held is the part of ReceivedGood declared held (ADR 0023).
+	Held int64
 }
 
 // Line is one receipt line: what the ASN announced and what arrived.
@@ -125,6 +136,7 @@ type Line struct {
 	expectedQty     int64
 	receivedGood    int64
 	receivedDamaged int64
+	held            int64
 }
 
 // LineNo returns the 1-based line number, equal to the ASN's.
@@ -144,6 +156,9 @@ func (l Line) ReceivedDamaged() int64 { return l.receivedDamaged }
 
 // Received returns good + damaged.
 func (l Line) Received() int64 { return l.receivedGood + l.receivedDamaged }
+
+// Held returns the Good units declared held by HoldLine (ADR 0023).
+func (l Line) Held() int64 { return l.held }
 
 // Discrepancy is one difference between a line's announced and received
 // quantities, reported when the receipt closes.
@@ -172,7 +187,10 @@ type Persisted struct {
 	CartonDiscrepancies []CartonFindingState
 	OpenedAt            time.Time
 	ClosedAt            time.Time
-	Version             int64
+	// LastReceivedAt is when the latest unit was received; the zero time while
+	// nothing was (ADR 0023).
+	LastReceivedAt time.Time
+	Version        int64
 }
 
 // Receipt is the aggregate root.
@@ -196,7 +214,10 @@ type Receipt struct {
 	findings      []CartonFinding
 	openedAt      time.Time
 	closedAt      time.Time
-	version       int64
+	// lastReceivedAt is when the latest unit was received (zero = none yet): the
+	// start of the receiving advice SLA clock (ADR 0023).
+	lastReceivedAt time.Time
+	version        int64
 }
 
 // Open starts receiving the ASN described by snapshot, at version 1 in state
@@ -266,6 +287,19 @@ func (r *Receipt) OpenedAt() time.Time { return r.openedAt }
 // while it is Open.
 func (r *Receipt) ClosedAt() time.Time { return r.closedAt }
 
+// LastReceivedAt returns when the latest unit was received (UTC), or the zero
+// time while nothing was received.
+func (r *Receipt) LastReceivedAt() time.Time { return r.lastReceivedAt }
+
+// AdviceClock is the start of the receiving advice SLA: when the last unit was
+// received, or when the receipt was opened if nothing was (ADR 0023).
+func (r *Receipt) AdviceClock() time.Time {
+	if r.lastReceivedAt.IsZero() {
+		return r.openedAt
+	}
+	return r.lastReceivedAt
+}
+
 // Version returns the current version.
 func (r *Receipt) Version() int64 { return r.version }
 
@@ -294,6 +328,7 @@ func (r *Receipt) ReceiveLine(lineNo int, qty int64, condition Condition, at tim
 	} else {
 		line.receivedDamaged += qty
 	}
+	r.lastReceivedAt = at.UTC()
 	r.version++
 	received := ReceiptLineReceived{
 		Header:    r.header(at),
@@ -306,6 +341,29 @@ func (r *Receipt) ReceiveLine(lineNo int, qty int64, condition Condition, at tim
 	return []Event{received}, nil
 }
 
+// HoldLine declares qty Good units of the line held (ADR 0023): the
+// receiving-side declaration that they are not accepted yet. It is a command,
+// never automatic, and raises no event: the hold appears on the receiving
+// advice. It does not retract the handover of the Good units already received.
+func (r *Receipt) HoldLine(lineNo int, qty int64) error {
+	if r.state != StateOpen {
+		return ErrReceiptClosed
+	}
+	if lineNo < 1 || lineNo > len(r.lines) {
+		return ErrLineNotOnAsn
+	}
+	if err := shared.ValidateQuantity(qty); err != nil {
+		return err
+	}
+	line := &r.lines[lineNo-1]
+	if line.held+qty > line.receivedGood {
+		return ErrHoldExceedsGood
+	}
+	line.held += qty
+	r.version++
+	return nil
+}
+
 // Close ends receiving and raises ReceiptClosed carrying the discrepancies.
 // A line nothing was received for is Short; closing a receipt with no unit
 // received at all is allowed.
@@ -316,9 +374,9 @@ func (r *Receipt) Close(at time.Time) ([]Event, error) {
 	r.state = StateClosed
 	r.closedAt = at.UTC()
 	r.version++
-	// Manifest cartons never accepted are raised first (MissingCarton), so
-	// ReceiptClosed is the last event of the receipt's life. ReceiptClosed
-	// itself keeps its three line-level kinds.
+	// Manifest cartons never accepted are raised first (MissingCarton), then
+	// ReceiptClosed; the receiving advice (ADR 0023) follows it, raised by
+	// the use case. ReceiptClosed itself keeps its three line-level kinds.
 	closed := ReceiptClosed{Header: r.header(at), Discrepancies: r.Discrepancies()}
 	return append(r.missingCartonEvents(at), closed), nil
 }

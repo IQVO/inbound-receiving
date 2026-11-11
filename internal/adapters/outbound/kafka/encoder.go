@@ -1,5 +1,5 @@
 // Package kafka is the outbound Kafka adapter: it encodes the domain events
-// of the Asn, DockAppointment and Receipt aggregates into CloudEvents 1.0
+// of the Asn and Receipt aggregates into CloudEvents 1.0
 // outbox messages (Encoder) and writes drained outbox rows to the broker
 // (RelaySink). Envelopes are built ONLY through
 // internal/adapters/kafka/cloudevents. Payloads are exactly the ones pinned
@@ -15,7 +15,6 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
-	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
@@ -26,9 +25,8 @@ const Topic = "warehouse.inbound-receiving.events"
 // The `<entity>` segment of every published type:
 // com.warehouse.wms.inbound-receiving.<entity>.<EventName>.
 const (
-	EntityAsn         = "asn"
-	EntityAppointment = "dockappointment"
-	EntityReceipt     = "receipt"
+	EntityAsn     = "asn"
+	EntityReceipt = "receipt"
 )
 
 // schemaVersion is the dataschema version of every payload below
@@ -45,8 +43,6 @@ type Encoder struct {
 	// Topic overrides the destination topic (Topic when empty).
 	Topic string
 }
-
-var _ ports.LegacyAppointmentEncoder = (*Encoder)(nil)
 
 // NewEncoder returns an Encoder minting random UUID v4 ids.
 func NewEncoder() *Encoder { return &Encoder{NewID: uuid.NewString} }
@@ -67,13 +63,6 @@ type row struct {
 // is a programming error and fails the whole call.
 func (e *Encoder) EncodeAsn(events ...asn.Event) ([]outbox.Message, error) {
 	return encodeAll(e, events, asnRow)
-}
-
-// EncodeAppointment encodes legacy DockAppointment events in order. The
-// service no longer raises them (ADR 0019); only the stage B backfill
-// (republish-appointments) calls this, and only on the integration topic.
-func (e *Encoder) EncodeAppointment(events ...appointment.Event) ([]outbox.Message, error) {
-	return encodeAll(e, events, appointmentRow)
 }
 
 // EncodeReceipt encodes Receipt events in order.
@@ -182,31 +171,6 @@ func asnCartons(cartons []asn.Carton) []asnCartonData {
 	return out
 }
 
-func appointmentRow(ev appointment.Event) (row, error) {
-	id := string(ev.AppointmentID())
-	r := row{entity: EntityAppointment, eventName: ev.EventName(), subject: id, key: id, at: ev.OccurredAt()}
-	switch e := ev.(type) {
-	case appointment.DockAppointmentBooked:
-		numbers := make([]string, 0, len(e.AsnNumbers))
-		for _, n := range e.AsnNumbers {
-			numbers = append(numbers, string(n))
-		}
-		r.data = bookedData{
-			AppointmentID: id, DoorCode: string(e.DoorCode), Carrier: e.Carrier,
-			WindowStart: ts(e.Window.Start()), WindowEnd: ts(e.Window.End()), AsnNumbers: numbers,
-		}
-	case appointment.DockAppointmentCheckedIn:
-		r.data = checkedInData{AppointmentID: id, DoorCode: string(e.DoorCode), CheckedInAt: ts(e.CheckedInAt)}
-	case appointment.DockAppointmentCancelled:
-		r.data = appointmentCancelledData{AppointmentID: id, DoorCode: string(e.DoorCode), Reason: e.Reason}
-	case appointment.DockAppointmentCompleted:
-		r.data = completedData{AppointmentID: id, DoorCode: string(e.DoorCode), CompletedAt: ts(e.CompletedAt)}
-	default:
-		return row{}, fmt.Errorf("kafka encoder: %s is not a published dockappointment event", ev.EventName())
-	}
-	return r, nil
-}
-
 func receiptRow(ev receipt.Event) (row, error) {
 	id, number := string(ev.ReceiptID()), string(ev.AsnNumber())
 	r := row{entity: EntityReceipt, eventName: ev.EventName(), subject: id, key: number, at: ev.OccurredAt()}
@@ -232,17 +196,24 @@ func receiptRow(ev receipt.Event) (row, error) {
 		r.data = cartonReceivedData{
 			ReceiptID: id, AsnNumber: number, OwnerRef: string(e.OwnerRef), SSCC: e.SSCC.String(), ParentSSCC: e.ParentSSCC.String(),
 			Sealed: e.Sealed, LPN: e.LPN, Contents: contents, ReceivedAt: ts(e.At),
+			SSCCSource: string(e.SSCCSource), BestBefore: e.Label.BestBefore, Expiry: e.Label.Expiry,
+			ProductionDate: e.Label.ProductionDate, PackagingDate: e.Label.PackagingDate, Serial: e.Label.Serial,
+			PurchaseOrder: e.Label.PurchaseOrder, ShipToGLN: e.Label.ShipToGLN, ShipForGLN: e.Label.ShipForGLN,
 		}
 	case receipt.CartonDiscrepancyRaised:
+		coding, _ := receipt.CodingOf(e.Kind)
 		r.data = cartonDiscrepancyData{
 			ReceiptID: id, SSCC: e.SSCC.String(), Kind: string(e.Kind), Expected: e.Expected, Actual: e.Actual, At: ts(e.At),
+			W13Code: string(coding.W13), CBVDisposition: string(coding.CBV), SupplierRef: e.SupplierRef,
 		}
 	case receipt.ReceiptClosed:
 		ds := make([]discrepancyData, 0, len(e.Discrepancies))
 		for _, d := range e.Discrepancies {
+			coding, _ := receipt.CodingOf(d.Kind)
 			ds = append(ds, discrepancyData{
 				LineNo: d.LineNo, SKU: string(d.SKU), Kind: string(d.Kind),
 				ExpectedQty: d.ExpectedQty, ReceivedQty: d.ReceivedQty, DamagedQty: d.DamagedQty,
+				W13Code: string(coding.W13), CBVDisposition: string(coding.CBV),
 			})
 		}
 		r.data = receiptClosedData{ReceiptID: id, AsnNumber: number, ClosedAt: ts(e.At), Discrepancies: ds}
@@ -251,8 +222,53 @@ func receiptRow(ev receipt.Event) (row, error) {
 			ReceiptID: id, AsnNumber: number, AppointmentID: string(e.AppointmentID), ArrivedAt: ts(e.ArrivedAt),
 			ClosedAt: ts(e.ClosedAt), StowedAt: ts(e.StowedAt), DockToStockSeconds: e.DockToStockSeconds, CartonCount: e.CartonCount,
 		}
+	case receipt.ReceivingAdviceIssued:
+		r.data = receivingAdviceIssued(id, number, e)
+	case receipt.ReceivingAdviceOverdue:
+		r.data = receivingAdviceOverdueData{
+			ReceiptID: id, AsnNumber: number, LastCartonAt: ts(e.LastCartonAt), DueAt: ts(e.DueAt),
+			SLASeconds: int64(e.SLA / time.Second), OverdueAt: ts(e.At),
+		}
 	default:
 		return row{}, fmt.Errorf("kafka encoder: %s is not a published receipt event", ev.EventName())
 	}
 	return r, nil
+}
+
+// receivingAdviceIssued maps the advice (already bounded by the domain) to its
+// payload. Lists are never null; an unmapped kind has no w13_code.
+func receivingAdviceIssued(id, number string, e receipt.ReceivingAdviceIssued) receivingAdviceIssuedData {
+	lines := make([]adviceLineData, 0, len(e.Lines))
+	for _, l := range e.Lines {
+		ds := make([]adviceDiscrepancyData, 0, len(l.Discrepancies))
+		for _, d := range l.Discrepancies {
+			ds = append(ds, adviceDiscrepancyData{
+				Kind: string(d.Kind), Quantity: d.Quantity, W13Code: string(d.Coding.W13), CBVDisposition: string(d.Coding.CBV),
+			})
+		}
+		var ssccs []string
+		for _, s := range l.SSCCs {
+			ssccs = append(ssccs, s.String())
+		}
+		lines = append(lines, adviceLineData{
+			LineNo: l.LineNo, SKU: string(l.SKU), GTIN: l.GTIN.String(),
+			ExpectedQty: l.Expected, ReceivedQty: l.Received, AcceptedQty: l.Accepted, RejectedQty: l.Rejected, HeldQty: l.Held,
+			SSCCCount: l.SSCCCount, SSCCs: ssccs, SSCCsTruncated: l.SSCCsTruncated, Discrepancies: ds,
+			EarliestBestBefore: l.EarliestBestBefore, EarliestExpiry: l.EarliestExpiry,
+		})
+	}
+	findings := make([]adviceFindingData, 0, len(e.CartonFindings))
+	for _, f := range e.CartonFindings {
+		coding, _ := receipt.CodingOf(f.Kind)
+		findings = append(findings, adviceFindingData{
+			Kind: string(f.Kind), SSCC: f.SSCC.String(), Expected: f.Expected, Actual: f.Actual, At: ts(f.At),
+			W13Code: string(coding.W13), CBVDisposition: string(coding.CBV),
+		})
+	}
+	return receivingAdviceIssuedData{
+		ReceiptID: id, AsnNumber: number, DespatchAdviceRef: e.DespatchAdviceRef, SupplierRef: e.SupplierRef, OwnerRef: string(e.OwnerRef),
+		IssuedAt: ts(e.At), LastCartonAt: ts(e.LastCartonAt), SLASeconds: int64(e.SLA / time.Second), WithinSLA: e.WithinSLA,
+		Lines: lines, LinesTotal: e.LinesTotal, LinesTruncated: e.LinesTruncated,
+		CartonFindings: findings, CartonFindingsTotal: e.CartonFindingsTotal,
+	}
 }

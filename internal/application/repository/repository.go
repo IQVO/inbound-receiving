@@ -36,6 +36,9 @@ var (
 	// ErrPackLevelNotFound is returned by PackagingDirectory when no pack level
 	// matches the GTIN (or the SKU and level).
 	ErrPackLevelNotFound = errors.New("pack level not found")
+	// ErrSsccSerialsExhausted is returned by SsccSerials when every serial
+	// reference of the company prefix has been given (ADR 0024).
+	ErrSsccSerialsExhausted = errors.New("every SSCC serial of the company prefix has been used")
 )
 
 // AsnFilter narrows AsnRepository.List. The zero value means no filter.
@@ -63,13 +66,6 @@ type AppointmentFilter struct {
 type AppointmentCursor struct {
 	WindowStart time.Time
 	ID          appointment.ID
-}
-
-// AppointmentRecord is one stored appointment together with the moments the
-// stage B backfill replays its legacy history at.
-type AppointmentRecord struct {
-	Appointment *appointment.DockAppointment
-	Timeline    appointment.Timeline
 }
 
 // ReceiptFilter narrows ReceiptRepository.List. The zero value means no

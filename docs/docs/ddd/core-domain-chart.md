@@ -8,7 +8,7 @@ sidebar_position: 11
 # Core domain chart
 
 :::caution[DockAppointment moved (ADR 0019)]
-The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (only the one-shot `api republish-appointments` backfill does). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
+The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (the one-shot `api republish-appointments` backfill that re-announced them was removed, [ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
 :::
 
 Following the ddd-crew [Core Domain Charts](https://github.com/ddd-crew/core-domain-charts):
@@ -51,14 +51,14 @@ differ per retailer, which rules out adopting a generic document as-is.
 **Model complexity is moderate (x = 0.44).** Slightly above `product-master`
 (0.36). Evidence from the code:
 
-- Three aggregates (`Asn`, `DockAppointment`, `Receipt`) that reference each
-  other by id and a `shared` package of three value types (SKU, quantity,
-  reason).
-- One domain service (`appointment.Schedule`) and three cross-aggregate rules
-  that live in the application and database instead of the domain: one open
-  receipt per ASN (partial unique index), no door double-booking (per-door
-  advisory lock) and closing a receipt completing the ASN and the appointment in
-  one unit of work.
+- Two aggregates that raise events (`Asn`, `Receipt`) that reference each other
+  by id, a `DockAppointment` type kept only to hold the local copy's state
+  (it raises no event and has no domain service since ADR 0019 and ADR 0022), and a
+  `shared` package of three value types (SKU, quantity, reason).
+- Cross-aggregate rules that live in the application and database instead of the
+  domain: one open receipt per ASN (partial unique index) and closing a receipt
+  completing the ASN in one unit of work. The door double-booking rule and the
+  appointment completion left with the appointment (dock-scheduling owns them).
 - The one computation is the per-line discrepancy (`Short`, `Over`, `Damaged`),
   a few integer comparisons.
 - No long-running process and no computation over sets; both local-copy

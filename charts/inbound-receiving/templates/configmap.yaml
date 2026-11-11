@@ -24,6 +24,16 @@ data:
   CARTON_STOW_CONSUMER_GROUP: {{ .Values.config.cartonStowConsumerGroup | quote }}
   CARTON_MAX_GROSS_WEIGHT_G: {{ .Values.config.cartonMaxGrossWeightG | int64 | quote }}
   CARTON_MAX_LONGEST_SIDE_MM: {{ .Values.config.cartonMaxLongestSideMm | int64 | quote }}
+  {{- /* ADR 0024: both are optional and rendered only when set. */}}
+  {{- with .Values.config.receivingSiteGlns }}
+  RECEIVING_SITE_GLNS: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.receiverGs1CompanyPrefix }}
+  {{- if not (regexMatch "^[0-9]{7,10}$" (toString .)) }}
+  {{- fail "config.receiverGs1CompanyPrefix must be 7 to 10 digits (a GS1 company prefix, ADR 0024)" }}
+  {{- end }}
+  RECEIVER_GS1_COMPANY_PREFIX: {{ . | toString | quote }}
+  {{- end }}
   {{- with .Values.config.outboxRelayInterval }}
   OUTBOX_RELAY_INTERVAL: {{ . | quote }}
   {{- end }}
@@ -32,6 +42,7 @@ data:
   IDEMPOTENCY_KEY_TTL: {{ .Values.config.idempotencyKeyTTL | quote }}
   OUTBOX_RETENTION: {{ .Values.config.outboxRetention | quote }}
   PROCESSED_EVENTS_RETENTION: {{ .Values.config.processedEventsRetention | quote }}
+  RECEIVING_ADVICE_SLA: {{ .Values.config.receivingAdviceSla | quote }}
   {{- with .Values.config.shutdownDrainDelay }}
   SHUTDOWN_DRAIN_DELAY: {{ . | quote }}
   {{- end }}

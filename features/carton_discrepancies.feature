@@ -22,7 +22,7 @@ Feature: Carton discrepancies (ADR 0012, ADR 0014)
     Given I scanned the carton "003456789012345670"
     When I POST "/receipts/{receipt}/closures" with body ''
     Then the response status is 200
-    And the outbox event types are "asn.ASNRegistered, receipt.ReceiptOpened, receipt.ReceiptLineReceived, receipt.ReceiptCartonReceived, receipt.CartonDiscrepancyRaised, receipt.ReceiptClosed"
+    And the outbox event types are "asn.ASNRegistered, receipt.ReceiptOpened, receipt.ReceiptLineReceived, receipt.ReceiptCartonReceived, receipt.CartonDiscrepancyRaised, receipt.ReceiptClosed, receipt.ReceivingAdviceIssued"
     When I GET "/asns/ASN-M/cartons"
     Then the response field "cartons.1.sscc" is "003456789012345687"
     And the response field "cartons.1.status" is "missing"

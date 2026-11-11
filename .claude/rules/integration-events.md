@@ -84,11 +84,10 @@ raising aggregate, lowercase, no separators: `asn`, `receipt` (the
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived` | `asn_number` | `urn:warehouse:inbound-receiving:events:ReceiptLineReceived:v1` |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptClosed` | `asn_number` | `urn:warehouse:inbound-receiving:events:ReceiptClosed:v1` |
 
-**Retired (ADR 0019).** The four `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointment{Booked,CheckedIn,Cancelled,Completed}`
-types are no longer raised; dock-scheduling owns the appointment. Only the stage B
-command `api republish-appointments` still enqueues them (key `appointment_id`,
-`dataschema` `urn:warehouse:inbound-receiving:events:<EventName>:v1`) so dock-scheduling's
-importer can rebuild its state; the encoders go at stage E.
+**Retired (ADR 0019, ADR 0022).** The four `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointment{Booked,CheckedIn,Cancelled,Completed}`
+types are no longer raised and no longer declared in `apis/asyncapi.yaml`; dock-scheduling owns the
+appointment. The `republish-appointments` command and the encoders are removed; the analytics projector
+still folds the ones already on the analytics stream.
 
 ### Consumed from dock-scheduling (topic `warehouse.dock-scheduling.events`)
 

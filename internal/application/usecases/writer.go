@@ -25,11 +25,17 @@ type Writer struct {
 	Appointments ports.AppointmentRepository
 	Receipts     ports.ReceiptRepository
 	Stows        ports.StowStore
-	Outbox       ports.OutboxRepository
-	Encoder      ports.EventEncoder
-	UoW          ports.UnitOfWork
-	Clock        ports.Clock
-	IDs          ports.IDGenerator
+	// Advice holds the receiving advice markers (ADR 0023): when it is nil no
+	// advice is issued and no overdue is raised, which only a test may do;
+	// cmd/api always sets it. AdviceSLA is the committed window (a zero or
+	// negative value is DefaultAdviceSLA).
+	Advice    ports.AdviceStore
+	AdviceSLA time.Duration
+	Outbox    ports.OutboxRepository
+	Encoder   ports.EventEncoder
+	UoW       ports.UnitOfWork
+	Clock     ports.Clock
+	IDs       ports.IDGenerator
 }
 
 // now returns the clock's current time in UTC.

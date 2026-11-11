@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
-	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
@@ -27,15 +26,10 @@ type goldenCase struct {
 	encode                                 func(e any) ([]outbox.Message, error)
 }
 
-// The three encoder families a golden case is run through. The FanoutEncoder
-// (the running service's encoder) has no DockAppointment method since ADR
-// 0019, so the legacy appointment cases are skipped for it.
+// The two encoder families a golden case is run through.
 type (
 	asnEncoder = interface {
 		EncodeAsn(...asn.Event) ([]outbox.Message, error)
-	}
-	appointmentEncoder = interface {
-		EncodeAppointment(...appointment.Event) ([]outbox.Message, error)
 	}
 	receiptEncoder = interface {
 		EncodeReceipt(...receipt.Event) ([]outbox.Message, error)
@@ -47,11 +41,6 @@ func asnCase(name, time, data string, ev asn.Event) goldenCase {
 		func(e any) ([]outbox.Message, error) { return e.(asnEncoder).EncodeAsn(ev) }}
 }
 
-func apptCase(name, time, data string, ev appointment.Event) goldenCase {
-	return goldenCase{"dockappointment", name, apptID, apptID, time, data,
-		func(e any) ([]outbox.Message, error) { return e.(appointmentEncoder).EncodeAppointment(ev) }}
-}
-
 func rcptCase(name, time, data string, ev receipt.Event) goldenCase {
 	return goldenCase{"receipt", name, rcptID, "ASN-1001", time, data,
 		func(e any) ([]outbox.Message, error) { return e.(receiptEncoder).EncodeReceipt(ev) }}
@@ -59,7 +48,6 @@ func rcptCase(name, time, data string, ev receipt.Event) goldenCase {
 
 func goldenEvents(t *testing.T) []goldenCase {
 	t.Helper()
-	apptData := `"appointment_id":"` + apptID + `","door_code":"WH1-DOCK-IN-01"`
 	rcptData := `"receipt_id":"` + rcptID + `","asn_number":"ASN-1001"`
 	return []goldenCase{
 		asnCase("ASNRegistered", "2026-10-08T12:00:00Z",
@@ -67,15 +55,6 @@ func goldenEvents(t *testing.T) []goldenCase {
 			registeredAsn(t, at(9, 8, 0))),
 		asnCase("ASNCancelled", "2026-10-08T12:30:00Z", `{"asn_number":"ASN-1001","reason":"Supplier cancelled the shipment"}`,
 			asn.ASNCancelled{Header: asn.Header{Number: "ASN-1001", At: at(8, 12, 30)}, Reason: "Supplier cancelled the shipment"}),
-		apptCase("DockAppointmentBooked", "2026-10-08T12:05:00Z",
-			`{"appointment_id":"`+apptID+`","door_code":"WH1-DOCK-IN-01","carrier":"ACME Freight","window_start":"2026-10-09T08:00:00Z","window_end":"2026-10-09T10:00:00Z","asn_numbers":["ASN-1001"]}`,
-			bookedEvent(t)),
-		apptCase("DockAppointmentCheckedIn", "2026-10-09T07:50:00Z", `{`+apptData+`,"checked_in_at":"2026-10-09T07:50:00Z"}`,
-			appointment.DockAppointmentCheckedIn{Header: apptHeader(at(9, 7, 50)), DoorCode: "WH1-DOCK-IN-01", CheckedInAt: at(9, 7, 50)}),
-		apptCase("DockAppointmentCancelled", "2026-10-08T18:00:00Z", `{`+apptData+`,"reason":"Carrier delayed"}`,
-			appointment.DockAppointmentCancelled{Header: apptHeader(at(8, 18, 0)), DoorCode: "WH1-DOCK-IN-01", Reason: "Carrier delayed"}),
-		apptCase("DockAppointmentCompleted", "2026-10-09T09:30:00Z", `{`+apptData+`,"completed_at":"2026-10-09T09:30:00Z"}`,
-			appointment.DockAppointmentCompleted{Header: apptHeader(at(9, 9, 30)), DoorCode: "WH1-DOCK-IN-01", CompletedAt: at(9, 9, 30)}),
 		rcptCase("ReceiptOpened", "2026-10-09T08:05:00Z",
 			`{`+rcptData+`,"appointment_id":"`+apptID+`","door_code":"WH1-DOCK-IN-01","opened_at":"2026-10-09T08:05:00Z"}`,
 			receipt.ReceiptOpened{Header: receiptHeader(at(9, 8, 5)), AppointmentID: apptID, DoorCode: "WH1-DOCK-IN-01"}),
@@ -84,9 +63,9 @@ func goldenEvents(t *testing.T) []goldenCase {
 			receipt.ReceiptLineReceived{Header: receiptHeader(at(9, 8, 10)), LineNo: 1, SKU: "SKU-1", Quantity: 40, Condition: receipt.ConditionGood}),
 		rcptCase("ReceiptClosed", "2026-10-09T09:30:00Z",
 			`{`+rcptData+`,"closed_at":"2026-10-09T09:30:00Z","discrepancies":[`+
-				`{"line_no":1,"sku":"SKU-1","kind":"Short","expected_qty":40,"received_qty":34,"damaged_qty":4},`+
-				`{"line_no":1,"sku":"SKU-1","kind":"Damaged","expected_qty":40,"received_qty":34,"damaged_qty":4},`+
-				`{"line_no":2,"sku":"SKU-2","kind":"Over","expected_qty":5,"received_qty":7,"damaged_qty":0}]}`,
+				`{"line_no":1,"sku":"SKU-1","kind":"Short","expected_qty":40,"received_qty":34,"damaged_qty":4,"w13_code":"02","cbv_disposition":"mismatch_quantity"},`+
+				`{"line_no":1,"sku":"SKU-1","kind":"Damaged","expected_qty":40,"received_qty":34,"damaged_qty":4,"w13_code":"01","cbv_disposition":"damaged"},`+
+				`{"line_no":2,"sku":"SKU-2","kind":"Over","expected_qty":5,"received_qty":7,"damaged_qty":0,"w13_code":"03","cbv_disposition":"mismatch_quantity"}]}`,
 			receipt.ReceiptClosed{Header: receiptHeader(at(9, 9, 30)), Discrepancies: []receipt.Discrepancy{
 				{LineNo: 1, SKU: "SKU-1", Kind: receipt.KindShort, ExpectedQty: 40, ReceivedQty: 34, DamagedQty: 4},
 				{LineNo: 1, SKU: "SKU-1", Kind: receipt.KindDamaged, ExpectedQty: 40, ReceivedQty: 34, DamagedQty: 4},
@@ -99,8 +78,8 @@ func goldenEvents(t *testing.T) []goldenCase {
 // every published type and the outbox row around them.
 func TestAnalyticsEncoder_GoldenWireFormat(t *testing.T) {
 	cases := goldenEvents(t)
-	if len(cases) != 9 {
-		t.Fatalf("the catalogue has nine types, got %d cases", len(cases))
+	if len(cases) != 5 {
+		t.Fatalf("the golden set has five types, got %d cases", len(cases))
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -128,27 +107,11 @@ func TestAnalyticsEncoder_GoldenWireFormat(t *testing.T) {
 	}
 }
 
-// TestFanoutEncoder_HasNoAppointmentMethod pins ADR 0019: the running
-// service's encoder cannot encode the legacy DockAppointment events.
-func TestFanoutEncoder_HasNoAppointmentMethod(t *testing.T) {
-	var f any = NewFanoutEncoder()
-	if _, ok := f.(appointmentEncoder); ok {
-		t.Fatal("the FanoutEncoder must not encode DockAppointment events any more (ADR 0019)")
-	}
-	var e any = NewEncoder()
-	if _, ok := e.(appointmentEncoder); !ok {
-		t.Fatal("the plain Encoder keeps the legacy mapping for the republish-appointments backfill")
-	}
-}
-
 // TestFanoutEncoder_TwoRowsOneID: integration row first (byte-identical to
 // Encoder's), analytics row second, the same id and type on both, for every
 // one of the five types the service still raises.
 func TestFanoutEncoder_TwoRowsOneID(t *testing.T) {
 	for _, tc := range goldenEvents(t) {
-		if tc.entity == "dockappointment" {
-			continue // no longer raised by the service (ADR 0019): the fanout cannot encode it
-		}
 		t.Run(tc.name, func(t *testing.T) {
 			const id = "11111111-1111-4111-8111-111111111111"
 			f := &FanoutEncoder{Integration: &Encoder{}, Analytics: &AnalyticsEncoder{}, NewID: func() string { return id }}
@@ -269,9 +232,6 @@ func TestAnalyticsEncoder_DefaultsAndTopicOverride(t *testing.T) {
 	}
 	if m, err := (&AnalyticsEncoder{}).EncodeAsn(registeredAsn(t, time.Time{})); err != nil || m[0].Topic != AnalyticsTopic {
 		t.Fatalf("default topic: %v %+v", err, m)
-	}
-	if _, err := (&AnalyticsEncoder{}).EncodeAppointment(unknownAppointmentEvent{apptHeader(at(8, 1, 0))}); err == nil {
-		t.Fatal("an unpublished appointment event must be rejected")
 	}
 	if _, err := (&AnalyticsEncoder{}).EncodeReceipt(unknownReceiptEvent{receiptHeader(at(8, 1, 0))}); err == nil {
 		t.Fatal("an unpublished receipt event must be rejected")

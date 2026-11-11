@@ -8,7 +8,7 @@ sidebar_position: 18
 # Entity-relationship diagram
 
 :::caution[DockAppointment moved (ADR 0019)]
-The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (only the one-shot `api republish-appointments` backfill does). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
+The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (the one-shot `api republish-appointments` backfill that re-announced them was removed, [ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
 :::
 
 The final schemas after all migrations. There are **two** Postgres databases:
@@ -93,11 +93,14 @@ erDiagram
     boolean sealed
     jsonb contents
     timestamptz received_at "nullable; set exactly when Accepted"
+    text sscc_source "nullable; receiver for an AssignSscc carton, 0008"
+    jsonb label "nullable; the dates and ids the scanned label carried, 0008"
   }
   receipt_carton_discrepancies {
     text receipt_id PK
     int position PK "raise order on the receipt, 0004"
-    text kind "UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch"
+    text kind "UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch, LabelNonCompliant, WrongDestination (0008)"
+    text supplier_ref "nullable; the ASN supplier on label findings, 0008"
     text sscc "nullable; NULL when the finding is not about a scanned SSCC"
     text expected "nullable"
     text actual "nullable"
@@ -199,7 +202,7 @@ text identifiers, and `schema_migrations` (golang-migrate's own table).
 | Table | Role | Backs |
 | --- | --- | --- |
 | `asns`, `asn_lines` | domain | the `Asn` aggregate (root row plus its lines) |
-| `appointments`, `appointment_asns` | domain | the `DockAppointment` aggregate (root row plus the ASN numbers it covers, in booking order) |
+| `appointments`, `appointment_asns` | local copy | the read-only copy of dock-scheduling's appointments (root row plus the ASN numbers it covers, in booking order), fed by its `DockAppointment*` events (ADR 0019, ADR 0020) |
 | `receipts`, `receipt_lines` | domain | the `Receipt` aggregate (root row plus the snapshot of the ASN's lines and the two counters) |
 | `receipt_cartons` | domain | the receipt's carton ledger (ADR 0012): manifest cartons plus cases received by GTIN; part of the `Receipt` read model |
 | `receipt_carton_discrepancies` | domain | the carton discrepancies raised on a receipt (ADR 0015); append-only, part of the `Receipt` read model |
@@ -213,8 +216,8 @@ text identifiers, and `schema_migrations` (golang-migrate's own table).
 ## Where there is no foreign key, on purpose
 
 - `appointment_asns.asn_number` has no FK to `asns`: `Asn` and `DockAppointment`
-  are separate aggregates that reference each other by id. The book use case
-  checks the ASNs exist and are receivable inside the unit of work.
+  are separate aggregates that reference each other by id. The copy is written from
+  dock-scheduling's events (the booking and its ASN checks live there, ADR 0019).
 - `receipts.appointment_id` and `receipts.door_code` have no FK to
   `appointments`: a walk-in receipt has neither, and the appointment is a
   separate aggregate. `receipts.asn_number` **does** have an FK to `asns`.

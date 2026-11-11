@@ -42,8 +42,9 @@ The dock appointment is **no longer an aggregate of this context**:
 dock-scheduling owns it and decides booking, rescheduling, check-in,
 cancellation and door overlap. Here the `appointments` table (and its
 `appointment_asns` coverage table) is a read-only **local copy**, fed by the
-dock-appointment consumer from dock-scheduling's `DockAppointmentBooked` and
-`DockAppointmentCancelled`, applied only when the event `version` is greater than
+dock-appointment consumer from dock-scheduling's `DockAppointmentBooked`,
+`DockAppointmentCancelled`, `DockAppointmentRescheduled` and
+`DockAppointmentDoorReassigned` (ADR 0020), applied only when the event `version` is greater than
 the stored one, and raising no event.
 
 Package `internal/domain/appointment` keeps the type only to hold that copy:
@@ -53,9 +54,8 @@ Package `internal/domain/appointment` keeps the type only to hold that copy:
   transfer may still be `CheckedIn` or `Completed` (version 0).
 - `Rehydrate` rebuilds a row; `Covers(asn)` answers whether the appointment
   carries an ASN (what `OpenReceipt` asks).
-- `Replay(timeline)` rebuilds the legacy event sequence of a stored row
-  (`Booked`, then `CheckedIn` / `Cancelled` / `Completed`) for the stage B
-  backfill `api republish-appointments`. Both go at stage E.
+- It has no events: the legacy `Replay` and the `api republish-appointments`
+  backfill it served were removed ([ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)).
 
 `Book`, `CheckIn`, `Cancel`, `Complete` and `Schedule.CheckNoOverlap` (and the
 per-door advisory lock) are deleted.

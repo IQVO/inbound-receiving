@@ -18,6 +18,7 @@
 //	IDEMPOTENCY_KEY_TTL           idempotency_keys row lifetime (default 24h, 0 = keep forever)
 //	OUTBOX_RETENTION              published outbox_events retention (default 168h, 0 = keep forever)
 //	PROCESSED_EVENTS_RETENTION    processed_events dedupe-mark retention (default 720h, 0 = keep forever)
+//	RECEIVING_ADVICE_SLA          committed window of the receiving advice after the last unit received (default 24h; 0 or invalid = default, ADR 0023); the overdue sweep runs on HOUSEKEEPING_INTERVAL
 //	PRODUCT_MODE                  kafka (default kafka): known SKUs; permissive/off are boot errors
 //	PRODUCT_CONSUMER_GROUP        stable group of the product consumer (REQUIRED)
 //	DOCK_DOOR_MODE                kafka (default kafka): known inbound doors; permissive/off are boot errors
@@ -29,11 +30,6 @@
 //	OTEL_EXPORTER_OTLP_ENDPOINT   OTLP/gRPC collector (default localhost:4317)
 //	SHUTDOWN_DRAIN_DELAY          wait after flipping /readyz before closing (default 5s)
 //	LOG_LEVEL, SERVICE_VERSION, ENVIRONMENT, CORS_ALLOWED_ORIGINS
-//
-// Subcommand (ADR 0019, stage B of the DockAppointment transfer): with a first
-// argument the binary runs that command once and exits instead of serving,
-// e.g. `./api republish-appointments` (needs only DATABASE_URL; see
-// republish.go).
 //
 // GET /readyz is 200 only while Postgres answers a ping AND a Kafka broker
 // answers a metadata request (verdict cached 3s, bounded 2s); /healthz is
@@ -73,10 +69,6 @@ const workerDrainTimeout = 10 * time.Second
 const DefaultShutdownDrainDelay = 5 * time.Second
 
 func main() {
-	// A subcommand (republish-appointments, ADR 0019) runs once and exits.
-	if len(os.Args) > 1 {
-		os.Exit(runCommand(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
-	}
 	if err := run(context.Background()); err != nil {
 		slog.Error("service exited with error", "error", err)
 		os.Exit(1)
@@ -108,6 +100,10 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer closeAdapters()
+	ad = ad.withLabelSettings(cfg)
+	if err := ensureSsccSequence(ctx, ad, logger); err != nil {
+		return err
+	}
 
 	metrics, err := telemetry.NewMetricsHandler()
 	if err != nil {
@@ -138,17 +134,34 @@ func run(ctx context.Context) error {
 	return serveUntilSignal(ctx, logger, httpServer, readiness, consumers, relay, closeRelay)
 }
 
+// ensureSsccSequence creates the SSCC serial sequence of the configured company
+// prefix at boot, so a missing privilege shows at startup and not on the first
+// receiving. Nothing happens without a prefix (ADR 0024).
+func ensureSsccSequence(ctx context.Context, ad adapters, logger *slog.Logger) error {
+	if ad.companyPrefix.IsZero() {
+		logger.Info("receiver-assigned SSCCs are off: RECEIVER_GS1_COMPANY_PREFIX is not set")
+		return nil
+	}
+	if err := ad.ssccSerials.EnsureSequence(ctx, ad.companyPrefix); err != nil {
+		return err
+	}
+	logger.Info("receiver-assigned SSCCs are on", "company_prefix", ad.companyPrefix.String())
+	return nil
+}
+
 // newSweeper builds the housekeeping sweeper (gap fix D24, ADR 0010) from
 // HOUSEKEEPING_INTERVAL, IDEMPOTENCY_KEY_TTL, OUTBOX_RETENTION and
-// PROCESSED_EVENTS_RETENTION.
-func newSweeper(pool *pgxpool.Pool, env func(string) string, logger *slog.Logger) *postgres.Sweeper {
-	return postgres.NewSweeper(pool,
+// PROCESSED_EVENTS_RETENTION; extra adds the receiving-advice overdue sweep to
+// its tick (ADR 0023).
+func newSweeper(pool *pgxpool.Pool, env func(string) string, logger *slog.Logger, extra ...postgres.SweeperOption) *postgres.Sweeper {
+	opts := []postgres.SweeperOption{
 		postgres.WithSweepInterval(housekeeping.Duration(env, housekeeping.EnvInterval, postgres.DefaultSweepInterval, logger)),
 		postgres.WithIdempotencyKeyTTL(housekeeping.Duration(env, housekeeping.EnvIdempotencyKeyTTL, postgres.DefaultIdempotencyKeyTTL, logger)),
 		postgres.WithOutboxRetention(housekeeping.Duration(env, housekeeping.EnvOutboxRetention, postgres.DefaultOutboxRetention, logger)),
 		postgres.WithProcessedEventsRetention(housekeeping.Duration(env, housekeeping.EnvProcessedEventsRetention, postgres.DefaultProcessedEventsRetention, logger)),
 		postgres.WithSweeperLogger(logger),
-	)
+	}
+	return postgres.NewSweeper(pool, append(opts, extra...)...)
 }
 
 // startSweeper runs the sweeper as a background worker (nil only when no

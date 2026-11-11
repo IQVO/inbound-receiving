@@ -554,6 +554,7 @@ func phaseWorkflow(t *testing.T, s *service, w *world) {
 		{"receipt", "ReceiptOpened", w.receiptID, "ASN-1"},
 		{"receipt", "ReceiptLineReceived", w.receiptID, "ASN-1"},
 		{"receipt", "ReceiptClosed", w.receiptID, "ASN-1"},
+		{"receipt", "ReceivingAdviceIssued", w.receiptID, "ASN-1"},
 	}
 }
 
@@ -643,6 +644,7 @@ func phaseCartons(t *testing.T, s *service, w *world) {
 		expectedEvent{"receipt", "CartonDiscrepancyRaised", opened.ReceiptID, "ASN-C"}, // DuplicateSscc
 		expectedEvent{"receipt", "CartonDiscrepancyRaised", opened.ReceiptID, "ASN-C"}, // MissingCarton (B)
 		expectedEvent{"receipt", "ReceiptClosed", opened.ReceiptID, "ASN-C"},
+		expectedEvent{"receipt", "ReceivingAdviceIssued", opened.ReceiptID, "ASN-C"},
 	)
 }
 
@@ -736,6 +738,7 @@ func phaseTopics(t *testing.T, w *world) {
 		t.Fatalf("ReceiptLineReceived data = %+v", line)
 	}
 	assertCartonPayloads(t, ev, w)
+	assertAdvicePayload(t, ev, w)
 	last := len(w.expected) - 2 // ReceiptStowCompleted is the last occurrence before ASN-9's registration
 	assertStowPayload(t, string(decodeEnvelope(t, ev[last]).Data), w)
 }
@@ -835,7 +838,8 @@ func TestRunOnRealPostgresAndKafka(t *testing.T) {
 // ReceiptCartonReceived, and never a site_id.
 func assertCartonPayloads(t *testing.T, ev []kafkago.Message, w *world) {
 	t.Helper()
-	for _, i := range []int{4, 6, 7, 8, 9} {
+	// Indices are positions in w.expected: the first receipt takes 0-4 (the advice is 4).
+	for _, i := range []int{5, 7, 8, 9, 10} {
 		var raw map[string]any
 		mustDecode(t, string(decodeEnvelope(t, ev[i]).Data), &raw)
 		if _, has := raw["site_id"]; has {
@@ -843,7 +847,7 @@ func assertCartonPayloads(t *testing.T, ev []kafkago.Message, w *world) {
 		}
 	}
 	var reg map[string]any
-	mustDecode(t, string(decodeEnvelope(t, ev[4]).Data), &reg)
+	mustDecode(t, string(decodeEnvelope(t, ev[5]).Data), &reg)
 	cartons, _ := reg["cartons"].([]any)
 	if reg["owner_ref"] != "tenant-7f3a" || len(cartons) != 2 {
 		t.Fatalf("ASNRegistered of the carton ASN = %v", reg)
@@ -862,22 +866,36 @@ func assertCartonPayloads(t *testing.T, ev []kafkago.Message, w *world) {
 		PackGTIN  string `json:"pack_gtin"`
 		Cases     int64  `json:"cases"`
 	}
-	mustDecode(t, string(decodeEnvelope(t, ev[6]).Data), &line)
+	mustDecode(t, string(decodeEnvelope(t, ev[7]).Data), &line)
 	if line.ReceiptID != w.cartonReceipt || line.Quantity != 20 || line.OwnerRef != "tenant-7f3a" || line.SSCC != ssccA || line.Cases != 1 ||
 		line.PackGTIN != caseGTIN {
 		t.Fatalf("carton ReceiptLineReceived = %+v", line)
 	}
 	var carton cartonReceivedData
-	mustDecode(t, string(decodeEnvelope(t, ev[7]).Data), &carton)
+	mustDecode(t, string(decodeEnvelope(t, ev[8]).Data), &carton)
 	if carton.SSCC != ssccA || carton.LPN != ssccA || !carton.Sealed || carton.OwnerRef != "tenant-7f3a" || len(carton.Contents) != 1 ||
 		carton.Contents[0].GTIN != eachGTIN || carton.Contents[0].Qty != 20 || carton.Contents[0].Condition != "Good" {
 		t.Fatalf("ReceiptCartonReceived = %+v", carton)
 	}
 	var dup, missing cartonDiscrepancyData
-	mustDecode(t, string(decodeEnvelope(t, ev[8]).Data), &dup)
-	mustDecode(t, string(decodeEnvelope(t, ev[9]).Data), &missing)
+	mustDecode(t, string(decodeEnvelope(t, ev[9]).Data), &dup)
+	mustDecode(t, string(decodeEnvelope(t, ev[10]).Data), &missing)
 	if dup.Kind != "DuplicateSscc" || dup.SSCC != ssccA || missing.Kind != "MissingCarton" || missing.Expected != ssccB || missing.ReceiptID != w.cartonReceipt {
 		t.Fatalf("CartonDiscrepancyRaised = %+v / %+v", dup, missing)
+	}
+	// ADR 0023: the coded kinds carry W13/CBV, DuplicateSscc has no W13 code (never invented).
+	var coded struct {
+		W13 string `json:"w13_code"`
+		CBV string `json:"cbv_disposition"`
+	}
+	mustDecode(t, string(decodeEnvelope(t, ev[10]).Data), &coded)
+	if coded.W13 != "02" || coded.CBV != "mismatch_quantity" {
+		t.Fatalf("MissingCarton coding = %+v, want 02 / mismatch_quantity", coded)
+	}
+	coded.W13, coded.CBV = "", ""
+	mustDecode(t, string(decodeEnvelope(t, ev[9]).Data), &coded)
+	if coded.W13 != "" || coded.CBV != "mismatch_instance" {
+		t.Fatalf("DuplicateSscc coding = %+v, want no w13_code and mismatch_instance", coded)
 	}
 }
 
@@ -910,4 +928,41 @@ type cartonDiscrepancyData struct {
 	Expected  string `json:"expected"`
 	Actual    string `json:"actual"`
 	At        string `json:"at"`
+}
+
+// assertAdvicePayload pins the ReceivingAdviceIssued of the first receipt on the
+// integration topic (ADR 0023): it follows that receipt's ReceiptClosed, carries
+// the ASN as the despatch advice reference, is inside the SLA (it was closed
+// seconds after the line was received) and codes no discrepancy for a line that
+// matched.
+func assertAdvicePayload(t *testing.T, ev []kafkago.Message, w *world) {
+	t.Helper()
+	for i, want := range w.expected {
+		if want.name != "ReceivingAdviceIssued" || want.subject != w.receiptID {
+			continue
+		}
+		if prev := w.expected[i-1]; prev.name != "ReceiptClosed" || prev.subject != w.receiptID {
+			t.Fatalf("the advice follows %s, want the ReceiptClosed of the same receipt", prev.name)
+		}
+		var got struct {
+			ReceiptID         string `json:"receipt_id"`
+			DespatchAdviceRef string `json:"despatch_advice_ref"`
+			SupplierRef       string `json:"supplier_ref"`
+			SLASeconds        int64  `json:"sla_seconds"`
+			WithinSLA         bool   `json:"within_sla"`
+			Lines             []struct {
+				LineNo        int   `json:"line_no"`
+				ExpectedQty   int64 `json:"expected_qty"`
+				AcceptedQty   int64 `json:"accepted_qty"`
+				Discrepancies []any `json:"discrepancies"`
+			} `json:"lines"`
+		}
+		mustDecode(t, string(decodeEnvelope(t, ev[i]).Data), &got)
+		if got.ReceiptID != w.receiptID || got.DespatchAdviceRef != "ASN-1" || got.SupplierRef != "ACME" || got.SLASeconds != 86400 || !got.WithinSLA ||
+			len(got.Lines) != 1 || got.Lines[0].LineNo != 1 || got.Lines[0].ExpectedQty != 10 || got.Lines[0].AcceptedQty != 10 || len(got.Lines[0].Discrepancies) != 0 {
+			t.Fatalf("ReceivingAdviceIssued data = %+v", got)
+		}
+		return
+	}
+	t.Fatal("no ReceivingAdviceIssued for the first receipt in the expected occurrences")
 }

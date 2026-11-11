@@ -87,7 +87,7 @@ The domain aggregates:
 | Package | Aggregate | Highlights |
 |---|---|---|
 | `asn` | `Asn` | lines numbered `1..n`, unique SKUs; `Registered -> Receiving -> Closed` or `Cancelled` |
-| `appointment` | `DockAppointment` (legacy; moved to dock-scheduling, ADR 0019) | kept for the local copy and the `republish-appointments` backfill; this context no longer decides appointments |
+| `appointment` | `DockAppointment` (legacy; moved to dock-scheduling, ADR 0019) | kept for the local copy; this context no longer decides appointments |
 | `receipt` | `Receipt` | Good / Damaged counts per line, over-receipt allowed, discrepancies on close |
 | `shared` | value types | SKU, quantity, reason |
 
@@ -107,14 +107,18 @@ convention is `com.warehouse.wms.inbound-receiving.<entity>.<EventName>` (the
 transaction** (`FanoutEncoder`): to the integration topic and, under the same
 CloudEvents id, to the analytics topic (ADR 0004, ADR 0006).
 
-**Publishes** — 7 events on `warehouse.inbound-receiving.events` (each with
+**Publishes** — 10 events on `warehouse.inbound-receiving.events` (each with
 an `…Analytics` twin on `warehouse.inbound-receiving.analytics`):
 
 | Entity | Events |
 |---|---|
 | `asn` | `ASNRegistered`, `ASNCancelled` |
-| `dockappointment` | *(deprecated, no longer raised, ADR 0019)* `DockAppointmentBooked`, `DockAppointmentCheckedIn`, `DockAppointmentCompleted`, `DockAppointmentCancelled`; only `api republish-appointments` still enqueues them (stage B backfill) |
-| `receipt` | `ReceiptOpened`, `ReceiptLineReceived`, `ReceiptCartonReceived`, `ReceiptClosed`, `CartonDiscrepancyRaised`, `ReceiptStowCompleted` (the dock-to-stock fact, ADR 0021) |
+| `receipt` | `ReceiptOpened`, `ReceiptLineReceived`, `ReceiptCartonReceived`, `ReceiptClosed`, `CartonDiscrepancyRaised`, `ReceiptStowCompleted` (the dock-to-stock fact, ADR 0021), `ReceivingAdviceIssued` (the receiving advice at close, ADR 0023), `ReceivingAdviceOverdue` (the advice SLA missed, ADR 0023) |
+
+The four `dockappointment` types (`DockAppointmentBooked`, `CheckedIn`,
+`Cancelled`, `Completed`) are no longer raised and are not in the contract
+(ADR 0019, ADR 0022); the `api republish-appointments` backfill, the legacy
+encoders and `Replay` were removed with them (ADR 0022).
 
 Real types: `com.warehouse.wms.inbound-receiving.asn.ASNRegistered`,
 `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived`.
@@ -177,6 +181,8 @@ returns 503 while draining. `/healthz` is liveness only.
 | `OUTBOX_MAX_ATTEMPTS` | `20` | Failures before the relay excludes a row (`0` = unlimited) |
 | `CARTON_MAX_GROSS_WEIGHT_G` | `0` (unchecked) | CartonOverLimit weight limit in grams (ADR 0014) |
 | `CARTON_MAX_LONGEST_SIDE_MM` | `0` (unchecked) | CartonOverLimit longest-side limit in mm (ADR 0014) |
+| `RECEIVING_SITE_GLNS` | empty (rule off) | Comma-separated site GLNs; a scanned label for another GLN is a `WrongDestination` finding (ADR 0024) |
+| `RECEIVER_GS1_COMPANY_PREFIX` | empty | 7 to 10 digit GS1 company prefix for receiver-assigned SSCCs; unset = `POST .../sscc-assignments` answers 409 (a licensed asset, no default; ADR 0024) |
 | `HOUSEKEEPING_INTERVAL` | `1h` | Sweeper interval (`0` = sweeper off, ADR 0010) |
 | `IDEMPOTENCY_KEY_TTL` | `24h` | `idempotency_keys` row lifetime (`0` = keep forever) |
 | `OUTBOX_RETENTION` | `168h` | Published `outbox_events` retention (`0` = keep forever) |
@@ -246,7 +252,8 @@ over 19 paths:
 | GET | `/receipts/{receiptId}` | GetReceipt |
 | POST | `/receipts/{receiptId}/lines` | ReceiveLine |
 | GET | `/receipts/{receiptId}/cartons/{lpn}/label` | printable carton label (ADR 0014) |
-| POST | `/receipts/{receiptId}/scans` | case-level scan receiving |
+| POST | `/receipts/{receiptId}/scans` | case-level scan receiving (validates a raw GS1 label, ADR 0024) |
+| POST | `/receipts/{receiptId}/sscc-assignments` | AssignSscc: receive an unlabelled case under a receiver-assigned SSCC (ADR 0024; 409 until a company prefix is configured) |
 | POST | `/receipts/{receiptId}/closures` | CloseReceipt |
 | GET | `/docks` | ListDocks |
 | GET | `/healthz`, `/readyz` | liveness; readiness (503 while draining) |

@@ -46,6 +46,15 @@ type dockToStockDTO struct {
 	ShareUnderTarget *float64 `json:"share_under_target"`
 }
 
+// adviceDTO is the receiving advice KPI of a day (ADR 0023): how many advices
+// were issued and how many of them inside the SLA; share_within_sla is null when
+// none was issued.
+type adviceDTO struct {
+	Count          int      `json:"count"`
+	WithinSLA      int      `json:"within_sla"`
+	ShareWithinSLA *float64 `json:"share_within_sla"`
+}
+
 type discrepanciesDTO struct {
 	Short   int `json:"short"`
 	Over    int `json:"over"`
@@ -70,6 +79,7 @@ type performanceDayDTO struct {
 	Appointments   appointmentsDTO  `json:"appointments"`
 	DockDwell      timingDTO        `json:"dock_dwell"`
 	DockToStock    dockToStockDTO   `json:"dock_to_stock"`
+	Advice         adviceDTO        `json:"advice"`
 }
 
 type currentDTO struct {
@@ -127,6 +137,7 @@ func dayToDTO(d report.PerformanceDay) performanceDayDTO {
 			Count: d.DockToStock.Count, P50Seconds: d.DockToStock.P50, P90Seconds: d.DockToStock.P90,
 			UnderTarget: d.DockToStock.UnderTarget, ShareUnderTarget: d.DockToStock.ShareUnderTarget,
 		},
+		Advice: adviceDTO{Count: d.Advice.Count, WithinSLA: d.Advice.WithinSLA, ShareWithinSLA: d.Advice.ShareWithinSLA},
 	}
 }
 

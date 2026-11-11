@@ -27,6 +27,7 @@ import (
 
 	inboundhttp "github.com/claudioed/inbound-receiving/internal/adapters/inbound/http"
 	inboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/inbound/kafka"
+	"github.com/claudioed/inbound-receiving/internal/adapters/kafka/cloudevents"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/analyticsstore"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/idgen"
 	outboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/outbound/kafka"
@@ -147,10 +148,11 @@ type e2eWrites struct {
 	w     usecases.Writer
 	clock *settableClock
 	// appts is the appointments local copy (fed by dock-scheduling's events in
-	// production, ADR 0019) and history encodes the legacy DockAppointment
-	// events that were already on the analytics stream before the cutover.
-	appts   *postgres.AppointmentRepo
-	history *outboundkafka.AnalyticsEncoder
+	// production, ADR 0019) and analyticsTopic is where the historical
+	// DockAppointment events that were already on the analytics stream before
+	// the cutover are written.
+	appts          *postgres.AppointmentRepo
+	analyticsTopic string
 }
 
 func (e e2eWrites) at(when time.Time, what string, run func(ctx context.Context) error) {
@@ -215,9 +217,10 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 	// ---- OLTP writes: both topics' rows in ONE transaction per change ----
 	ob := postgres.NewOutboxRepo(oltp)
 	clock := &settableClock{}
-	writes := e2eWrites{t: t, clock: clock, appts: postgres.NewAppointmentRepo(oltp), history: &outboundkafka.AnalyticsEncoder{Topic: analyticsTopic}, w: usecases.Writer{
+	writes := e2eWrites{t: t, clock: clock, appts: postgres.NewAppointmentRepo(oltp), analyticsTopic: analyticsTopic, w: usecases.Writer{
 		Asns: postgres.NewAsnRepo(oltp), Appointments: postgres.NewAppointmentRepo(oltp), Receipts: postgres.NewReceiptRepo(oltp),
 		Outbox: ob, UoW: postgres.NewUnitOfWork(oltp), Clock: clock, IDs: idgen.UUID{},
+		Advice: postgres.NewAdviceRepo(oltp), AdviceSLA: 24 * time.Hour,
 		Encoder: &outboundkafka.FanoutEncoder{
 			Integration: &outboundkafka.Encoder{Topic: integrationTopic},
 			Analytics:   &outboundkafka.AnalyticsEncoder{Topic: analyticsTopic},
@@ -225,13 +228,14 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 		},
 	}}
 	e2eScenario(t, writes)
-	// 11 events raised by the service (both topics) + the 3 legacy
-	// DockAppointment events of the pre-cutover history (analytics stream only).
-	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, analyticsTopic); n != 14 {
-		t.Fatalf("analytics outbox rows = %d, want 14 (11 raised + 3 legacy appointment events)", n)
+	// 12 events raised by the service (both topics; the receiving advice is the
+	// twelfth) + the 3 historical DockAppointment events of the pre-cutover
+	// history (analytics stream only).
+	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, analyticsTopic); n != 15 {
+		t.Fatalf("analytics outbox rows = %d, want 15 (12 raised + 3 historical appointment events)", n)
 	}
-	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, integrationTopic); n != 11 {
-		t.Fatalf("integration outbox rows = %d, want 11 (this service raises no appointment event any more)", n)
+	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, integrationTopic); n != 12 {
+		t.Fatalf("integration outbox rows = %d, want 12 (this service raises no appointment event any more)", n)
 	}
 
 	// ---- the topic also carries messages the projector must survive ----
@@ -326,8 +330,8 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 //	       the local copy.
 //	day 6: ASN-1's receipt opens 08:05 on that appointment, receives 8 good + 1 damaged of line 1
 //	       and 7 good of line 2, closes 09:30 (Short + Damaged on line 1, Over on line 2); ASN-2 is received as a
-//	       walk-in from 11:00 and is still open. The appointment's legacy history (booked day 5 09:30, checked in
-//	       day 6 07:50, completed 09:30) is the stage B replay of what the analytics stream held before the cutover.
+//	       walk-in from 11:00 and is still open. The appointment's historical events (booked day 5 09:30, checked in
+//	       day 6 07:50, completed 09:30) are what the analytics stream held before the cutover.
 func e2eScenario(t *testing.T, w e2eWrites) {
 	t.Helper()
 	w.registerAsn("ASN-1", e2eAt(6, 8, 0), e2eAt(5, 8, 0), lineOf(1, "SKU-1", 10), lineOf(2, "SKU-2", 5))
@@ -369,14 +373,8 @@ func e2eScenario(t *testing.T, w e2eWrites) {
 		_, err := (&usecases.CloseReceipt{Writer: w.w}).Handle(ctx, usecases.CloseReceiptCommand{ReceiptID: receiptID, ExpectedVersion: version})
 		return err
 	})
-	w.at(e2eAt(6, 9, 30), "legacy appointment history", func(ctx context.Context) error {
-		d, err := appointment.Rehydrate(apptID, "D1", "ACME Freight", e2eAt(6, 8, 0), e2eAt(6, 10, 0), []string{"ASN-1"}, appointment.Completed, 0)
-		if err != nil {
-			return err
-		}
-		msgs, err := w.history.EncodeAppointment(d.Replay(appointment.Timeline{
-			BookedAt: e2eAt(5, 9, 30), ChangedAt: e2eAt(6, 9, 30), CheckedInAt: e2eAt(6, 7, 50),
-		})...)
+	w.at(e2eAt(6, 9, 30), "historical appointment events", func(ctx context.Context) error {
+		msgs, err := historicalAppointmentEvents(w.analyticsTopic, apptID, e2eAt(5, 9, 30), e2eAt(6, 7, 50), e2eAt(6, 9, 30))
 		if err != nil {
 			return err
 		}
@@ -403,6 +401,7 @@ func assertReceivingPerformance(t *testing.T, got e2eReport) {
 	t.Helper()
 	zeroTiming := map[string]any{"count": 0.0, "p50_seconds": nil, "p95_seconds": nil}
 	zeroDockToStock := map[string]any{"count": 0.0, "p50_seconds": nil, "p90_seconds": nil, "under_target": 0.0, "share_under_target": nil}
+	zeroAdvice := map[string]any{"count": 0.0, "within_sla": 0.0, "share_within_sla": nil}
 	wantDays := []map[string]any{
 		{
 			"day": "2026-10-05", "receipts_closed": 0.0, "lines_received": 0.0, "units_good": 0.0, "units_damaged": 0.0,
@@ -411,6 +410,7 @@ func assertReceivingPerformance(t *testing.T, got e2eReport) {
 			"appointments":  map[string]any{"booked": 1.0, "checked_in": 0.0, "cancelled": 0.0, "completed": 0.0},
 			"dock_dwell":    zeroTiming,
 			"dock_to_stock": zeroDockToStock,
+			"advice":        zeroAdvice,
 		},
 		{
 			"day": "2026-10-06", "receipts_closed": 1.0, "lines_received": 3.0, "units_good": 15.0, "units_damaged": 1.0,
@@ -419,6 +419,8 @@ func assertReceivingPerformance(t *testing.T, got e2eReport) {
 			"appointments":  map[string]any{"booked": 0.0, "checked_in": 1.0, "cancelled": 0.0, "completed": 1.0},
 			"dock_dwell":    map[string]any{"count": 1.0, "p50_seconds": 6000.0, "p95_seconds": 6000.0},
 			"dock_to_stock": map[string]any{"count": 1.0, "p50_seconds": 7200.0, "p90_seconds": 7200.0, "under_target": 1.0, "share_under_target": 1.0},
+			// The receipt closed 09:30, minutes after its last unit: the advice is inside the 24 h SLA.
+			"advice": map[string]any{"count": 1.0, "within_sla": 1.0, "share_within_sla": 1.0},
 		},
 	}
 	if !reflect.DeepEqual(got.Days, wantDays) {
@@ -450,6 +452,50 @@ func assertOnlyThePoisonWasDeadLettered(t *testing.T, brokers []string, dlqTopic
 	if extra, err := dlq.ReadMessage(quietCtx); err == nil {
 		t.Errorf("a second message reached the DLQ (legacy and unknown types are skipped, not dead-lettered): %s", extra.Value)
 	}
+}
+
+// historicalAppointmentEvents builds the three dockappointment events a
+// completed appointment left on the analytics stream before the cutover, as
+// the retired legacy encoder wrote them (ADR 0022 removed the encoder; the
+// projector still folds what is on the topic).
+func historicalAppointmentEvents(topic, apptID string, bookedAt, checkedInAt, completedAt time.Time) ([]outbox.Message, error) {
+	row := func(name string, at time.Time, data map[string]any) (outbox.Message, error) {
+		id := uuid.NewString()
+		data["appointment_id"], data["door_code"] = apptID, "D1"
+		value, err := cloudevents.New(cloudevents.Spec{
+			ID: id, Entity: "dockappointment", EventName: name, Subject: apptID, Time: at,
+			Stream: cloudevents.StreamAnalytics, Version: 1, Data: data,
+		})
+		if err != nil {
+			return outbox.Message{}, err
+		}
+		ct := cloudevents.ContentTypeHeader()
+		return outbox.Message{
+			EventID: id, Topic: topic, EventType: cloudevents.Type("dockappointment", name), Subject: apptID, Key: []byte(apptID),
+			DataSchema: cloudevents.DataSchema(cloudevents.StreamAnalytics, name, 1), Value: value,
+			Headers: []outbox.Header{{Key: ct.Key, Value: string(ct.Value)}},
+		}, nil
+	}
+	var out []outbox.Message
+	for _, e := range []struct {
+		name string
+		at   time.Time
+		data map[string]any
+	}{
+		{"DockAppointmentBooked", bookedAt, map[string]any{
+			"carrier": "ACME Freight", "window_start": e2eAt(6, 8, 0).Format(time.RFC3339), "window_end": e2eAt(6, 10, 0).Format(time.RFC3339),
+			"asn_numbers": []string{"ASN-1"},
+		}},
+		{"DockAppointmentCheckedIn", checkedInAt, map[string]any{"checked_in_at": checkedInAt.Format(time.RFC3339)}},
+		{"DockAppointmentCompleted", completedAt, map[string]any{"completed_at": completedAt.Format(time.RFC3339)}},
+	} {
+		m, err := row(e.name, e.at, e.data)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, nil
 }
 
 func hand(t *testing.T, id, typ, subject string, at time.Time, data map[string]any) []byte {

@@ -7,7 +7,7 @@ sidebar_label: Subdomain classification
 # Subdomain classification
 
 :::caution[DockAppointment moved (ADR 0019)]
-The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (only the one-shot `api republish-appointments` backfill does). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
+The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (the one-shot `api republish-appointments` backfill that re-announced them was removed, [ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
 :::
 
 ## Verdict
@@ -55,9 +55,9 @@ relationship column is from this repo's [integration pages](../ecosystem/upstrea
 |---|---|---|---|
 | `product-master` | Supporting | `wms` | upstream: `ProductRegistered` on `warehouse.product-master.events` feeds the `known_skus` local copy (`PRODUCT_MODE=kafka`) |
 | `facility-layout` | Generic | `wms` | upstream: `LocationSlotRegistered` / `LocationSlotDecommissioned` on `warehouse.facility.events` feed the `dock_doors` local copy (`DOCK_DOOR_MODE=kafka`) |
-| `inventory-storage` | Core | `wms` | downstream: consumes `ReceiptLineReceived` and books `Good` units as received stock |
+| `inventory-storage` | Core | `wms` | downstream: consumes `ReceiptLineReceived` and `ReceiptCartonReceived`; books `Good` units as received stock |
 | `warehouse-ops-agent` | Supporting | `wes` | downstream reader: calls the seven read-only MCP tools |
-| `warehouse-planning` | Core | `wes` | downstream: consumes `DockAppointmentBooked` and `DockAppointmentCancelled` as inbound labour demand (its ADR 0017, built and live) |
+| `warehouse-planning` | Core | `wes` | no longer downstream of this context: its inbound labour demand is read from dock-scheduling (its ADR 0020), and this context stopped raising the `DockAppointment*` types it used to read (ADR 0022) |
 
 The fleet count in warehouse-docs is five Core, nine Supporting, two Generic
 and one Generic/Supporting; inbound-receiving is one of the nine Supporting

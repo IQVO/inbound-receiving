@@ -13,6 +13,8 @@ statements named below.
 
 Amended by [ADR 0020](./0020-appointment-copy-follows-reschedules-and-door-reassignments.md): point 2 and the Consequences on rescheduled appointments (the copy also follows `DockAppointmentRescheduled` and `DockAppointmentDoorReassigned`).
 
+Amended by [ADR 0022](./0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay.md): point 5 and Rollout step 4 (the backfill command, the legacy encoders and `Replay` are gone; the deprecated GETs and the 410 routes stay pending a decision; no legacy event can be produced any more).
+
 ## Context
 
 A dock appointment is a promise about a door and a time window. Deciding it

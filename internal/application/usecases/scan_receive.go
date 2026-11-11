@@ -13,7 +13,7 @@ import (
 )
 
 func (uc *ReceiveScan) acceptCarton(ctx context.Context, r *receipt.Receipt, in scanInput, condition receipt.Condition, now time.Time) (receipt.ScanResult, error) {
-	scan := receipt.CartonScan{SSCC: in.sscc, Condition: condition, LabelCount: in.labelQty, LabelContentGTIN: in.labelGTIN}
+	scan := receipt.CartonScan{SSCC: in.sscc, Condition: condition, LabelCount: in.labelQty, LabelContentGTIN: in.labelGTIN, Label: in.label}
 	elsewhere, err := uc.Receipts.ReceivedSsccs(ctx, []gs1.SSCC{in.sscc})
 	if err != nil {
 		return receipt.ScanResult{}, err
@@ -130,7 +130,7 @@ func (uc *ReceiveScan) receiveCases(r *receipt.Receipt, in scanInput, level repo
 	}
 	res, err := r.ReceiveCases(receipt.CaseScan{
 		SKU: level.SKU, Pack: receipt.CasePack{GTIN: level.GTIN, UnitsPerPack: level.UnitsPerPack}, ChildGTIN: level.ChildGTIN,
-		Cases: cases, Condition: condition, Lot: in.lot, Expiry: in.expiry, LPNs: lpns,
+		Cases: cases, Condition: condition, Lot: in.lot, Expiry: in.expiry, LPNs: lpns, Label: in.label,
 	}, now)
 	return ScanCaseGTIN, res, err
 }
@@ -156,4 +156,45 @@ func defaultQty(q int64) int64 {
 		return 1
 	}
 	return q
+}
+
+// supplierOf reads the supplier of the receipt's ASN: the label findings carry it
+// so a first-pass rate can be told per supplier (ADR 0024).
+func (uc *ReceiveScan) supplierOf(ctx context.Context, r *receipt.Receipt) (string, error) {
+	a, err := uc.Asns.Get(ctx, r.AsnNumber())
+	if err != nil {
+		return "", err
+	}
+	return a.SupplierRef(), nil
+}
+
+// refuseLabel records a GS1-128 element string that violates the standard as a
+// LabelNonCompliant finding; nothing is booked. The kind answered is the one the
+// screen expected, else SSCC for a label that starts with AI 00.
+func (uc *ReceiveScan) refuseLabel(ctx context.Context, r *receipt.Receipt, in scanInput, now time.Time) (ScanKind, receipt.ScanResult, error) {
+	supplier, err := uc.supplierOf(ctx, r)
+	if err != nil {
+		return "", receipt.ScanResult{}, err
+	}
+	res, err := r.RejectLabel(*in.violation, supplier, now)
+	kind := gtinKind(in.expected)
+	if in.expected == ScanSSCC || (in.expected == "" && in.startsWithSSCC) {
+		kind = ScanSSCC
+	}
+	return kind, res, err
+}
+
+// refuseDestination records a label addressed to another location as a
+// WrongDestination finding; nothing is booked.
+func (uc *ReceiveScan) refuseDestination(ctx context.Context, r *receipt.Receipt, in scanInput, now time.Time) (ScanKind, receipt.ScanResult, error) {
+	supplier, err := uc.supplierOf(ctx, r)
+	if err != nil {
+		return "", receipt.ScanResult{}, err
+	}
+	res, err := r.RejectDestination(in.sscc, in.shipTo, supplier, now)
+	kind := gtinKind(in.expected)
+	if !in.sscc.IsZero() {
+		kind = ScanSSCC
+	}
+	return kind, res, err
 }

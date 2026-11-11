@@ -12,6 +12,8 @@ config:
   dockAppointmentConsumerGroup: "inbound-receiving-dock-appointments"
   visitArrivalConsumerGroup: "inbound-receiving-visit-arrivals"
   cartonStowConsumerGroup: "inbound-receiving-carton-stows"
+  receivingSiteGlns: "4012345000009,6141410000014"
+  receiverGs1CompanyPrefix: "0614141"
   shutdownDrainDelay: "5s"
   corsAllowedOrigins: "http://localhost:5173"
 kafka:

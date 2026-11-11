@@ -8,7 +8,7 @@ sidebar_position: 14
 # Aggregate design canvas
 
 :::caution[DockAppointment moved (ADR 0019)]
-The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (only the one-shot `api republish-appointments` backfill does). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
+The dock appointment is owned by dock-scheduling since [ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling). This context keeps a read-only local copy fed by dock-scheduling's `DockAppointmentBooked` / `DockAppointmentCancelled`, no longer books, checks in, cancels or completes appointments, and no longer raises the four `DockAppointment*` events (the one-shot `api republish-appointments` backfill that re-announced them was removed, [ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)). Where this page describes those commands, rules or events, read it as the pre-transfer design; the page is not yet rewritten.
 :::
 
 Following the ddd-crew [Aggregate Design Canvas v1.1](https://github.com/ddd-crew/aggregate-design-canvas),
@@ -137,13 +137,17 @@ the loser sees `ErrWindowOverlap` (`409 door-window-overlap`).
 
 ### 6. Handled commands
 
-`Book` (`BookAppointment`), `CheckIn` (`CheckInAppointment`), `Cancel`
-(`CancelAppointment`) and `Complete` (from `CloseReceipt`).
+None today. Pre-transfer this was `Book` (`BookAppointment`), `CheckIn`
+(`CheckInAppointment`), `Cancel` (`CancelAppointment`) and `Complete` (from
+`CloseReceipt`); those use cases and methods were removed (ADR 0019) and the three
+routes answer `410 appointment-moved`.
 
 ### 7. Created events
 
-`DockAppointmentBooked`, `DockAppointmentCheckedIn`,
-`DockAppointmentCancelled`, `DockAppointmentCompleted`.
+None. The four `DockAppointmentBooked`, `DockAppointmentCheckedIn`,
+`DockAppointmentCancelled` and `DockAppointmentCompleted` events this aggregate
+once raised were retired from the contract and their encoders and `Replay` removed
+([ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)).
 
 ### 8. Throughput (estimate)
 

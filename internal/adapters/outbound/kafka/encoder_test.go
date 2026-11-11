@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
-	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
@@ -42,18 +41,6 @@ func registeredAsn(t *testing.T, arrival time.Time) asn.Event {
 	}
 	return events[0]
 }
-
-func bookedEvent(t *testing.T) appointment.Event {
-	t.Helper()
-	d, err := appointment.Rehydrate(apptID, "WH1-DOCK-IN-01", "ACME Freight", at(9, 8, 0), at(9, 10, 0), []string{"ASN-1001"}, appointment.Booked, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The first event of the legacy history the republish backfill replays.
-	return d.Replay(appointment.Timeline{BookedAt: at(8, 12, 5), ChangedAt: at(8, 12, 5)})[0]
-}
-
-func apptHeader(h time.Time) appointment.Header { return appointment.Header{ID: apptID, At: h} }
 
 func receiptHeader(h time.Time) receipt.Header {
 	return receipt.Header{ID: rcptID, Asn: "ASN-1001", At: h}
@@ -95,45 +82,6 @@ func TestEncoderGoldenAsnEvents(t *testing.T) {
 		`{"asn_number":"ASN-1001","reason":"Supplier cancelled the shipment"}`))
 }
 
-func TestEncoderGoldenAppointmentEvents(t *testing.T) {
-	enc := &Encoder{NewID: fixedID}
-	cases := []struct {
-		name  string
-		event appointment.Event
-		time  string
-		data  string
-	}{
-		{
-			"DockAppointmentBooked", bookedEvent(t), "2026-10-08T12:05:00Z",
-			`{"appointment_id":"` + apptID + `","door_code":"WH1-DOCK-IN-01","carrier":"ACME Freight","window_start":"2026-10-09T08:00:00Z","window_end":"2026-10-09T10:00:00Z","asn_numbers":["ASN-1001"]}`,
-		},
-		{
-			"DockAppointmentCheckedIn",
-			appointment.DockAppointmentCheckedIn{Header: apptHeader(at(9, 7, 50)), DoorCode: "WH1-DOCK-IN-01", CheckedInAt: at(9, 7, 50)}, "2026-10-09T07:50:00Z",
-			`{"appointment_id":"` + apptID + `","door_code":"WH1-DOCK-IN-01","checked_in_at":"2026-10-09T07:50:00Z"}`,
-		},
-		{
-			"DockAppointmentCancelled",
-			appointment.DockAppointmentCancelled{Header: apptHeader(at(8, 18, 0)), DoorCode: "WH1-DOCK-IN-01", Reason: "Carrier delayed"}, "2026-10-08T18:00:00Z",
-			`{"appointment_id":"` + apptID + `","door_code":"WH1-DOCK-IN-01","reason":"Carrier delayed"}`,
-		},
-		{
-			"DockAppointmentCompleted",
-			appointment.DockAppointmentCompleted{Header: apptHeader(at(9, 9, 30)), DoorCode: "WH1-DOCK-IN-01", CompletedAt: at(9, 9, 30)}, "2026-10-09T09:30:00Z",
-			`{"appointment_id":"` + apptID + `","door_code":"WH1-DOCK-IN-01","completed_at":"2026-10-09T09:30:00Z"}`,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			msgs, err := enc.EncodeAppointment(tc.event)
-			if err != nil {
-				t.Fatal(err)
-			}
-			assertRow(t, msgs[0], "dockappointment."+tc.name, apptID, apptID, envelope("dockappointment", tc.name, apptID, tc.time, tc.data))
-		})
-	}
-}
-
 func TestEncoderGoldenReceiptEvents(t *testing.T) {
 	enc := &Encoder{NewID: fixedID}
 	cases := []struct {
@@ -160,9 +108,9 @@ func TestEncoderGoldenReceiptEvents(t *testing.T) {
 				{LineNo: 2, SKU: "SKU-2", Kind: receipt.KindOver, ExpectedQty: 5, ReceivedQty: 7, DamagedQty: 0},
 			}}, "2026-10-09T09:30:00Z",
 			`{"receipt_id":"` + rcptID + `","asn_number":"ASN-1001","closed_at":"2026-10-09T09:30:00Z","discrepancies":[` +
-				`{"line_no":1,"sku":"SKU-1","kind":"Short","expected_qty":40,"received_qty":34,"damaged_qty":4},` +
-				`{"line_no":1,"sku":"SKU-1","kind":"Damaged","expected_qty":40,"received_qty":34,"damaged_qty":4},` +
-				`{"line_no":2,"sku":"SKU-2","kind":"Over","expected_qty":5,"received_qty":7,"damaged_qty":0}]}`,
+				`{"line_no":1,"sku":"SKU-1","kind":"Short","expected_qty":40,"received_qty":34,"damaged_qty":4,"w13_code":"02","cbv_disposition":"mismatch_quantity"},` +
+				`{"line_no":1,"sku":"SKU-1","kind":"Damaged","expected_qty":40,"received_qty":34,"damaged_qty":4,"w13_code":"01","cbv_disposition":"damaged"},` +
+				`{"line_no":2,"sku":"SKU-2","kind":"Over","expected_qty":5,"received_qty":7,"damaged_qty":0,"w13_code":"03","cbv_disposition":"mismatch_quantity"}]}`,
 		},
 	}
 	for _, tc := range cases {
@@ -190,16 +138,11 @@ func TestEncoderOptionalFieldsAreOmitted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cancelled, err := enc.EncodeAppointment(appointment.DockAppointmentCancelled{Header: apptHeader(at(8, 18, 0)), DoorCode: "D"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	wants := map[string]string{
 		string(registered[0].Value): `"data":{"asn_number":"ASN-1001","supplier_ref":"ACME","lines":[{"line_no":1,"sku":"SKU-1","expected_qty":40},{"line_no":2,"sku":"SKU-2","expected_qty":5}]}}`,
 		string(registered[1].Value): `"data":{"asn_number":"ASN-1001"}}`,
 		string(opened[0].Value):     `"data":{"receipt_id":"` + rcptID + `","asn_number":"ASN-1001","opened_at":"2026-10-09T08:05:00Z"}}`,
 		string(opened[1].Value):     `"data":{"receipt_id":"` + rcptID + `","asn_number":"ASN-1001","closed_at":"2026-10-09T09:30:00Z","discrepancies":[]}}`,
-		string(cancelled[0].Value):  `"data":{"appointment_id":"` + apptID + `","door_code":"D"}}`,
 	}
 	for got, want := range wants {
 		if !strings.HasSuffix(got, want) {
@@ -210,13 +153,11 @@ func TestEncoderOptionalFieldsAreOmitted(t *testing.T) {
 
 func TestEncoderKeepsFractionalSecondsInRFC3339(t *testing.T) {
 	enc := &Encoder{NewID: fixedID}
-	msgs, err := enc.EncodeAppointment(appointment.DockAppointmentCheckedIn{
-		Header: apptHeader(at(9, 7, 50)), DoorCode: "D", CheckedInAt: at(9, 7, 50).Add(500 * time.Millisecond),
-	})
+	msgs, err := enc.EncodeReceipt(receipt.ReceiptOpened{Header: receiptHeader(at(9, 8, 5).Add(500 * time.Millisecond))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(msgs[0].Value), `"checked_in_at":"2026-10-09T07:50:00.5Z"`) {
+	if !strings.Contains(string(msgs[0].Value), `"opened_at":"2026-10-09T08:05:00.5Z"`) {
 		t.Fatalf("value = %s", msgs[0].Value)
 	}
 }
@@ -224,10 +165,6 @@ func TestEncoderKeepsFractionalSecondsInRFC3339(t *testing.T) {
 type unknownAsnEvent struct{ asn.Header }
 
 func (unknownAsnEvent) EventName() string { return "Unknown" }
-
-type unknownAppointmentEvent struct{ appointment.Header }
-
-func (unknownAppointmentEvent) EventName() string { return "Unknown" }
 
 type unknownReceiptEvent struct{ receipt.Header }
 
@@ -237,9 +174,6 @@ func TestEncoderRejectsAnUnpublishedEvent(t *testing.T) {
 	enc := NewEncoder()
 	if msgs, err := enc.EncodeAsn(registeredAsn(t, time.Time{}), unknownAsnEvent{asn.Header{Number: "A", At: at(8, 1, 0)}}); err == nil || msgs != nil {
 		t.Fatalf("asn: got %v, %v; want an error and no messages", msgs, err)
-	}
-	if msgs, err := enc.EncodeAppointment(unknownAppointmentEvent{apptHeader(at(8, 1, 0))}); err == nil || msgs != nil {
-		t.Fatalf("appointment: got %v, %v", msgs, err)
 	}
 	if msgs, err := enc.EncodeReceipt(unknownReceiptEvent{receiptHeader(at(8, 1, 0))}); err == nil || msgs != nil {
 		t.Fatalf("receipt: got %v, %v", msgs, err)

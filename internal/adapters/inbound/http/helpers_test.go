@@ -149,6 +149,11 @@ type fixture struct {
 	skus         *memory.KnownSkus
 	readiness    *inboundhttp.Readiness
 	keys         atomic.Int64
+	// packaging, scan and assign are the live use cases behind the routes, so a
+	// test can seed the PackagingView or set RECEIVING_SITE_GLNS and the company prefix.
+	packaging *memory.PackagingView
+	scan      *usecases.ReceiveScan
+	assign    *usecases.AssignSscc
 }
 
 // newFixture serves the real router over the memory adapters in permissive
@@ -170,6 +175,9 @@ func build(t *testing.T, mode usecases.Mode) *fixture {
 	fa, fap, fr, fd := faultyAsns{asns, f}, faultyAppointments{appts, f}, faultyReceipts{receipts, f}, faultyDoors{doors, f}
 	w := usecases.Writer{Asns: fa, Appointments: fap, Receipts: fr, Outbox: ob, Encoder: kafka.NewEncoder(), UoW: uow, Clock: clock, IDs: idgen.UUID{}}
 	readiness := &inboundhttp.Readiness{}
+	packaging := memory.NewPackagingView()
+	scan := &usecases.ReceiveScan{Writer: w, Packaging: packaging}
+	assign := &usecases.AssignSscc{Writer: w, Packaging: packaging, Serials: memory.NewSsccSerials()}
 	s := &inboundhttp.Server{
 		RegisterAsn:      &usecases.RegisterAsn{Writer: w, SkuMode: mode, Skus: skus},
 		CancelAsn:        &usecases.CancelAsn{Writer: w},
@@ -180,7 +188,8 @@ func build(t *testing.T, mode usecases.Mode) *fixture {
 		OpenReceipt:      &usecases.OpenReceipt{Writer: w},
 		ReceiveLine:      &usecases.ReceiveLine{Writer: w},
 		CloseReceipt:     &usecases.CloseReceipt{Writer: w},
-		ReceiveScan:      &usecases.ReceiveScan{Writer: w, Packaging: memory.NewPackagingView()},
+		ReceiveScan:      scan,
+		AssignSscc:       assign,
 		GetReceipt:       &usecases.GetReceipt{Receipts: fr},
 		GetCartonLabel:   &usecases.GetCartonLabel{Receipts: fr},
 		ListReceipts:     &usecases.ListReceipts{Receipts: fr},
@@ -191,7 +200,8 @@ func build(t *testing.T, mode usecases.Mode) *fixture {
 	}
 	srv := httptest.NewServer(inboundhttp.NewRouter(s))
 	t.Cleanup(srv.Close)
-	return &fixture{server: srv, clock: clock, faults: f, outbox: ob, appts: appts, doors: doors, skus: skus, readiness: readiness}
+	return &fixture{server: srv, clock: clock, faults: f, outbox: ob, appts: appts, doors: doors, skus: skus, readiness: readiness,
+		packaging: packaging, scan: scan, assign: assign}
 }
 
 type response struct {

@@ -51,6 +51,8 @@ The repo defines **one custom (business) instrument**, `inbound_receiving.receip
 
 | Instrument | Type | Unit | Attributes | Emitted by |
 |---|---|---|---|---|
+| `inbound_receiving.advice.issued` | Int64 counter | `{advice}` | `within_sla` (`true`, `false`) | `telemetry.AdviceMetrics`, incremented by `CloseReceipt` once per receiving advice issued ([ADR 0023](/docs/adr/0023-receiving-advice-at-close-with-standard-discrepancy-vocabulary)); OTLP only. The KPI "% receipts with advice inside the SLA" is `true / (true + false)`; the same share is in `GET /reports/receiving-performance` (`advice` block) |
+| `inbound_receiving.advice.overdue` | Int64 counter | `{receipt}` | none | `telemetry.AdviceMetrics`, incremented by the housekeeping sweep once per Open receipt past the advice SLA (it also logs a WARN `receiving advice overdue` and raises `ReceivingAdviceOverdue`); OTLP only, exported by Prometheus-style backends as `inbound_receiving_advice_overdue_total` |
 | `inbound_receiving.receipts.units_received` | Int64 counter | `{unit}` | `outcome` (`good`, `damaged`; the receipt line's condition) | `telemetry.ReceiptMetrics`, created in `cmd/api/main.go` and incremented by `ReceiveLine` with the line quantity; OTLP only. The damaged share never becomes stock (ADR 0003) |
 | `http.server.request.duration` | Float64Histogram (buckets 5 ms … 10 s) | `s` | `http.method`, `http.scheme`, `http.route` (chi pattern, e.g. `/asns/{asnNumber}`) | otelchi `NewServerRequestDuration` on the api, mcp and reports routers |
 | `go.memory.used` | UpDownCounter (observable) | `By` | `go.memory.type` (`stack`, `other`) | contrib runtime (api, mcp, reports, projector) |
