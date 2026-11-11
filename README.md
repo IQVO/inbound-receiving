@@ -107,14 +107,18 @@ convention is `com.warehouse.wms.inbound-receiving.<entity>.<EventName>` (the
 transaction** (`FanoutEncoder`): to the integration topic and, under the same
 CloudEvents id, to the analytics topic (ADR 0004, ADR 0006).
 
-**Publishes** — 7 events on `warehouse.inbound-receiving.events` (each with
+**Publishes** — 10 events on `warehouse.inbound-receiving.events` (each with
 an `…Analytics` twin on `warehouse.inbound-receiving.analytics`):
 
 | Entity | Events |
 |---|---|
 | `asn` | `ASNRegistered`, `ASNCancelled` |
-| `dockappointment` | *(retired: no longer raised, ADR 0019; not in the contract, ADR 0022)* `DockAppointmentBooked`, `DockAppointmentCheckedIn`, `DockAppointmentCompleted`, `DockAppointmentCancelled` |
-| `receipt` | `ReceiptOpened`, `ReceiptLineReceived`, `ReceiptCartonReceived`, `ReceiptClosed`, `CartonDiscrepancyRaised`, `ReceiptStowCompleted` (the dock-to-stock fact, ADR 0021) |
+| `receipt` | `ReceiptOpened`, `ReceiptLineReceived`, `ReceiptCartonReceived`, `ReceiptClosed`, `CartonDiscrepancyRaised`, `ReceiptStowCompleted` (the dock-to-stock fact, ADR 0021), `ReceivingAdviceIssued` (the receiving advice at close, ADR 0023), `ReceivingAdviceOverdue` (the advice SLA missed, ADR 0023) |
+
+The four `dockappointment` types (`DockAppointmentBooked`, `CheckedIn`,
+`Cancelled`, `Completed`) are no longer raised and are not in the contract
+(ADR 0019, ADR 0022); the `api republish-appointments` backfill, the legacy
+encoders and `Replay` were removed with them (ADR 0022).
 
 Real types: `com.warehouse.wms.inbound-receiving.asn.ASNRegistered`,
 `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived`.

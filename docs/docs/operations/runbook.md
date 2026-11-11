@@ -134,11 +134,14 @@ All messages are CloudEvents 1.0 in structured mode
 
 | Topic | Direction | Binary | Consumer group | Notes |
 |---|---|---|---|---|
-| `warehouse.inbound-receiving.events` | produced | `cmd/api` (outbox relay) | — | the 7 integration events; key = ASN number (ASN and receipt events). The four legacy `DockAppointment*` events are no longer raised (ADR 0019) and the `republish-appointments` command is removed (ADR 0022) |
-| `warehouse.inbound-receiving.analytics` | produced and consumed | `cmd/api` produces; `cmd/inbound-projector` consumes | `ANALYTICS_CONSUMER_GROUP` (`inbound-receiving-analytics`) | same 9 events, same `id` and `type` as the integration row, `dataschema` `...:analytics:...` |
+| `warehouse.inbound-receiving.events` | produced | `cmd/api` (outbox relay) | — | the 8 integration events (`ASNRegistered`, `ASNCancelled`, `ReceiptOpened`, `ReceiptLineReceived`, `ReceiptCartonReceived`, `CartonDiscrepancyRaised`, `ReceiptClosed`, `ReceiptStowCompleted`); key = ASN number (ASN and receipt events). The four legacy `DockAppointment*` events are no longer raised (ADR 0019) and the `republish-appointments` command is removed (ADR 0022) |
+| `warehouse.inbound-receiving.analytics` | produced and consumed | `cmd/api` produces; `cmd/inbound-projector` consumes | `ANALYTICS_CONSUMER_GROUP` (`inbound-receiving-analytics`) | same 8 events, same `id` and `type` as the integration row (the projector folds six of them plus the historical `DockAppointment*` ones; the two carton types are ignored), `dataschema` `...:analytics:...` |
 | `warehouse.inbound-receiving.analytics.dlq` | produced | `cmd/inbound-projector` | — | raw poison message + `x-dlq-source-topic`, `x-dlq-source-partition`, `x-dlq-source-offset`, `x-dlq-error`, `x-dlq-failed-at` headers; auto-created on first write |
-| `warehouse.product-master.events` | consumed | `cmd/api` (only when `PRODUCT_MODE=kafka`) | `PRODUCT_CONSUMER_GROUP` (`inbound-receiving-product` in kind) | `ProductRegistered` fills `known_skus` |
-| `warehouse.facility.events` | consumed | `cmd/api` (only when `DOCK_DOOR_MODE=kafka`) | `DOCK_DOOR_CONSUMER_GROUP` (`inbound-receiving-dock-doors` in kind) | `LocationSlotRegistered` / `LocationSlotDecommissioned` maintain `dock_doors` |
+| `warehouse.product-master.events` | consumed | `cmd/api` (always on) | `PRODUCT_CONSUMER_GROUP` (`inbound-receiving-product` in kind), `PACKAGING_CONSUMER_GROUP` | `ProductRegistered` fills `known_skus`; `ProductPackLevelDeclared` / `ProductPackLevelRetired` fill the packaging view |
+| `warehouse.facility.events` | consumed | `cmd/api` (always on) | `DOCK_DOOR_CONSUMER_GROUP` (`inbound-receiving-dock-doors` in kind) | `LocationSlotRegistered` / `LocationSlotDecommissioned` maintain `dock_doors` |
+| `warehouse.dock-scheduling.events` | consumed | `cmd/api` (always on) | `DOCK_APPOINTMENT_CONSUMER_GROUP` | `DockAppointmentBooked` / `Cancelled` / `Rescheduled` / `DoorReassigned` maintain the `appointments` copy (ADR 0019, ADR 0020) |
+| `warehouse.yard-management.events` | consumed | `cmd/api` (always on) | `VISIT_ARRIVAL_CONSUMER_GROUP` | `VisitCheckedIn` fills `visit_arrivals` (ADR 0021) |
+| `warehouse.inventory.events` | consumed | `cmd/api` (always on) | `CARTON_STOW_CONSUMER_GROUP` | `ContainerStowed` fills `carton_stows` (ADR 0021) |
 
 The local-copy consumers have **no DLQ**: a message that is not a CloudEvent,
 has a malformed payload or an invalid value is logged at WARN and committed

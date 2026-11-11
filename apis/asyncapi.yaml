@@ -14,7 +14,7 @@ info:
     the inbound dock workflow of ASNs, dock appointments and receipts
     (ADR 0001, ADR 0002).
 
-    **Published.** The `Asn` and `Receipt` aggregates raise seven events,
+    **Published.** The `Asn` and `Receipt` aggregates raise eight events,
     published to `warehouse.inbound-receiving.events` through a
     **transactional outbox**: the aggregate row and its already-encoded events
     are written in ONE database transaction and a relay drains them to Kafka
@@ -48,7 +48,7 @@ info:
     validate their appointment against that copy and take its door when they
     open; an open receipt keeps its door.
 
-    **Analytics (ADR 0006).** The seven events are ALSO written, in the
+    **Analytics (ADR 0006).** The ten events are ALSO written, in the
     same transaction, to `warehouse.inbound-receiving.analytics` with the same
     `type` and the same `id` per occurrence, `dataschema`
     `urn:warehouse:inbound-receiving:analytics:<EventName>:v1` and payloads

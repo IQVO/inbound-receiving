@@ -137,13 +137,17 @@ the loser sees `ErrWindowOverlap` (`409 door-window-overlap`).
 
 ### 6. Handled commands
 
-`Book` (`BookAppointment`), `CheckIn` (`CheckInAppointment`), `Cancel`
-(`CancelAppointment`) and `Complete` (from `CloseReceipt`).
+None today. Pre-transfer this was `Book` (`BookAppointment`), `CheckIn`
+(`CheckInAppointment`), `Cancel` (`CancelAppointment`) and `Complete` (from
+`CloseReceipt`); those use cases and methods were removed (ADR 0019) and the three
+routes answer `410 appointment-moved`.
 
 ### 7. Created events
 
-`DockAppointmentBooked`, `DockAppointmentCheckedIn`,
-`DockAppointmentCancelled`, `DockAppointmentCompleted`.
+None. The four `DockAppointmentBooked`, `DockAppointmentCheckedIn`,
+`DockAppointmentCancelled` and `DockAppointmentCompleted` events this aggregate
+once raised were retired from the contract and their encoders and `Replay` removed
+([ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)).
 
 ### 8. Throughput (estimate)
 

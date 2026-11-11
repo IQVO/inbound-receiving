@@ -55,9 +55,9 @@ relationship column is from this repo's [integration pages](../ecosystem/upstrea
 |---|---|---|---|
 | `product-master` | Supporting | `wms` | upstream: `ProductRegistered` on `warehouse.product-master.events` feeds the `known_skus` local copy (`PRODUCT_MODE=kafka`) |
 | `facility-layout` | Generic | `wms` | upstream: `LocationSlotRegistered` / `LocationSlotDecommissioned` on `warehouse.facility.events` feed the `dock_doors` local copy (`DOCK_DOOR_MODE=kafka`) |
-| `inventory-storage` | Core | `wms` | downstream: consumes `ReceiptLineReceived` and books `Good` units as received stock |
+| `inventory-storage` | Core | `wms` | downstream: consumes `ReceiptLineReceived` and `ReceiptCartonReceived`; books `Good` units as received stock |
 | `warehouse-ops-agent` | Supporting | `wes` | downstream reader: calls the seven read-only MCP tools |
-| `warehouse-planning` | Core | `wes` | downstream: consumes `DockAppointmentBooked` and `DockAppointmentCancelled` as inbound labour demand (its ADR 0017, built and live) |
+| `warehouse-planning` | Core | `wes` | no longer downstream of this context: its inbound labour demand is read from dock-scheduling (its ADR 0020), and this context stopped raising the `DockAppointment*` types it used to read (ADR 0022) |
 
 The fleet count in warehouse-docs is five Core, nine Supporting, two Generic
 and one Generic/Supporting; inbound-receiving is one of the nine Supporting

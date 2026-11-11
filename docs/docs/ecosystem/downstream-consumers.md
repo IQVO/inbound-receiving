@@ -7,9 +7,9 @@ sidebar_position: 1
 # Downstream consumers
 
 `inbound-receiving` publishes on `warehouse.inbound-receiving.events`: eight
-current types (`ASNRegistered`, `ASNCancelled`, `ReceiptOpened`,
+types (`ASNRegistered`, `ASNCancelled`, `ReceiptOpened`,
 `ReceiptLineReceived`, `ReceiptCartonReceived`, `CartonDiscrepancyRaised`,
-`ReceiptClosed`) plus `ReceiptStowCompleted` (below) and no longer the four legacy `DockAppointment*` types ([ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling),
+`ReceiptClosed`, `ReceiptStowCompleted`) and no longer the four legacy `DockAppointment*` types ([ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling),
 retired from the contract by [ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)). None of its
 consumers calls this service at request time: each keeps what it needs from
 the events (ADR 0001, ADR 0003). The table reflects each consumer's code on its
@@ -93,7 +93,8 @@ plan, not here.
 
 ## Events with no consumer yet
 
-Every current type has at least one consumer. The four retired
+Seven of the eight current types have at least one consumer (the table above);
+`ReceiptStowCompleted` has none yet (see above). The four retired
 `DockAppointment*` types have none: dock-scheduling's importer is removed
 (its ADR 0011) and this context no longer declares them (ADR 0022).
 All types are also copied to the internal analytics topic, whose only consumer
