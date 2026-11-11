@@ -36,7 +36,7 @@ func NewReceiptRepo(pool *pgxpool.Pool) *ReceiptRepo { return &ReceiptRepo{pool:
 
 var _ ports.ReceiptRepository = (*ReceiptRepo)(nil)
 
-const receiptColumns = `id, asn_number, owner_ref, appointment_id, door_code, state, opened_at, closed_at, version`
+const receiptColumns = `id, asn_number, owner_ref, appointment_id, door_code, state, opened_at, closed_at, last_received_at, version`
 
 type receiptRow struct {
 	id            string
@@ -47,11 +47,13 @@ type receiptRow struct {
 	state         string
 	openedAt      time.Time
 	closedAt      *time.Time
-	version       int64
+	// lastReceivedAt is NULL while nothing was received (ADR 0023).
+	lastReceivedAt *time.Time
+	version        int64
 }
 
 func (r *receiptRow) targets() []any {
-	return []any{&r.id, &r.asnNumber, &r.ownerRef, &r.appointmentID, &r.doorCode, &r.state, &r.openedAt, &r.closedAt, &r.version}
+	return []any{&r.id, &r.asnNumber, &r.ownerRef, &r.appointmentID, &r.doorCode, &r.state, &r.openedAt, &r.closedAt, &r.lastReceivedAt, &r.version}
 }
 
 func (r receiptRow) toReceipt(lines []receipt.LineState, cartons []receipt.CartonState, findings []receipt.CartonFindingState) (*receipt.Receipt, error) {
@@ -61,6 +63,9 @@ func (r receiptRow) toReceipt(lines []receipt.LineState, cartons []receipt.Carto
 	}
 	if r.closedAt != nil {
 		p.ClosedAt = r.closedAt.UTC()
+	}
+	if r.lastReceivedAt != nil {
+		p.LastReceivedAt = r.lastReceivedAt.UTC()
 	}
 	x, err := receipt.Rehydrate(p)
 	if err != nil {
@@ -150,7 +155,7 @@ func rehydrateReceipts(ctx context.Context, q querier, rows []receiptRow) ([]*re
 }
 
 func loadReceiptLines(ctx context.Context, q querier, ids []string) (map[string][]receipt.LineState, error) {
-	rows, err := q.Query(ctx, `SELECT receipt_id, line_no, sku, expected_qty, received_good, received_damaged
+	rows, err := q.Query(ctx, `SELECT receipt_id, line_no, sku, expected_qty, received_good, received_damaged, held_qty
 		FROM receipt_lines WHERE receipt_id = ANY($1) ORDER BY receipt_id, line_no`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("load receipt lines: %w", err)
@@ -160,7 +165,7 @@ func loadReceiptLines(ctx context.Context, q querier, ids []string) (map[string]
 	for rows.Next() {
 		var id string
 		var l receipt.LineState
-		if err := rows.Scan(&id, &l.LineNo, &l.SKU, &l.ExpectedQty, &l.ReceivedGood, &l.ReceivedDamaged); err != nil {
+		if err := rows.Scan(&id, &l.LineNo, &l.SKU, &l.ExpectedQty, &l.ReceivedGood, &l.ReceivedDamaged, &l.Held); err != nil {
 			return nil, fmt.Errorf("scan receipt line: %w", err)
 		}
 		out[id] = append(out[id], l)
@@ -179,8 +184,8 @@ func (r *ReceiptRepo) Save(ctx context.Context, x *receipt.Receipt, loadedVersio
 		if loadedVersion == 0 {
 			return insertReceipt(ctx, q, x)
 		}
-		tag, err := q.Exec(ctx, `UPDATE receipts SET state = $2, closed_at = $3, version = $4, updated_at = now()
-			WHERE id = $1 AND version = $5`, string(x.ID()), string(x.State()), closedAt(x), x.Version(), loadedVersion)
+		tag, err := q.Exec(ctx, `UPDATE receipts SET state = $2, closed_at = $3, last_received_at = $4, version = $5, updated_at = now()
+			WHERE id = $1 AND version = $6`, string(x.ID()), string(x.State()), closedAt(x), lastReceivedAt(x), x.Version(), loadedVersion)
 		if err != nil {
 			return fmt.Errorf("update receipt %s: %w", x.ID(), err)
 		}
@@ -188,8 +193,8 @@ func (r *ReceiptRepo) Save(ctx context.Context, x *receipt.Receipt, loadedVersio
 			return repository.ErrConcurrentModification
 		}
 		for _, l := range x.Lines() {
-			if _, err := q.Exec(ctx, `UPDATE receipt_lines SET received_good = $3, received_damaged = $4
-				WHERE receipt_id = $1 AND line_no = $2`, string(x.ID()), l.LineNo(), l.ReceivedGood(), l.ReceivedDamaged()); err != nil {
+			if _, err := q.Exec(ctx, `UPDATE receipt_lines SET received_good = $3, received_damaged = $4, held_qty = $5
+				WHERE receipt_id = $1 AND line_no = $2`, string(x.ID()), l.LineNo(), l.ReceivedGood(), l.ReceivedDamaged(), l.Held()); err != nil {
 				return fmt.Errorf("update receipt line %d of %s: %w", l.LineNo(), x.ID(), err)
 			}
 		}
@@ -202,6 +207,13 @@ func (r *ReceiptRepo) Save(ctx context.Context, x *receipt.Receipt, loadedVersio
 
 func closedAt(x *receipt.Receipt) *time.Time {
 	if t := x.ClosedAt(); !t.IsZero() {
+		return &t
+	}
+	return nil
+}
+
+func lastReceivedAt(x *receipt.Receipt) *time.Time {
+	if t := x.LastReceivedAt(); !t.IsZero() {
 		return &t
 	}
 	return nil
@@ -221,10 +233,10 @@ func insertReceipt(ctx context.Context, q querier, x *receipt.Receipt) (err erro
 	}
 	defer func() { _ = sp.Rollback(context.WithoutCancel(ctx)) }()
 
-	tag, err := sp.Exec(ctx, `INSERT INTO receipts (`+receiptColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	tag, err := sp.Exec(ctx, `INSERT INTO receipts (`+receiptColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (id) DO NOTHING`,
 		string(x.ID()), string(x.AsnNumber()), optString(string(x.OwnerRef())), optString(string(x.AppointmentID())), optString(string(x.DoorCode())),
-		string(x.State()), x.OpenedAt(), closedAt(x), x.Version())
+		string(x.State()), x.OpenedAt(), closedAt(x), lastReceivedAt(x), x.Version())
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == oneOpenPerAsnIndex {
 		return repository.ErrReceiptAlreadyOpen
@@ -236,8 +248,8 @@ func insertReceipt(ctx context.Context, q querier, x *receipt.Receipt) (err erro
 		return repository.ErrConcurrentModification
 	}
 	for _, l := range x.Lines() {
-		if _, err := sp.Exec(ctx, `INSERT INTO receipt_lines (receipt_id, line_no, sku, expected_qty, received_good, received_damaged)
-			VALUES ($1, $2, $3, $4, $5, $6)`, string(x.ID()), l.LineNo(), string(l.SKU()), l.ExpectedQty(), l.ReceivedGood(), l.ReceivedDamaged()); err != nil {
+		if _, err := sp.Exec(ctx, `INSERT INTO receipt_lines (receipt_id, line_no, sku, expected_qty, received_good, received_damaged, held_qty)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)`, string(x.ID()), l.LineNo(), string(l.SKU()), l.ExpectedQty(), l.ReceivedGood(), l.ReceivedDamaged(), l.Held()); err != nil {
 			return fmt.Errorf("insert receipt line %d of %s: %w", l.LineNo(), x.ID(), err)
 		}
 	}
