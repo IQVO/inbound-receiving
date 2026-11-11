@@ -100,15 +100,20 @@ type cartonDiscrepancyData struct {
 	Expected  string `json:"expected,omitempty"`
 	Actual    string `json:"actual,omitempty"`
 	At        string `json:"at"`
+	// W13Code is absent for a kind with no W13 code (unmapped, ADR 0023).
+	W13Code        string `json:"w13_code,omitempty"`
+	CBVDisposition string `json:"cbv_disposition,omitempty"`
 }
 
 type discrepancyData struct {
-	LineNo      int    `json:"line_no"`
-	SKU         string `json:"sku"`
-	Kind        string `json:"kind"`
-	ExpectedQty int64  `json:"expected_qty"`
-	ReceivedQty int64  `json:"received_qty"`
-	DamagedQty  int64  `json:"damaged_qty"`
+	LineNo         int    `json:"line_no"`
+	SKU            string `json:"sku"`
+	Kind           string `json:"kind"`
+	ExpectedQty    int64  `json:"expected_qty"`
+	ReceivedQty    int64  `json:"received_qty"`
+	DamagedQty     int64  `json:"damaged_qty"`
+	W13Code        string `json:"w13_code,omitempty"`
+	CBVDisposition string `json:"cbv_disposition,omitempty"`
 }
 
 type receiptClosedData struct {
@@ -128,4 +133,67 @@ type stowCompletedData struct {
 	StowedAt           string `json:"stowed_at"`
 	DockToStockSeconds int64  `json:"dock_to_stock_seconds"`
 	CartonCount        int    `json:"carton_count"`
+}
+
+// adviceDiscrepancyData is one exception of an advice line (ADR 0023).
+type adviceDiscrepancyData struct {
+	Kind           string `json:"kind"`
+	Quantity       int64  `json:"quantity"`
+	W13Code        string `json:"w13_code,omitempty"`
+	CBVDisposition string `json:"cbv_disposition"`
+}
+
+type adviceLineData struct {
+	LineNo         int                     `json:"line_no"`
+	SKU            string                  `json:"sku"`
+	GTIN           string                  `json:"gtin,omitempty"`
+	ExpectedQty    int64                   `json:"expected_qty"`
+	ReceivedQty    int64                   `json:"received_qty"`
+	AcceptedQty    int64                   `json:"accepted_qty"`
+	RejectedQty    int64                   `json:"rejected_qty"`
+	HeldQty        int64                   `json:"held_qty"`
+	SSCCCount      int                     `json:"sscc_count"`
+	SSCCs          []string                `json:"ssccs,omitempty"`
+	SSCCsTruncated bool                    `json:"ssccs_truncated,omitempty"`
+	Discrepancies  []adviceDiscrepancyData `json:"discrepancies"`
+}
+
+// adviceFindingData is a carton finding as the advice lists it (evidence, never
+// a quantity: ADR 0023 rule 2).
+type adviceFindingData struct {
+	Kind           string `json:"kind"`
+	SSCC           string `json:"sscc,omitempty"`
+	Expected       string `json:"expected,omitempty"`
+	Actual         string `json:"actual,omitempty"`
+	At             string `json:"at"`
+	W13Code        string `json:"w13_code,omitempty"`
+	CBVDisposition string `json:"cbv_disposition,omitempty"`
+}
+
+// receivingAdviceIssuedData is the payload of ReceivingAdviceIssued (ADR 0023).
+type receivingAdviceIssuedData struct {
+	ReceiptID           string              `json:"receipt_id"`
+	AsnNumber           string              `json:"asn_number"`
+	DespatchAdviceRef   string              `json:"despatch_advice_ref"`
+	SupplierRef         string              `json:"supplier_ref"`
+	OwnerRef            string              `json:"owner_ref,omitempty"`
+	IssuedAt            string              `json:"issued_at"`
+	LastCartonAt        string              `json:"last_carton_at"`
+	SLASeconds          int64               `json:"sla_seconds"`
+	WithinSLA           bool                `json:"within_sla"`
+	Lines               []adviceLineData    `json:"lines"`
+	LinesTotal          int                 `json:"lines_total"`
+	LinesTruncated      bool                `json:"lines_truncated,omitempty"`
+	CartonFindings      []adviceFindingData `json:"carton_findings"`
+	CartonFindingsTotal int                 `json:"carton_findings_total"`
+}
+
+// receivingAdviceOverdueData is the payload of ReceivingAdviceOverdue (ADR 0023).
+type receivingAdviceOverdueData struct {
+	ReceiptID    string `json:"receipt_id"`
+	AsnNumber    string `json:"asn_number"`
+	LastCartonAt string `json:"last_carton_at"`
+	DueAt        string `json:"due_at"`
+	SLASeconds   int64  `json:"sla_seconds"`
+	OverdueAt    string `json:"overdue_at"`
 }

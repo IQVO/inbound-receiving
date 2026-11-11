@@ -22,6 +22,10 @@ type discrepancyResponse struct {
 	ExpectedQty int64  `json:"expectedQty"`
 	ReceivedQty int64  `json:"receivedQty"`
 	DamagedQty  int64  `json:"damagedQty"`
+	// W13Code and CBVDisposition are the standard coding of the kind (ADR 0023),
+	// derived from it; W13Code is absent for a kind the standard has no code for.
+	W13Code        string `json:"w13Code,omitempty"`
+	CBVDisposition string `json:"cbvDisposition,omitempty"`
 }
 
 type receiptResponse struct {
@@ -48,6 +52,9 @@ type receiptCartonDiscrepancyResponse struct {
 	Expected string    `json:"expected,omitempty"`
 	Actual   string    `json:"actual,omitempty"`
 	At       time.Time `json:"at"`
+	// W13Code and CBVDisposition: see discrepancyResponse (ADR 0023).
+	W13Code        string `json:"w13Code,omitempty"`
+	CBVDisposition string `json:"cbvDisposition,omitempty"`
 }
 
 type receiptPageResponse struct {
@@ -66,16 +73,20 @@ func toReceipt(r *receipt.Receipt) receiptResponse {
 	ds := r.Discrepancies()
 	discrepancies := make([]discrepancyResponse, 0, len(ds))
 	for _, d := range ds {
+		w13, cbv := coding(d.Kind)
 		discrepancies = append(discrepancies, discrepancyResponse{
 			LineNo: d.LineNo, SKU: string(d.SKU), Kind: string(d.Kind),
 			ExpectedQty: d.ExpectedQty, ReceivedQty: d.ReceivedQty, DamagedQty: d.DamagedQty,
+			W13Code: w13, CBVDisposition: cbv,
 		})
 	}
 	findings := r.CartonDiscrepancies()
 	cartonDiscrepancies := make([]receiptCartonDiscrepancyResponse, 0, len(findings))
 	for _, f := range findings {
+		w13, cbv := coding(f.Kind)
 		cartonDiscrepancies = append(cartonDiscrepancies, receiptCartonDiscrepancyResponse{
 			Kind: string(f.Kind), SSCC: f.SSCC.String(), Expected: f.Expected, Actual: f.Actual, At: f.At,
+			W13Code: w13, CBVDisposition: cbv,
 		})
 	}
 	out := receiptResponse{
@@ -127,6 +138,15 @@ type cartonDiscrepancyResponse struct {
 	SSCC     string `json:"sscc,omitempty"`
 	Expected string `json:"expected,omitempty"`
 	Actual   string `json:"actual,omitempty"`
+	// W13Code and CBVDisposition: see discrepancyResponse (ADR 0023).
+	W13Code        string `json:"w13Code,omitempty"`
+	CBVDisposition string `json:"cbvDisposition,omitempty"`
+}
+
+// coding is the standard vocabulary of a kind (ADR 0023); empty for none.
+func coding(k receipt.Kind) (w13, cbv string) {
+	c, _ := receipt.CodingOf(k)
+	return string(c.W13), string(c.CBV)
 }
 
 // scanResponse answers POST /receipts/{id}/scans: the updated line totals, the
@@ -163,7 +183,10 @@ func toScan(o usecases.ScanOutcome) scanResponse {
 		out.Cartons = append(out.Cartons, rc)
 	}
 	for _, d := range o.Result.Discrepancies {
-		out.Discrepancies = append(out.Discrepancies, cartonDiscrepancyResponse{Kind: string(d.Kind), SSCC: d.SSCC.String(), Expected: d.Expected, Actual: d.Actual})
+		w13, cbv := coding(d.Kind)
+		out.Discrepancies = append(out.Discrepancies, cartonDiscrepancyResponse{
+			Kind: string(d.Kind), SSCC: d.SSCC.String(), Expected: d.Expected, Actual: d.Actual, W13Code: w13, CBVDisposition: cbv,
+		})
 	}
 	return out
 }

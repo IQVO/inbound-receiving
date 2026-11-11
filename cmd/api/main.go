@@ -18,6 +18,7 @@
 //	IDEMPOTENCY_KEY_TTL           idempotency_keys row lifetime (default 24h, 0 = keep forever)
 //	OUTBOX_RETENTION              published outbox_events retention (default 168h, 0 = keep forever)
 //	PROCESSED_EVENTS_RETENTION    processed_events dedupe-mark retention (default 720h, 0 = keep forever)
+//	RECEIVING_ADVICE_SLA          committed window of the receiving advice after the last unit received (default 24h; 0 or invalid = default, ADR 0023); the overdue sweep runs on HOUSEKEEPING_INTERVAL
 //	PRODUCT_MODE                  kafka (default kafka): known SKUs; permissive/off are boot errors
 //	PRODUCT_CONSUMER_GROUP        stable group of the product consumer (REQUIRED)
 //	DOCK_DOOR_MODE                kafka (default kafka): known inbound doors; permissive/off are boot errors
@@ -131,15 +132,17 @@ func run(ctx context.Context) error {
 
 // newSweeper builds the housekeeping sweeper (gap fix D24, ADR 0010) from
 // HOUSEKEEPING_INTERVAL, IDEMPOTENCY_KEY_TTL, OUTBOX_RETENTION and
-// PROCESSED_EVENTS_RETENTION.
-func newSweeper(pool *pgxpool.Pool, env func(string) string, logger *slog.Logger) *postgres.Sweeper {
-	return postgres.NewSweeper(pool,
+// PROCESSED_EVENTS_RETENTION; extra adds the receiving-advice overdue sweep to
+// its tick (ADR 0023).
+func newSweeper(pool *pgxpool.Pool, env func(string) string, logger *slog.Logger, extra ...postgres.SweeperOption) *postgres.Sweeper {
+	opts := []postgres.SweeperOption{
 		postgres.WithSweepInterval(housekeeping.Duration(env, housekeeping.EnvInterval, postgres.DefaultSweepInterval, logger)),
 		postgres.WithIdempotencyKeyTTL(housekeeping.Duration(env, housekeeping.EnvIdempotencyKeyTTL, postgres.DefaultIdempotencyKeyTTL, logger)),
 		postgres.WithOutboxRetention(housekeeping.Duration(env, housekeeping.EnvOutboxRetention, postgres.DefaultOutboxRetention, logger)),
 		postgres.WithProcessedEventsRetention(housekeeping.Duration(env, housekeeping.EnvProcessedEventsRetention, postgres.DefaultProcessedEventsRetention, logger)),
 		postgres.WithSweeperLogger(logger),
-	)
+	}
+	return postgres.NewSweeper(pool, append(opts, extra...)...)
 }
 
 // startSweeper runs the sweeper as a background worker (nil only when no

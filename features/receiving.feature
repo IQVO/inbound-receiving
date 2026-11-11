@@ -72,7 +72,7 @@ Feature: Receive goods against an ASN
     And the response field "discrepancies.1.kind" is "Damaged"
     And the response field "discrepancies.2.kind" is "Over"
     And the response field "closedAt" is present
-    And the outbox event types are "asn.ASNRegistered, receipt.ReceiptOpened, receipt.ReceiptLineReceived, receipt.ReceiptLineReceived, receipt.ReceiptLineReceived, receipt.ReceiptClosed"
+    And the outbox event types are "asn.ASNRegistered, receipt.ReceiptOpened, receipt.ReceiptLineReceived, receipt.ReceiptLineReceived, receipt.ReceiptLineReceived, receipt.ReceiptClosed, receipt.ReceivingAdviceIssued"
     When I GET "/asns/ASN-1"
     Then the response field "state" is "Closed"
 
@@ -104,7 +104,7 @@ Feature: Receive goods against an ASN
     When I GET "/appointments/{appointment}"
     Then the response field "state" is "Booked"
     And the response field "version" is "1"
-    And the outbox event types are "asn.ASNRegistered, receipt.ReceiptOpened, receipt.ReceiptClosed"
+    And the outbox event types are "asn.ASNRegistered, receipt.ReceiptOpened, receipt.ReceiptClosed, receipt.ReceivingAdviceIssued"
 
   Scenario: A receipt takes its door from the appointment
     Given an appointment at door "DOOR-7" from "2026-10-09T08:00:00Z" to "2026-10-09T10:00:00Z" covers the ASN "ASN-1"

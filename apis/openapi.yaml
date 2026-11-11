@@ -971,6 +971,12 @@ paths:
         without an appointment arrival (a walk-in) or without cartons has no
         dock-to-stock and is not counted.
 
+        `advice` (ADR 0023) counts the receiving advices (`ReceivingAdviceIssued`)
+        issued in the window (a fact counts in the UTC day of its `issued_at`):
+        `count`, `within_sla` (issued inside the committed window after the last
+        unit received) and `share_within_sla` (`within_sla / count`, null when
+        `count` is 0). Receipts closed before the advice existed have none.
+
         `current` is the state right now, independent of the range:
         `open_receipts` (opened, not yet closed), `expected_today` (ASNs not
         cancelled whose expected arrival falls in today's UTC day) and
@@ -1001,6 +1007,7 @@ paths:
                     appointments: { booked: 18, checked_in: 15, cancelled: 2, completed: 14 }
                     dock_dwell: { count: 14, p50_seconds: 3300, p95_seconds: 8100 }
                     dock_to_stock: { count: 12, p50_seconds: 9300, p90_seconds: 15600, under_target: 8, share_under_target: 0.6666666666666666 }
+                    advice: { count: 14, within_sla: 13, share_within_sla: 0.9285714285714286 }
                   - day: "2026-10-06"
                     receipts_closed: 0
                     lines_received: 0
@@ -1011,6 +1018,7 @@ paths:
                     appointments: { booked: 0, checked_in: 0, cancelled: 0, completed: 0 }
                     dock_dwell: { count: 0, p50_seconds: null, p95_seconds: null }
                     dock_to_stock: { count: 0, p50_seconds: null, p90_seconds: null, under_target: 0, share_under_target: null }
+                    advice: { count: 0, within_sla: 0, share_within_sla: null }
                 current:
                   open_receipts: 2
                   expected_today: 9
@@ -1653,6 +1661,8 @@ components:
         sscc: { type: string }
         expected: { type: string }
         actual: { type: string }
+        w13Code: { $ref: "#/components/schemas/W13Code" }
+        cbvDisposition: { $ref: "#/components/schemas/CbvDisposition" }
     ReceiptCartonDiscrepancy:
       type: object
       description: |
@@ -1668,6 +1678,8 @@ components:
         expected: { type: string }
         actual: { type: string }
         at: { type: string, format: date-time }
+        w13Code: { $ref: "#/components/schemas/W13Code" }
+        cbvDisposition: { $ref: "#/components/schemas/CbvDisposition" }
     ScanResult:
       type: object
       required: [kind, accepted, lines, cartons, discrepancies, version]
@@ -1841,6 +1853,23 @@ components:
         damagedQty:
           type: integer
           format: int64
+        w13Code: { $ref: "#/components/schemas/W13Code" }
+        cbvDisposition: { $ref: "#/components/schemas/CbvDisposition" }
+    W13Code:
+      type: string
+      enum: ["01", "02", "03", "05", "09"]
+      description: |
+        The X12 W13 receiving condition code of the finding (ADR 0023): `01`
+        damaged, `02` short, `03` over, `05` incorrect product, `09` hold. Two
+        characters, leading zero kept. Absent for a kind the standard has no code
+        for (`DuplicateSscc`, `UnlabelledCarton`, `CartonOverLimit`, ...); never
+        invented. Derived from `kind`.
+    CbvDisposition:
+      type: string
+      description: |
+        The GS1 CBV disposition of the finding (ADR 0023), derived from `kind`
+        (`damaged`, `mismatch_quantity`, `mismatch_class`, `mismatch_instance`,
+        `non_conformant`, ...). Always present on a coded kind.
     Receipt:
       type: object
       required: [receiptId, asnNumber, state, lines, openedAt, discrepancies, cartonDiscrepancies, version]
@@ -1977,7 +2006,7 @@ components:
           $ref: "#/components/schemas/ReceivingCurrent"
     ReceivingPerformanceDay:
       type: object
-      required: [day, receipts_closed, lines_received, units_good, units_damaged, discrepancies, receipt_cycle, appointments, dock_dwell, dock_to_stock]
+      required: [day, receipts_closed, lines_received, units_good, units_damaged, discrepancies, receipt_cycle, appointments, dock_dwell, dock_to_stock, advice]
       properties:
         day:
           type: string
@@ -2013,6 +2042,8 @@ components:
           $ref: "#/components/schemas/TimingSummary"
         dock_to_stock:
           $ref: "#/components/schemas/DockToStockSummary"
+        advice:
+          $ref: "#/components/schemas/AdviceSummary"
     DiscrepancyCounts:
       type: object
       description: Discrepancies of the receipts closed in the window, by kind.
@@ -2054,6 +2085,18 @@ components:
         p90_seconds: { type: number, format: double, nullable: true, minimum: 0, description: "90th percentile; null when count is 0." }
         under_target: { type: integer, format: int32, minimum: 0, description: "Facts at or under dock_to_stock_target_seconds." }
         share_under_target: { type: number, format: double, nullable: true, minimum: 0, maximum: 1, description: "under_target / count; null when count is 0." }
+    AdviceSummary:
+      type: object
+      description: |
+        The receiving advices (ADR 0023) issued in the window: how many, and how
+        many inside the committed window after the last unit received
+        (`RECEIVING_ADVICE_SLA`, default 24 h). The KPI "% receipts with advice
+        inside the SLA" is `share_within_sla`.
+      required: [count, within_sla, share_within_sla]
+      properties:
+        count: { type: integer, format: int32, minimum: 0, description: "Advices issued (`ReceivingAdviceIssued`) in the window, by the UTC day of their `issued_at`." }
+        within_sla: { type: integer, format: int32, minimum: 0, description: "Of those, how many had `within_sla` true." }
+        share_within_sla: { type: number, format: double, nullable: true, minimum: 0, maximum: 1, description: "within_sla / count; null when count is 0." }
     ReceivingCurrent:
       type: object
       description: The state right now (not range-bound).

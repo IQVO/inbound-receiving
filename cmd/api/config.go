@@ -12,6 +12,7 @@ import (
 	outboxrelay "github.com/claudioed/inbound-receiving/internal/adapters/outbound/outbox"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
+	"github.com/claudioed/inbound-receiving/internal/housekeeping"
 )
 
 // config is the validated, env-derived part of the wiring.
@@ -165,6 +166,21 @@ func limitFromEnv(env func(string) string, name string, logger *slog.Logger) int
 		return 0
 	}
 	return n
+}
+
+// adviceSLA reads RECEIVING_ADVICE_SLA (ADR 0023): how long after the last unit
+// received the receiving advice is due. Unset, zero, negative or unparsable is
+// the 24h default (a zero window would make every advice late, so it is not
+// honoured as "off"; the advice is a commitment, not a feature flag).
+func adviceSLA(env func(string) string, logger *slog.Logger) time.Duration {
+	d := housekeeping.Duration(env, housekeeping.EnvReceivingAdviceSLA, usecases.DefaultAdviceSLA, logger)
+	if d <= 0 {
+		if env(housekeeping.EnvReceivingAdviceSLA) != "" {
+			logger.Warn("RECEIVING_ADVICE_SLA must be positive; using the default", "default", usecases.DefaultAdviceSLA)
+		}
+		return usecases.DefaultAdviceSLA
+	}
+	return d
 }
 
 // outboxMaxAttempts reads OUTBOX_MAX_ATTEMPTS (gap fix D12): how many times

@@ -28,6 +28,15 @@ non-test Go for `com.warehouse.wms.inbound-receiving.*` types).
 has **no consumer yet** outside this service's own projector, which folds its
 analytics copy into `GET /reports/receiving-performance`.
 
+`receipt.ReceivingAdviceIssued` and `receipt.ReceivingAdviceOverdue` (the receiving
+advice with W13/CBV-coded discrepancies and its SLA alarm,
+[ADR 0023](/docs/adr/0023-receiving-advice-at-close-with-standard-discrepancy-vocabulary))
+have **none yet, partner-connectivity planned (D-3)**: it will render the advice
+as EANCOM RECADV / X12 861 (supplier) or X12 944 (3PL depositor) and deliver it;
+this service owns the domain fact only. Rollout order: projector, then `cmd/api`,
+then `cmd/inbound-reports` (the ADR). No consumer group is added; the only new
+environment variable is `RECEIVING_ADVICE_SLA` on `cmd/api`.
+
 `warehouse-planning` no longer reads this topic: its inbound labour demand
 comes from dock-scheduling's appointments (its ADR 0020, strangler stage D),
 and warehouse-infra retired its old `INBOUND_DEMAND_CONSUMER_GROUP`.

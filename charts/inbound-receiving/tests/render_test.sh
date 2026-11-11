@@ -81,6 +81,12 @@ grep -A1 'name: HOUSEKEEPING_INTERVAL' <<<"$projector_deployment" | grep -q 'val
 grep -A1 'name: PROCESSED_EVENTS_RETENTION' <<<"$projector_deployment" | grep -q 'value: "0"' \
   || fail "projector Deployment does not render PROCESSED_EVENTS_RETENTION (0 must stay 0)"
 
+# ADR 0023: the receiving advice SLA reaches the api through the ConfigMap, with
+# the 24h default, and is tunable.
+grep -q 'RECEIVING_ADVICE_SLA: "24h"' <<<"$configmap" || fail "ConfigMap is missing RECEIVING_ADVICE_SLA: \"24h\" (ADR 0023)"
+advice_tuned="$(helm template "$release" "$chart_dir" "${base[@]}" --set config.receivingAdviceSla=36h --show-only templates/configmap.yaml)"
+grep -q 'RECEIVING_ADVICE_SLA: "36h"' <<<"$advice_tuned" || fail "the tuned config.receivingAdviceSla is not rendered"
+
 # The other workloads read their own explicit env and must NOT inherit the
 # api's ConfigMap (reports and projector would bind the api's HTTP_ADDR).
 for template in reports-deployment.yaml projector-deployment.yaml mcp-deployment.yaml a2a-deployment.yaml; do

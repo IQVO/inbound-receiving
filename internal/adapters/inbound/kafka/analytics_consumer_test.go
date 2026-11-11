@@ -281,6 +281,12 @@ func anLifecycle(t *testing.T) [][]byte {
 			Header: anRcptHeader(at(240)), AppointmentID: anAppt, ArrivedAt: at(60), ClosedAt: at(125), StowedAt: at(240),
 			DockToStockSeconds: 10800, CartonCount: 2,
 		}),
+		anRcptEvent(t, "e-advice", receipt.ReceivingAdviceIssued{
+			Header: anRcptHeader(at(130)), DespatchAdviceRef: "ASN-1", SupplierRef: "ACME", LastCartonAt: at(70), SLA: 24 * time.Hour, WithinSLA: true,
+			Lines: []receipt.AdviceLine{}, CartonFindings: []receipt.CartonFinding{},
+		}),
+		// The overdue alarm is an integration signal: the projector acknowledges and ignores it.
+		anRcptEvent(t, "e-overdue", receipt.ReceivingAdviceOverdue{Header: anRcptHeader(at(131)), LastCartonAt: at(70), DueAt: at(1510), SLA: 24 * time.Hour}),
 	}
 }
 
@@ -291,9 +297,14 @@ func assertLifecycleDay(t *testing.T, d report.PerformanceDay) {
 		d.Appointments == (report.AppointmentCounts{Booked: 1, CheckedIn: 1, Cancelled: 1, Completed: 1})
 	timings := d.ReceiptCycle.Count == 1 && d.DockDwell.Count == 1 && *d.ReceiptCycle.P50 == 3600 && *d.DockDwell.P50 == 3900 &&
 		d.DockToStock.Count == 1 && *d.DockToStock.P50 == 10800
-	if !counts || !timings {
+	if !counts || !timings || !adviceIsOneInsideTheSLA(d.Advice) {
 		t.Fatalf("day = %+v", d)
 	}
+}
+
+// adviceIsOneInsideTheSLA: the lifecycle raises one advice, inside the SLA (ADR 0023).
+func adviceIsOneInsideTheSLA(a report.AdviceSummary) bool {
+	return a.Count == 1 && a.WithinSLA == 1 && a.ShareWithinSLA != nil && *a.ShareWithinSLA == 1
 }
 
 func TestAnalyticsConsumer_ValidEventsUpdateTheModelAndCommitInOrder(t *testing.T) {
@@ -426,6 +437,8 @@ func TestAnalyticsConsumer_DeterministicPoisonGoesToTheDLQWithTheRawBytes(t *tes
 			"receipt_id": anRcpt, "asn_number": "ASN-1", "dock_to_stock_seconds": 3600, "carton_count": 1})},
 		{"negative dock to stock", anWire(t, "p13", typ("receipt.ReceiptStowCompleted"), anRcpt, anAt, map[string]any{
 			"receipt_id": anRcpt, "asn_number": "ASN-1", "arrived_at": "2026-10-05T08:00:00Z", "stowed_at": "2026-10-05T09:00:00Z", "dock_to_stock_seconds": -5, "carton_count": 1})},
+		{"advice without within_sla", anWire(t, "p14", typ("receipt.ReceivingAdviceIssued"), anRcpt, anAt, map[string]any{
+			"receipt_id": anRcpt, "asn_number": "ASN-1", "despatch_advice_ref": "ASN-1", "supplier_ref": "ACME"})},
 		{"unknown discrepancy kind", anWire(t, "p10", typ("receipt.ReceiptClosed"), anRcpt, anAt, map[string]any{
 			"receipt_id": anRcpt, "asn_number": "ASN-1", "discrepancies": []map[string]any{{"line_no": 1, "sku": "S", "kind": "Bogus"}}})},
 	}
@@ -520,6 +533,8 @@ func TestAnalyticsConsumer_EventMapping(t *testing.T) {
 	}
 	stow := rcpt(report.KindReceiptStowCompleted, "e-stow", 240)
 	stow.Stow = &report.StowCompleted{ArrivedAt: at(60), StowedAt: at(240), DockToStockSeconds: 10800, CartonCount: 2}
+	advice := rcpt(report.KindReceivingAdviceIssued, "e-advice", 130)
+	advice.Advice = &report.AdviceIssued{WithinSLA: true}
 	want := []report.Event{
 		asnReg,
 		{Kind: report.KindAsnCancelled, EventID: "e-asn-x", At: at(1), AsnNumber: "ASN-2"},
@@ -528,7 +543,7 @@ func TestAnalyticsConsumer_EventMapping(t *testing.T) {
 		appt(report.KindAppointmentCancelled, "e-cancel", 3, anAppt2),
 		rcpt(report.KindReceiptOpened, "e-open", 65), line1, line2, closed,
 		appt(report.KindAppointmentCompleted, "e-done", 125, anAppt),
-		stow,
+		stow, advice,
 	}
 	if !reflect.DeepEqual(proj.events, want) {
 		t.Fatalf("events =\n%+v\nwant\n%+v", proj.events, want)

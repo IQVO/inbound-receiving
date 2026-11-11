@@ -114,6 +114,7 @@ func (r *Receipt) acceptCarton(idx int, in CartonScan, at time.Time) (ScanResult
 	}
 	events = append(events, r.raise(findings, at)...)
 	r.lines, r.cartons[idx] = lines, c
+	r.lastReceivedAt = at.UTC()
 	r.version++
 	return ScanResult{Events: events, Accepted: true, Cartons: []Carton{c}, Discrepancies: findings}, nil
 }

@@ -207,6 +207,14 @@ type CloseReceiptCommand struct {
 // does, through dock-scheduling (ADR 0019).
 type CloseReceipt struct {
 	Writer
+	metrics ports.AdviceMetrics
+}
+
+// WithMetrics attaches the advice metrics port (optional): every advice issued
+// is counted, inside the SLA or late.
+func (uc *CloseReceipt) WithMetrics(m ports.AdviceMetrics) *CloseReceipt {
+	uc.metrics = m
+	return uc
 }
 
 // Handle runs the use case and returns the closed receipt.
@@ -216,6 +224,7 @@ func (uc *CloseReceipt) Handle(ctx context.Context, cmd CloseReceiptCommand) (*r
 		return nil, err
 	}
 	var out *receipt.Receipt
+	var advice struct{ issued, withinSLA bool }
 	err = uc.UoW.Do(ctx, func(ctx context.Context) error {
 		r, err := uc.Receipts.Get(ctx, id)
 		if err != nil {
@@ -230,10 +239,16 @@ func (uc *CloseReceipt) Handle(ctx context.Context, cmd CloseReceiptCommand) (*r
 		if err != nil {
 			return err
 		}
-		if err := uc.completeAsn(ctx, r.AsnNumber()); err != nil {
+		supplierRef, err := uc.completeAsn(ctx, r.AsnNumber())
+		if err != nil {
 			return err
 		}
 		if err := uc.saveReceipt(ctx, r, loaded, events); err != nil {
+			return err
+		}
+		// The receiving advice follows ReceiptClosed in the same unit of work
+		// (ADR 0023), once, behind its marker.
+		if advice.issued, advice.withinSLA, err = uc.issueAdvice(ctx, r, supplierRef, now); err != nil {
 			return err
 		}
 		// Stows and the arrival may have been seen while the receipt was
@@ -247,17 +262,23 @@ func (uc *CloseReceipt) Handle(ctx context.Context, cmd CloseReceiptCommand) (*r
 	if err != nil {
 		return nil, err
 	}
+	// Counted once the unit of work committed, like the units received.
+	if advice.issued && uc.metrics != nil {
+		uc.metrics.AdviceIssued(ctx, advice.withinSLA)
+	}
 	return out, nil
 }
 
-func (uc *CloseReceipt) completeAsn(ctx context.Context, number asn.Number) error {
+// completeAsn completes the ASN of the closed receipt and returns the supplier
+// reference the receiving advice carries.
+func (uc *CloseReceipt) completeAsn(ctx context.Context, number asn.Number) (string, error) {
 	a, err := uc.Asns.Get(ctx, number)
 	if err != nil {
-		return err
+		return "", err
 	}
 	loaded := a.Version()
 	if err := a.Complete(); err != nil {
-		return err
+		return "", err
 	}
-	return uc.saveAsn(ctx, a, loaded, nil)
+	return a.SupplierRef(), uc.saveAsn(ctx, a, loaded, nil)
 }

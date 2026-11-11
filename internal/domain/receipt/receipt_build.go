@@ -39,18 +39,19 @@ func build(p Persisted) (*Receipt, error) {
 		return nil, err
 	}
 	return &Receipt{
-		id:            id,
-		asnNumber:     number,
-		ownerRef:      owner,
-		appointmentID: appointmentID,
-		doorCode:      doorCode,
-		state:         p.State,
-		lines:         lines,
-		cartons:       cartons,
-		findings:      findings,
-		openedAt:      p.OpenedAt.UTC(),
-		closedAt:      p.ClosedAt.UTC(),
-		version:       p.Version,
+		id:             id,
+		asnNumber:      number,
+		ownerRef:       owner,
+		appointmentID:  appointmentID,
+		doorCode:       doorCode,
+		state:          p.State,
+		lines:          lines,
+		cartons:        cartons,
+		findings:       findings,
+		openedAt:       p.OpenedAt.UTC(),
+		closedAt:       p.ClosedAt.UTC(),
+		version:        p.Version,
+		lastReceivedAt: p.LastReceivedAt.UTC(),
 	}, nil
 }
 
@@ -101,6 +102,9 @@ func buildLines(states []LineState) ([]Line, error) {
 		if err := validateReceived(s.ReceivedGood, s.ReceivedDamaged); err != nil {
 			return nil, err
 		}
+		if s.Held < 0 || s.Held > s.ReceivedGood {
+			return nil, ErrInvalidHeld
+		}
 		if _, dup := seen[sku]; dup {
 			return nil, asn.ErrDuplicateSKU
 		}
@@ -111,6 +115,7 @@ func buildLines(states []LineState) ([]Line, error) {
 			expectedQty:     s.ExpectedQty,
 			receivedGood:    s.ReceivedGood,
 			receivedDamaged: s.ReceivedDamaged,
+			held:            s.Held,
 		})
 	}
 	return lines, nil

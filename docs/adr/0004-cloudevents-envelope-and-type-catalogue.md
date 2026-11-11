@@ -48,6 +48,8 @@ catalogue of every type inbound-receiving publishes or consumes;
 | `com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised` | receipt_id | asn_number | a finding about a physical carton, one of the kinds of ADR 0012 and ADR 0014 |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptClosed` | receipt_id | asn_number | receiving ends |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptStowCompleted` | receipt_id | asn_number | the last Good carton of a closed receipt opened from an appointment is stowed: the dock-to-stock fact (ADR 0021) |
+| `com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceIssued` | receipt_id | asn_number | a receipt closes: the receiving advice for the supplier or depositor, with W13/CBV-coded discrepancies (ADR 0023) |
+| `com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceOverdue` | receipt_id | asn_number | an Open receipt passed the advice SLA since its last unit was received (ADR 0023) |
 
 The receipt events are keyed by `asn_number`, so everything that happens while
 one ASN is received stays ordered on one partition. `DockAppointmentCompleted`
@@ -70,6 +72,8 @@ guaranteed; consumers must not depend on it.
 | `receipt.CartonDiscrepancyRaised` | `receipt_id`, `sscc`?, `kind`, `expected`?, `actual`?, `at` |
 | `receipt.ReceiptClosed` | `receipt_id`, `asn_number`, `closed_at`, `discrepancies[]` = `{line_no, sku, kind, expected_qty, received_qty, damaged_qty}`, `kind` in `Short`, `Over`, `Damaged` |
 | `receipt.ReceiptStowCompleted` | `receipt_id`, `asn_number`, `appointment_id`, `arrived_at`, `closed_at`, `stowed_at`, `dock_to_stock_seconds`, `carton_count` (ADR 0021) |
+| `receipt.ReceivingAdviceIssued` | `receipt_id`, `asn_number`, `despatch_advice_ref`, `supplier_ref`, `owner_ref?`, `issued_at`, `last_carton_at`, `sla_seconds`, `within_sla`, `lines[]`, `lines_total`, `carton_findings[]`, `carton_findings_total` (ADR 0023) |
+| `receipt.ReceivingAdviceOverdue` | `receipt_id`, `asn_number`, `last_carton_at`, `due_at`, `sla_seconds`, `overdue_at` (ADR 0023) |
 
 Payload rules:
 

@@ -63,9 +63,9 @@ func goldenEvents(t *testing.T) []goldenCase {
 			receipt.ReceiptLineReceived{Header: receiptHeader(at(9, 8, 10)), LineNo: 1, SKU: "SKU-1", Quantity: 40, Condition: receipt.ConditionGood}),
 		rcptCase("ReceiptClosed", "2026-10-09T09:30:00Z",
 			`{`+rcptData+`,"closed_at":"2026-10-09T09:30:00Z","discrepancies":[`+
-				`{"line_no":1,"sku":"SKU-1","kind":"Short","expected_qty":40,"received_qty":34,"damaged_qty":4},`+
-				`{"line_no":1,"sku":"SKU-1","kind":"Damaged","expected_qty":40,"received_qty":34,"damaged_qty":4},`+
-				`{"line_no":2,"sku":"SKU-2","kind":"Over","expected_qty":5,"received_qty":7,"damaged_qty":0}]}`,
+				`{"line_no":1,"sku":"SKU-1","kind":"Short","expected_qty":40,"received_qty":34,"damaged_qty":4,"w13_code":"02","cbv_disposition":"mismatch_quantity"},`+
+				`{"line_no":1,"sku":"SKU-1","kind":"Damaged","expected_qty":40,"received_qty":34,"damaged_qty":4,"w13_code":"01","cbv_disposition":"damaged"},`+
+				`{"line_no":2,"sku":"SKU-2","kind":"Over","expected_qty":5,"received_qty":7,"damaged_qty":0,"w13_code":"03","cbv_disposition":"mismatch_quantity"}]}`,
 			receipt.ReceiptClosed{Header: receiptHeader(at(9, 9, 30)), Discrepancies: []receipt.Discrepancy{
 				{LineNo: 1, SKU: "SKU-1", Kind: receipt.KindShort, ExpectedQty: 40, ReceivedQty: 34, DamagedQty: 4},
 				{LineNo: 1, SKU: "SKU-1", Kind: receipt.KindDamaged, ExpectedQty: 40, ReceivedQty: 34, DamagedQty: 4},

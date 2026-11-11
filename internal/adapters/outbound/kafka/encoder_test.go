@@ -108,9 +108,9 @@ func TestEncoderGoldenReceiptEvents(t *testing.T) {
 				{LineNo: 2, SKU: "SKU-2", Kind: receipt.KindOver, ExpectedQty: 5, ReceivedQty: 7, DamagedQty: 0},
 			}}, "2026-10-09T09:30:00Z",
 			`{"receipt_id":"` + rcptID + `","asn_number":"ASN-1001","closed_at":"2026-10-09T09:30:00Z","discrepancies":[` +
-				`{"line_no":1,"sku":"SKU-1","kind":"Short","expected_qty":40,"received_qty":34,"damaged_qty":4},` +
-				`{"line_no":1,"sku":"SKU-1","kind":"Damaged","expected_qty":40,"received_qty":34,"damaged_qty":4},` +
-				`{"line_no":2,"sku":"SKU-2","kind":"Over","expected_qty":5,"received_qty":7,"damaged_qty":0}]}`,
+				`{"line_no":1,"sku":"SKU-1","kind":"Short","expected_qty":40,"received_qty":34,"damaged_qty":4,"w13_code":"02","cbv_disposition":"mismatch_quantity"},` +
+				`{"line_no":1,"sku":"SKU-1","kind":"Damaged","expected_qty":40,"received_qty":34,"damaged_qty":4,"w13_code":"01","cbv_disposition":"damaged"},` +
+				`{"line_no":2,"sku":"SKU-2","kind":"Over","expected_qty":5,"received_qty":7,"damaged_qty":0,"w13_code":"03","cbv_disposition":"mismatch_quantity"}]}`,
 		},
 	}
 	for _, tc := range cases {

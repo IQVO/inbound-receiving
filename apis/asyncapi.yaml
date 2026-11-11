@@ -48,7 +48,7 @@ info:
     validate their appointment against that copy and take its door when they
     open; an open receipt keeps its door.
 
-    **Analytics (ADR 0006).** The eight events are ALSO written, in the
+    **Analytics (ADR 0006).** The ten events are ALSO written, in the
     same transaction, to `warehouse.inbound-receiving.analytics` with the same
     `type` and the same `id` per occurrence, `dataschema`
     `urn:warehouse:inbound-receiving:analytics:<EventName>:v1` and payloads
@@ -125,6 +125,8 @@ channels:
           - $ref: "#/components/messages/CartonDiscrepancyRaised"
           - $ref: "#/components/messages/ReceiptClosed"
           - $ref: "#/components/messages/ReceiptStowCompleted"
+          - $ref: "#/components/messages/ReceivingAdviceIssued"
+          - $ref: "#/components/messages/ReceivingAdviceOverdue"
 
   warehouse.inbound-receiving.analytics:
     description: |
@@ -161,6 +163,8 @@ channels:
           - $ref: "#/components/messages/CartonDiscrepancyRaisedAnalytics"
           - $ref: "#/components/messages/ReceiptClosedAnalytics"
           - $ref: "#/components/messages/ReceiptStowCompletedAnalytics"
+          - $ref: "#/components/messages/ReceivingAdviceIssuedAnalytics"
+          - $ref: "#/components/messages/ReceivingAdviceOverdueAnalytics"
 
   warehouse.product-master.events:
     description: |
@@ -652,7 +656,8 @@ components:
         `type` = `com.warehouse.wms.inbound-receiving.receipt.ReceiptClosed`;
         subject = the receipt id, key = the ASN number. `discrepancies` is
         present and empty when everything matched; a line can appear once per
-        kind (`Short`, `Over`, `Damaged`).
+        kind (`Short`, `Over`, `Damaged`); each carries `w13_code` and
+        `cbv_disposition` (ADR 0023).
       contentType: application/cloudevents+json
       tags:
         - name: receipt
@@ -818,6 +823,196 @@ components:
               stowed_at: "2026-10-09T07:00:00Z"
               dock_to_stock_seconds: 7200
               carton_count: 12
+
+    ReceivingAdviceIssued:
+      x-no-consumer-reason: "none yet: partner-connectivity renders it as EANCOM RECADV / X12 861 / 944 later (D-3 not taken)"
+      name: ReceivingAdviceIssued
+      title: Receiving advice issued
+      summary: What was received and accepted per line, with W13/CBV-coded discrepancies, for the supplier or the 3PL depositor (ADR 0023).
+      description: |
+        `type` = `com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceIssued`;
+        subject = the receipt id, key = the ASN number. The domain fact only: this
+        service renders no EANCOM, X12 or transport. Raised exactly once per
+        receipt, in the same transaction as `ReceiptClosed` (right after it), for a
+        receipt closed after this event existed; a receipt closed earlier gets no
+        advice. `despatch_advice_ref` is the ASN number (the reference to the
+        despatch advice), `supplier_ref` the supplier as the ASN knows it and
+        `owner_ref` the 3PL depositor (omitted for fleet-owned stock). `last_carton_at`
+        is when the last unit was received (the receipt's opening when nothing
+        was); `within_sla` is `issued_at - last_carton_at <= sla_seconds`
+        (`RECEIVING_ADVICE_SLA`, default 24 h). Per line the three quantities are
+        exclusive: `accepted_qty` is the Good units not held, `rejected_qty` the
+        Damaged ones and `held_qty` the Good units declared held; `received_qty`
+        is their sum. `discrepancies` carry the line kinds `Short`, `Over`, `Damaged`,
+        `IncorrectProduct` and `Hold` with `w13_code` and `cbv_disposition`.
+        The payload is bounded because a message the broker refuses blocks the
+        outbox (ADR 0007): at most 1000 lines (lines with exceptions first, then
+        in line order; `lines_total` is the real count and `lines_truncated` is
+        true when some are left out), at most 1000 SSCCs per line (`sscc_count` is
+        the real count, `ssccs_truncated` is true when listed ones are fewer) and
+        at most 200 carton findings (`carton_findings_total`). A consumer that
+        needs the full list reads the receipt over REST.
+      contentType: application/cloudevents+json
+      tags:
+        - name: receipt
+      payload:
+        $ref: "#/components/schemas/ReceivingAdviceIssuedEvent"
+      examples:
+        - name: example
+          payload:
+            specversion: "1.0"
+            id: "7c1d9e3f-5a2b-4c8d-9e0f-1a2b3c4d5e66"
+            source: "/warehouse/inbound-receiving"
+            type: "com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceIssued"
+            subject: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-09T09:30:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inbound-receiving:events:ReceivingAdviceIssued:v1"
+            data:
+              receipt_id: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+              asn_number: "ASN-1001"
+              despatch_advice_ref: "ASN-1001"
+              supplier_ref: "ACME"
+              owner_ref: "tenant-7f3a"
+              issued_at: "2026-10-09T09:30:00Z"
+              last_carton_at: "2026-10-09T09:10:00Z"
+              sla_seconds: 86400
+              within_sla: true
+              lines:
+                - line_no: 1
+                  sku: "SKU-1"
+                  gtin: "13041090004824"
+                  expected_qty: 40
+                  received_qty: 34
+                  accepted_qty: 25
+                  rejected_qty: 4
+                  held_qty: 5
+                  sscc_count: 2
+                  ssccs: ["340123450000000017", "340123450000000024"]
+                  discrepancies:
+                    - { kind: "Short", quantity: 6, w13_code: "02", cbv_disposition: "mismatch_quantity" }
+                    - { kind: "Hold", quantity: 5, w13_code: "09", cbv_disposition: "non_conformant" }
+              lines_total: 1
+              carton_findings:
+                - { kind: "UnexpectedCarton", sscc: "340123450000000031", at: "2026-10-09T09:05:00Z", w13_code: "05", cbv_disposition: "mismatch_instance" }
+              carton_findings_total: 1
+
+    ReceivingAdviceIssuedAnalytics:
+      name: ReceivingAdviceIssued
+      title: Receiving advice issued (analytics)
+      summary: The receiving advice, on the analytics stream.
+      description: "`type` = `com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceIssued` (the same as on the integration topic); dataschema `urn:warehouse:inbound-receiving:analytics:ReceivingAdviceIssued:v1`; payload equal to the integration payload. The projector folds `within_sla` into `advice_facts`, one row per receipt (ADR 0023)."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/ReceivingAdviceIssuedEvent"
+      examples:
+        - name: analytics
+          summary: The analytics copy of the integration example (same id).
+          payload:
+            specversion: "1.0"
+            id: "7c1d9e3f-5a2b-4c8d-9e0f-1a2b3c4d5e66"
+            source: "/warehouse/inbound-receiving"
+            type: "com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceIssued"
+            subject: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-09T09:30:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inbound-receiving:analytics:ReceivingAdviceIssued:v1"
+            data:
+              receipt_id: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+              asn_number: "ASN-1001"
+              despatch_advice_ref: "ASN-1001"
+              supplier_ref: "ACME"
+              owner_ref: "tenant-7f3a"
+              issued_at: "2026-10-09T09:30:00Z"
+              last_carton_at: "2026-10-09T09:10:00Z"
+              sla_seconds: 86400
+              within_sla: true
+              lines:
+                - line_no: 1
+                  sku: "SKU-1"
+                  gtin: "13041090004824"
+                  expected_qty: 40
+                  received_qty: 34
+                  accepted_qty: 25
+                  rejected_qty: 4
+                  held_qty: 5
+                  sscc_count: 2
+                  ssccs: ["340123450000000017", "340123450000000024"]
+                  discrepancies:
+                    - { kind: "Short", quantity: 6, w13_code: "02", cbv_disposition: "mismatch_quantity" }
+                    - { kind: "Hold", quantity: 5, w13_code: "09", cbv_disposition: "non_conformant" }
+              lines_total: 1
+              carton_findings:
+                - { kind: "UnexpectedCarton", sscc: "340123450000000031", at: "2026-10-09T09:05:00Z", w13_code: "05", cbv_disposition: "mismatch_instance" }
+              carton_findings_total: 1
+
+    ReceivingAdviceOverdue:
+      x-no-consumer-reason: "none yet: an alarm for the planned partner-connectivity and warehouse-ops consumers (D-3)"
+      name: ReceivingAdviceOverdue
+      title: Receiving advice overdue
+      summary: An Open receipt is past the advice SLA since its last unit was received (ADR 0023).
+      description: |
+        `type` = `com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceOverdue`;
+        subject = the receipt id, key = the ASN number. Raised by the housekeeping
+        sweep exactly once per receipt that is still Open when
+        `last_carton_at + sla_seconds` (`due_at`) is in the past. It does not stop
+        the receipt: closing it later still issues the advice, with `within_sla`
+        false. `overdue_at` (the CloudEvents `time`) is when the sweep saw it.
+      contentType: application/cloudevents+json
+      tags:
+        - name: receipt
+      payload:
+        $ref: "#/components/schemas/ReceivingAdviceOverdueEvent"
+      examples:
+        - name: example
+          payload:
+            specversion: "1.0"
+            id: "8d2e0f4a-6b3c-4d9e-af10-2b3c4d5e6f77"
+            source: "/warehouse/inbound-receiving"
+            type: "com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceOverdue"
+            subject: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-10T10:00:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inbound-receiving:events:ReceivingAdviceOverdue:v1"
+            data:
+              receipt_id: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+              asn_number: "ASN-1001"
+              last_carton_at: "2026-10-09T09:10:00Z"
+              due_at: "2026-10-10T09:10:00Z"
+              sla_seconds: 86400
+              overdue_at: "2026-10-10T10:00:00Z"
+
+    ReceivingAdviceOverdueAnalytics:
+      name: ReceivingAdviceOverdue
+      title: Receiving advice overdue (analytics)
+      summary: The overdue alarm, on the analytics stream.
+      description: "`type` = `com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceOverdue` (the same as on the integration topic); dataschema `urn:warehouse:inbound-receiving:analytics:ReceivingAdviceOverdue:v1`; payload equal to the integration payload. The projector acknowledges and ignores it: the KPI reads the advices issued, not the alarms."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/ReceivingAdviceOverdueEvent"
+      examples:
+        - name: analytics
+          summary: The analytics copy of the integration example (same id).
+          payload:
+            specversion: "1.0"
+            id: "8d2e0f4a-6b3c-4d9e-af10-2b3c4d5e6f77"
+            source: "/warehouse/inbound-receiving"
+            type: "com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceOverdue"
+            subject: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+            time: "2026-10-10T10:00:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inbound-receiving:analytics:ReceivingAdviceOverdue:v1"
+            data:
+              receipt_id: "rcpt-223e4567-e89b-12d3-a456-426614174000"
+              asn_number: "ASN-1001"
+              last_carton_at: "2026-10-09T09:10:00Z"
+              due_at: "2026-10-10T09:10:00Z"
+              sla_seconds: 86400
+              overdue_at: "2026-10-10T10:00:00Z"
 
     ASNRegisteredAnalytics:
       name: ASNRegistered
@@ -1208,6 +1403,8 @@ components:
         expected_qty: { type: integer, minimum: 1 }
         received_qty: { type: integer, minimum: 0, description: Good plus damaged. }
         damaged_qty: { type: integer, minimum: 0 }
+        w13_code: { type: string, enum: ["01", "02", "03"], description: "X12 W13 receiving condition code of the kind (ADR 0023): Damaged 01, Short 02, Over 03." }
+        cbv_disposition: { type: string, enum: [damaged, mismatch_quantity], description: "GS1 CBV disposition of the kind (ADR 0023)." }
 
     ASNRegisteredEvent:
       allOf:
@@ -1424,6 +1621,8 @@ components:
                 expected: { type: string, description: "A count, a SKU, or `sku:qty` / `grossWeightG:<n>` pairs (CartonOverLimit: the breached limits; MixedCartonContentMismatch: the manifest)." }
                 actual: { type: string, description: The counterpart of `expected`. }
                 at: { type: string, format: date-time }
+                w13_code: { type: string, enum: ["01", "02", "03", "05", "09"], description: "X12 W13 receiving condition code (ADR 0023). Absent when the standard has no code for the kind." }
+                cbv_disposition: { type: string, description: "GS1 CBV disposition (ADR 0023), derived from the kind." }
 
     ReceiptClosedEvent:
       allOf:
@@ -1441,6 +1640,90 @@ components:
                   type: array
                   description: Empty when everything matched.
                   items: { $ref: "#/components/schemas/DiscrepancyData" }
+
+    ReceivingAdviceIssuedEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [receipt_id, asn_number, despatch_advice_ref, supplier_ref, issued_at, last_carton_at, sla_seconds, within_sla, lines, lines_total, carton_findings, carton_findings_total]
+              properties:
+                receipt_id: { type: string }
+                asn_number: { type: string }
+                despatch_advice_ref: { type: string, description: "The reference to the despatch advice: the ASN number." }
+                supplier_ref: { type: string, description: "The supplier as the ASN knows it." }
+                owner_ref: { type: string, description: "The 3PL depositor. Omitted for fleet-owned stock." }
+                issued_at: { type: string, format: date-time }
+                last_carton_at: { type: string, format: date-time, description: "When the last unit was received; the receipt's opening when nothing was." }
+                sla_seconds: { type: integer, format: int64, minimum: 1, description: "The committed window (RECEIVING_ADVICE_SLA) in force at close." }
+                within_sla: { type: boolean, description: "issued_at - last_carton_at <= sla_seconds." }
+                lines:
+                  type: array
+                  maxItems: 1000
+                  description: Lines with exceptions first, then the rest, each group in line order; bounded.
+                  items:
+                    type: object
+                    required: [line_no, sku, expected_qty, received_qty, accepted_qty, rejected_qty, held_qty, sscc_count, discrepancies]
+                    properties:
+                      line_no: { type: integer, minimum: 1 }
+                      sku: { type: string }
+                      gtin: { type: string, pattern: '^[0-9]{14}$', description: Omitted when the line has no known GTIN. }
+                      expected_qty: { type: integer, minimum: 0 }
+                      received_qty: { type: integer, minimum: 0, description: "Accepted plus rejected plus held." }
+                      accepted_qty: { type: integer, minimum: 0, description: The Good units that are not held. }
+                      rejected_qty: { type: integer, minimum: 0, description: The Damaged units. }
+                      held_qty: { type: integer, minimum: 0, description: "The Good units declared held by the Hold command." }
+                      sscc_count: { type: integer, minimum: 0, description: The real number of SSCCs received on the line. }
+                      ssccs:
+                        type: array
+                        maxItems: 1000
+                        items: { type: string, pattern: '^[0-9]{18}$' }
+                      ssccs_truncated: { type: boolean, description: "True when ssccs lists fewer than sscc_count. Omitted when false." }
+                      discrepancies:
+                        type: array
+                        items:
+                          type: object
+                          required: [kind, quantity, cbv_disposition]
+                          properties:
+                            kind: { type: string, enum: [Short, Over, Damaged, IncorrectProduct, Hold] }
+                            quantity: { type: integer, minimum: 1 }
+                            w13_code: { type: string, enum: ["01", "02", "03", "05", "09"] }
+                            cbv_disposition: { type: string, enum: [damaged, mismatch_quantity, mismatch_class, non_conformant] }
+                lines_total: { type: integer, minimum: 0, description: The real number of lines. }
+                lines_truncated: { type: boolean, description: "True when lines lists fewer than lines_total. Omitted when false." }
+                carton_findings:
+                  type: array
+                  maxItems: 200
+                  items:
+                    type: object
+                    required: [kind, at]
+                    properties:
+                      kind: { type: string }
+                      sscc: { type: string }
+                      expected: { type: string }
+                      actual: { type: string }
+                      at: { type: string, format: date-time }
+                      w13_code: { type: string, enum: ["01", "02", "03", "05", "09"], description: Absent for a kind with no W13 code. }
+                      cbv_disposition: { type: string }
+                carton_findings_total: { type: integer, minimum: 0 }
+
+    ReceivingAdviceOverdueEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [receipt_id, asn_number, last_carton_at, due_at, sla_seconds, overdue_at]
+              properties:
+                receipt_id: { type: string }
+                asn_number: { type: string }
+                last_carton_at: { type: string, format: date-time }
+                due_at: { type: string, format: date-time, description: last_carton_at + sla_seconds. }
+                sla_seconds: { type: integer, format: int64, minimum: 1 }
+                overdue_at: { type: string, format: date-time, description: When the sweep saw the receipt past due. }
 
     VisitCheckedInEvent:
       allOf:

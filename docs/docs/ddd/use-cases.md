@@ -68,7 +68,7 @@ are the ports in `internal/analytics/report`
 
 | Port | Trigger | What it does |
 | --- | --- | --- |
-| `report.Projection.Apply` | the events on `warehouse.inbound-receiving.analytics` it knows (ten kinds: six of the eight current types plus the four historical `dockappointment` types, ADR 0022; the two carton types are ignored), consumed by `cmd/inbound-projector` | Claims the CloudEvents id in `analytics_processed_events` and folds the event into `asn_facts`, `appointment_facts`, `receipt_facts`, `receipt_line_events` or `receipt_discrepancies` in one analytical transaction. A deterministic rejection (`report.ErrRejected`) is dead-lettered to `warehouse.inbound-receiving.analytics.dlq`. |
+| `report.Projection.Apply` | the events on `warehouse.inbound-receiving.analytics` it knows (eleven kinds: seven of the ten current types, including `ReceivingAdviceIssued`, plus the four historical `dockappointment` types, ADR 0022; the two carton types and `ReceivingAdviceOverdue` are ignored), consumed by `cmd/inbound-projector` | Claims the CloudEvents id in `analytics_processed_events` and folds the event into `asn_facts`, `appointment_facts`, `receipt_facts`, `receipt_line_events` or `receipt_discrepancies` in one analytical transaction. A deterministic rejection (`report.ErrRejected`) is dead-lettered to `warehouse.inbound-receiving.analytics.dlq`. |
 | `report.Reader.PerformanceDays` + `Current` | `GET /reports/receiving-performance` on `cmd/inbound-reports` | Per-UTC-day counts and p50/p95 timings over `[from, to)` (default the last 30 days, at most 366) plus today's open receipts and expected arrivals. |
 | `report.Reader.LastEventAt` | `GET /reports/freshness` | `as_of` and `lag_seconds` of the projection. |
 

@@ -120,7 +120,7 @@ func (r *Receipt) Persisted() Persisted {
 	for _, l := range r.lines {
 		lines = append(lines, LineState{
 			LineNo: l.lineNo, SKU: string(l.sku), ExpectedQty: l.expectedQty,
-			ReceivedGood: l.receivedGood, ReceivedDamaged: l.receivedDamaged,
+			ReceivedGood: l.receivedGood, ReceivedDamaged: l.receivedDamaged, Held: l.held,
 		})
 	}
 	cartons := make([]CartonState, 0, len(r.cartons))
@@ -130,7 +130,7 @@ func (r *Receipt) Persisted() Persisted {
 	return Persisted{
 		ID: string(r.id), AsnNumber: string(r.asnNumber), OwnerRef: string(r.ownerRef),
 		AppointmentID: string(r.appointmentID), DoorCode: string(r.doorCode), State: r.state,
-		Lines: lines, Cartons: cartons, CartonDiscrepancies: findingStates(r.findings), OpenedAt: r.openedAt, ClosedAt: r.closedAt, Version: r.version,
+		Lines: lines, Cartons: cartons, CartonDiscrepancies: findingStates(r.findings), OpenedAt: r.openedAt, ClosedAt: r.closedAt, LastReceivedAt: r.lastReceivedAt, Version: r.version,
 	}
 }
 

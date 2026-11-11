@@ -220,6 +220,7 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 	writes := e2eWrites{t: t, clock: clock, appts: postgres.NewAppointmentRepo(oltp), analyticsTopic: analyticsTopic, w: usecases.Writer{
 		Asns: postgres.NewAsnRepo(oltp), Appointments: postgres.NewAppointmentRepo(oltp), Receipts: postgres.NewReceiptRepo(oltp),
 		Outbox: ob, UoW: postgres.NewUnitOfWork(oltp), Clock: clock, IDs: idgen.UUID{},
+		Advice: postgres.NewAdviceRepo(oltp), AdviceSLA: 24 * time.Hour,
 		Encoder: &outboundkafka.FanoutEncoder{
 			Integration: &outboundkafka.Encoder{Topic: integrationTopic},
 			Analytics:   &outboundkafka.AnalyticsEncoder{Topic: analyticsTopic},
@@ -227,13 +228,14 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 		},
 	}}
 	e2eScenario(t, writes)
-	// 11 events raised by the service (both topics) + the 3 historical
-	// DockAppointment events of the pre-cutover history (analytics stream only).
-	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, analyticsTopic); n != 14 {
-		t.Fatalf("analytics outbox rows = %d, want 14 (11 raised + 3 historical appointment events)", n)
+	// 12 events raised by the service (both topics; the receiving advice is the
+	// twelfth) + the 3 historical DockAppointment events of the pre-cutover
+	// history (analytics stream only).
+	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, analyticsTopic); n != 15 {
+		t.Fatalf("analytics outbox rows = %d, want 15 (12 raised + 3 historical appointment events)", n)
 	}
-	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, integrationTopic); n != 11 {
-		t.Fatalf("integration outbox rows = %d, want 11 (this service raises no appointment event any more)", n)
+	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, integrationTopic); n != 12 {
+		t.Fatalf("integration outbox rows = %d, want 12 (this service raises no appointment event any more)", n)
 	}
 
 	// ---- the topic also carries messages the projector must survive ----
@@ -399,6 +401,7 @@ func assertReceivingPerformance(t *testing.T, got e2eReport) {
 	t.Helper()
 	zeroTiming := map[string]any{"count": 0.0, "p50_seconds": nil, "p95_seconds": nil}
 	zeroDockToStock := map[string]any{"count": 0.0, "p50_seconds": nil, "p90_seconds": nil, "under_target": 0.0, "share_under_target": nil}
+	zeroAdvice := map[string]any{"count": 0.0, "within_sla": 0.0, "share_within_sla": nil}
 	wantDays := []map[string]any{
 		{
 			"day": "2026-10-05", "receipts_closed": 0.0, "lines_received": 0.0, "units_good": 0.0, "units_damaged": 0.0,
@@ -407,6 +410,7 @@ func assertReceivingPerformance(t *testing.T, got e2eReport) {
 			"appointments":  map[string]any{"booked": 1.0, "checked_in": 0.0, "cancelled": 0.0, "completed": 0.0},
 			"dock_dwell":    zeroTiming,
 			"dock_to_stock": zeroDockToStock,
+			"advice":        zeroAdvice,
 		},
 		{
 			"day": "2026-10-06", "receipts_closed": 1.0, "lines_received": 3.0, "units_good": 15.0, "units_damaged": 1.0,
@@ -415,6 +419,8 @@ func assertReceivingPerformance(t *testing.T, got e2eReport) {
 			"appointments":  map[string]any{"booked": 0.0, "checked_in": 1.0, "cancelled": 0.0, "completed": 1.0},
 			"dock_dwell":    map[string]any{"count": 1.0, "p50_seconds": 6000.0, "p95_seconds": 6000.0},
 			"dock_to_stock": map[string]any{"count": 1.0, "p50_seconds": 7200.0, "p90_seconds": 7200.0, "under_target": 1.0, "share_under_target": 1.0},
+			// The receipt closed 09:30, minutes after its last unit: the advice is inside the 24 h SLA.
+			"advice": map[string]any{"count": 1.0, "within_sla": 1.0, "share_within_sla": 1.0},
 		},
 	}
 	if !reflect.DeepEqual(got.Days, wantDays) {

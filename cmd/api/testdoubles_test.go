@@ -16,10 +16,10 @@ func testDoubleAdapters(t *testing.T) adapters {
 	asns, appts, receipts := memory.NewAsnRepo(), memory.NewAppointmentRepo(), memory.NewReceiptRepo()
 	skus, doors := memory.NewKnownSkus(), memory.NewDockDoors()
 	ob, processed := memory.NewOutboxRepo(), memory.NewProcessedEventRepo()
-	stows := memory.NewStowStore(receipts)
+	stows, advice := memory.NewStowStore(receipts), memory.NewAdviceStore(receipts)
 	return adapters{
-		asns: asns, appointments: appts, receipts: receipts, outbox: ob, outboxStore: ob, processed: processed, stows: stows,
+		asns: asns, appointments: appts, receipts: receipts, outbox: ob, outboxStore: ob, processed: processed, stows: stows, advice: advice,
 		skus: skus, doors: doors, packaging: memory.NewPackagingView(), idempotency: memory.NewIdempotencyStore(),
-		uow: memory.NewUnitOfWork(asns, appts, receipts, skus, doors, ob, processed, stows),
+		uow: memory.NewUnitOfWork(asns, appts, receipts, skus, doors, ob, processed, stows, advice),
 	}
 }

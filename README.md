@@ -107,13 +107,13 @@ convention is `com.warehouse.wms.inbound-receiving.<entity>.<EventName>` (the
 transaction** (`FanoutEncoder`): to the integration topic and, under the same
 CloudEvents id, to the analytics topic (ADR 0004, ADR 0006).
 
-**Publishes** — 8 events on `warehouse.inbound-receiving.events` (each with
+**Publishes** — 10 events on `warehouse.inbound-receiving.events` (each with
 an `…Analytics` twin on `warehouse.inbound-receiving.analytics`):
 
 | Entity | Events |
 |---|---|
 | `asn` | `ASNRegistered`, `ASNCancelled` |
-| `receipt` | `ReceiptOpened`, `ReceiptLineReceived`, `ReceiptCartonReceived`, `ReceiptClosed`, `CartonDiscrepancyRaised`, `ReceiptStowCompleted` (the dock-to-stock fact, ADR 0021) |
+| `receipt` | `ReceiptOpened`, `ReceiptLineReceived`, `ReceiptCartonReceived`, `ReceiptClosed`, `CartonDiscrepancyRaised`, `ReceiptStowCompleted` (the dock-to-stock fact, ADR 0021), `ReceivingAdviceIssued` (the receiving advice at close, ADR 0023), `ReceivingAdviceOverdue` (the advice SLA missed, ADR 0023) |
 
 The four `dockappointment` types (`DockAppointmentBooked`, `CheckedIn`,
 `Cancelled`, `Completed`) are no longer raised and are not in the contract

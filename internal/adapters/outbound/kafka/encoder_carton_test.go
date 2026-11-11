@@ -128,15 +128,15 @@ func TestEncodeCartonDiscrepancyRaised(t *testing.T) {
 	}{
 		"quantity mismatch": {
 			receipt.CartonDiscrepancy{Kind: receipt.KindCaseQtyMismatch, SSCC: mustSSCC(t, testSSCC), Expected: "12", Actual: "10"},
-			`{"receipt_id":"` + rcptID + `","sscc":"` + testSSCC + `","kind":"CaseQtyMismatch","expected":"12","actual":"10","at":"2026-10-23T14:05:00Z"}`,
+			`{"receipt_id":"` + rcptID + `","sscc":"` + testSSCC + `","kind":"CaseQtyMismatch","expected":"12","actual":"10","at":"2026-10-23T14:05:00Z","cbv_disposition":"mismatch_quantity"}`,
 		},
 		"missing carton": {
 			receipt.CartonDiscrepancy{Kind: receipt.KindMissingCarton, Expected: testSSCC},
-			`{"receipt_id":"` + rcptID + `","kind":"MissingCarton","expected":"` + testSSCC + `","at":"2026-10-23T14:05:00Z"}`,
+			`{"receipt_id":"` + rcptID + `","kind":"MissingCarton","expected":"` + testSSCC + `","at":"2026-10-23T14:05:00Z","w13_code":"02","cbv_disposition":"mismatch_quantity"}`,
 		},
 		"unknown gtin": {
 			receipt.CartonDiscrepancy{Kind: receipt.KindUnknownGtin, Actual: testEach},
-			`{"receipt_id":"` + rcptID + `","kind":"UnknownGtin","actual":"` + testEach + `","at":"2026-10-23T14:05:00Z"}`,
+			`{"receipt_id":"` + rcptID + `","kind":"UnknownGtin","actual":"` + testEach + `","at":"2026-10-23T14:05:00Z","w13_code":"05","cbv_disposition":"mismatch_class"}`,
 		},
 	}
 	for name, tc := range cases {

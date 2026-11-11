@@ -32,9 +32,9 @@ of work; the relay in `cmd/api` publishes them. Common attributes:
 `source=/warehouse/inbound-receiving`, `time` = domain occurred-at (UTC),
 `datacontenttype=application/json`,
 `dataschema=urn:warehouse:inbound-receiving:events:<EventName>:v1`. Topic
-`warehouse.inbound-receiving.events` for all eight (the `<entity>` segment is `asn`
+`warehouse.inbound-receiving.events` for all ten (the `<entity>` segment is `asn`
 or `receipt`: `asnRow` and `receiptRow` in the encoder reject every other event, and
-`apis/asyncapi.yaml` declares exactly these eight on the integration channel). The
+`apis/asyncapi.yaml` declares exactly these ten on the integration channel). The
 partitioner is the `Hash` balancer on the Kafka key.
 
 | Full CloudEvents type | `subject` / Kafka key | Producer use case | Payload (`data`) | Known consumers |
@@ -47,6 +47,8 @@ partitioner is the `Hash` balancer on the Kafka key.
 | `com.warehouse.wms.inbound-receiving.receipt.CartonDiscrepancyRaised` | `receipt_id` / `asn_number` | `ReceiveScan` (a refused scan, one event per finding) and `CloseReceipt` (a `MissingCarton` finding for a manifest carton never accepted) | `receipt_id`, `sscc?`, `kind`, `expected?`, `actual?`, `at` | `exception-management` (`CARTON_DISCREPANCY_CONSUMER_GROUP`), `network-fulfillment` |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptClosed` | `receipt_id` / `asn_number` | `CloseReceipt` | `receipt_id`, `asn_number`, `closed_at`, `discrepancies[]` = `{line_no, sku, kind, expected_qty, received_qty, damaged_qty}` | `yard-management`, `network-fulfillment` |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptStowCompleted` | `receipt_id` / `asn_number` | `ApplyVisitCheckedIn`, `ApplyContainerStowed`, `CloseReceipt` (whichever completes the evidence; ADR 0021) | `receipt_id`, `asn_number`, `appointment_id`, `arrived_at`, `closed_at`, `stowed_at`, `dock_to_stock_seconds`, `carton_count` | none yet (the projector folds the analytics copy) |
+| `com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceIssued` | `receipt_id` / `asn_number` | `CloseReceipt` (same transaction, right after `ReceiptClosed`, once per receipt; ADR 0023) | `receipt_id`, `asn_number`, `despatch_advice_ref`, `supplier_ref`, `owner_ref?`, `issued_at`, `last_carton_at`, `sla_seconds`, `within_sla`, `lines[]` (per line quantities, bounded SSCC list, `discrepancies[]` = `{kind, quantity, w13_code?, cbv_disposition}`), `carton_findings[]` | none yet (partner-connectivity planned, D-3) |
+| `com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceOverdue` | `receipt_id` / `asn_number` | the housekeeping sweep, once per Open receipt past `RECEIVING_ADVICE_SLA` (ADR 0023) | `receipt_id`, `asn_number`, `last_carton_at`, `due_at`, `sla_seconds`, `overdue_at` | none yet |
 
 `?` marks a field omitted when unset. The line-level discrepancy `kind` on
 `ReceiptClosed` is `Short`, `Over` or `Damaged`; the `kind` on
@@ -102,17 +104,17 @@ work and under the same CloudEvents `id`, `type`, `subject` and Kafka key, to
 `dataschema=urn:warehouse:inbound-receiving:analytics:<EventName>:v1` and a
 payload byte-for-byte equal to the integration payload (`FanoutEncoder`,
 `internal/adapters/outbound/kafka/analytics_encoder.go`). The topic therefore
-carries the same eight types as the integration topic; `apis/asyncapi.yaml`
-declares eight analytics messages. Its only consumer is this context's own
+carries the same ten types as the integration topic; `apis/asyncapi.yaml`
+declares ten analytics messages. Its only consumer is this context's own
 `inbound-projector` (group `ANALYTICS_CONSUMER_GROUP`, default
 `inbound-receiving-analytics`); it is not an integration contract, so sibling
 contexts keep reading `warehouse.inbound-receiving.events`.
 
-The projector folds ten kinds (`report.Kinds()`): six of the eight current types
+The projector folds eleven kinds (`report.Kinds()`): seven of the ten current types
 (`ASNRegistered`, `ASNCancelled`, `ReceiptOpened`, `ReceiptLineReceived`,
-`ReceiptClosed`, `ReceiptStowCompleted`) and the four historical
-`dockappointment.DockAppointment*` types. It does not fold `ReceiptCartonReceived`
-or `CartonDiscrepancyRaised`: an unknown type is ignored (a DEBUG line). The four
+`ReceiptClosed`, `ReceiptStowCompleted`, `ReceivingAdviceIssued`) and the four historical
+`dockappointment.DockAppointment*` types. It does not fold `ReceiptCartonReceived`,
+`CartonDiscrepancyRaised` or `ReceivingAdviceOverdue`: an unknown type is ignored (a DEBUG line). The four
 historical types stay in the projector on purpose ([ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)):
 a stream is append-only, so a rebuild from the topic may still read them, and the
 `appointments` block of the receiving-performance report stays frozen. Nothing

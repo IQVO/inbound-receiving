@@ -198,15 +198,19 @@ func receiptRow(ev receipt.Event) (row, error) {
 			Sealed: e.Sealed, LPN: e.LPN, Contents: contents, ReceivedAt: ts(e.At),
 		}
 	case receipt.CartonDiscrepancyRaised:
+		coding, _ := receipt.CodingOf(e.Kind)
 		r.data = cartonDiscrepancyData{
 			ReceiptID: id, SSCC: e.SSCC.String(), Kind: string(e.Kind), Expected: e.Expected, Actual: e.Actual, At: ts(e.At),
+			W13Code: string(coding.W13), CBVDisposition: string(coding.CBV),
 		}
 	case receipt.ReceiptClosed:
 		ds := make([]discrepancyData, 0, len(e.Discrepancies))
 		for _, d := range e.Discrepancies {
+			coding, _ := receipt.CodingOf(d.Kind)
 			ds = append(ds, discrepancyData{
 				LineNo: d.LineNo, SKU: string(d.SKU), Kind: string(d.Kind),
 				ExpectedQty: d.ExpectedQty, ReceivedQty: d.ReceivedQty, DamagedQty: d.DamagedQty,
+				W13Code: string(coding.W13), CBVDisposition: string(coding.CBV),
 			})
 		}
 		r.data = receiptClosedData{ReceiptID: id, AsnNumber: number, ClosedAt: ts(e.At), Discrepancies: ds}
@@ -215,8 +219,52 @@ func receiptRow(ev receipt.Event) (row, error) {
 			ReceiptID: id, AsnNumber: number, AppointmentID: string(e.AppointmentID), ArrivedAt: ts(e.ArrivedAt),
 			ClosedAt: ts(e.ClosedAt), StowedAt: ts(e.StowedAt), DockToStockSeconds: e.DockToStockSeconds, CartonCount: e.CartonCount,
 		}
+	case receipt.ReceivingAdviceIssued:
+		r.data = receivingAdviceIssued(id, number, e)
+	case receipt.ReceivingAdviceOverdue:
+		r.data = receivingAdviceOverdueData{
+			ReceiptID: id, AsnNumber: number, LastCartonAt: ts(e.LastCartonAt), DueAt: ts(e.DueAt),
+			SLASeconds: int64(e.SLA / time.Second), OverdueAt: ts(e.At),
+		}
 	default:
 		return row{}, fmt.Errorf("kafka encoder: %s is not a published receipt event", ev.EventName())
 	}
 	return r, nil
+}
+
+// receivingAdviceIssued maps the advice (already bounded by the domain) to its
+// payload. Lists are never null; an unmapped kind has no w13_code.
+func receivingAdviceIssued(id, number string, e receipt.ReceivingAdviceIssued) receivingAdviceIssuedData {
+	lines := make([]adviceLineData, 0, len(e.Lines))
+	for _, l := range e.Lines {
+		ds := make([]adviceDiscrepancyData, 0, len(l.Discrepancies))
+		for _, d := range l.Discrepancies {
+			ds = append(ds, adviceDiscrepancyData{
+				Kind: string(d.Kind), Quantity: d.Quantity, W13Code: string(d.Coding.W13), CBVDisposition: string(d.Coding.CBV),
+			})
+		}
+		var ssccs []string
+		for _, s := range l.SSCCs {
+			ssccs = append(ssccs, s.String())
+		}
+		lines = append(lines, adviceLineData{
+			LineNo: l.LineNo, SKU: string(l.SKU), GTIN: l.GTIN.String(),
+			ExpectedQty: l.Expected, ReceivedQty: l.Received, AcceptedQty: l.Accepted, RejectedQty: l.Rejected, HeldQty: l.Held,
+			SSCCCount: l.SSCCCount, SSCCs: ssccs, SSCCsTruncated: l.SSCCsTruncated, Discrepancies: ds,
+		})
+	}
+	findings := make([]adviceFindingData, 0, len(e.CartonFindings))
+	for _, f := range e.CartonFindings {
+		coding, _ := receipt.CodingOf(f.Kind)
+		findings = append(findings, adviceFindingData{
+			Kind: string(f.Kind), SSCC: f.SSCC.String(), Expected: f.Expected, Actual: f.Actual, At: ts(f.At),
+			W13Code: string(coding.W13), CBVDisposition: string(coding.CBV),
+		})
+	}
+	return receivingAdviceIssuedData{
+		ReceiptID: id, AsnNumber: number, DespatchAdviceRef: e.DespatchAdviceRef, SupplierRef: e.SupplierRef, OwnerRef: string(e.OwnerRef),
+		IssuedAt: ts(e.At), LastCartonAt: ts(e.LastCartonAt), SLASeconds: int64(e.SLA / time.Second), WithinSLA: e.WithinSLA,
+		Lines: lines, LinesTotal: e.LinesTotal, LinesTruncated: e.LinesTruncated,
+		CartonFindings: findings, CartonFindingsTotal: e.CartonFindingsTotal,
+	}
 }
