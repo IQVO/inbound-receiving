@@ -94,6 +94,11 @@ type world struct {
 	lpn         string
 	limits      receipt.CartonLimits
 	listQuery   string
+	// The label settings (ADR 0024) and the serials of the assigned SSCCs, which live on across
+	// the rebuilds of the server like the repositories.
+	siteGLNs receipt.SiteGLNs
+	prefix   receipt.CompanyPrefix
+	serials  *memory.SsccSerials
 }
 
 func (w *world) start() {
@@ -106,6 +111,7 @@ func (w *world) start() {
 	w.skuMode, w.doorMode = usecases.ModePermissive, usecases.ModePermissive
 	w.status, w.header, w.body, w.keys, w.appointment, w.receipt, w.listQuery = 0, nil, nil, 0, "", "", ""
 	w.lpn, w.limits = "", receipt.CartonLimits{}
+	w.siteGLNs, w.prefix, w.serials = receipt.SiteGLNs{}, receipt.CompanyPrefix{}, memory.NewSsccSerials()
 	w.wave2, w.apptSeq, w.apptVersion, w.lastAppt, w.stowFeed = wave2State{}, 0, 0, apptAnnouncement{}, stowFeed{}
 	w.stows, w.advice, w.holdErr = memory.NewStowStore(receipts), memory.NewAdviceStore(receipts), nil
 	uow := memory.NewUnitOfWork(asns, appts, receipts, w.skus, w.doors, w.packaging, ob, processed, w.stows, w.advice)
@@ -129,7 +135,8 @@ func (w *world) start() {
 			ListAppointments: &usecases.ListAppointments{Appointments: appts},
 			OpenReceipt:      &usecases.OpenReceipt{Writer: writer},
 			ReceiveLine:      &usecases.ReceiveLine{Writer: writer},
-			ReceiveScan:      &usecases.ReceiveScan{Writer: writer, Packaging: w.packaging, Limits: w.limits},
+			ReceiveScan:      &usecases.ReceiveScan{Writer: writer, Packaging: w.packaging, Limits: w.limits, SiteGLNs: w.siteGLNs},
+			AssignSscc:       &usecases.AssignSscc{Writer: writer, Packaging: w.packaging, Prefix: w.prefix, Serials: w.serials},
 			GetCartonLabel:   &usecases.GetCartonLabel{Receipts: receipts},
 			CloseReceipt:     &usecases.CloseReceipt{Writer: writer},
 			GetReceipt:       &usecases.GetReceipt{Receipts: receipts},
@@ -512,6 +519,7 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	w.registerWave2(sc)
 	w.registerAppointments(sc)
 	w.registerCartons(sc)
+	w.registerLabels(sc)
 	w.registerStows(sc)
 	w.registerAdvice(sc)
 }
