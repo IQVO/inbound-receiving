@@ -361,7 +361,7 @@ var contractScenarios = []struct {
 			regEv("r2", "ASN-2", "ACME", "2026-10-05T09:00:00Z"),
 			regEv("r3", "ASN-3", "ACME", "2026-10-05T23:59:59Z"),
 			regEv("r4", "ASN-4", "BOLT", "2026-10-06T00:00:00Z"), // midnight: day 6
-			regEv("r5", "ASN-5", "BOLT", "2026-10-06T01:30:00Z"),
+			regEv("r10", "ASN-10", "LAG", "2026-10-06T03:00:00Z"),
 			lateEv("l2", "ASN-2", "ACME", "2026-10-06T06:00:00Z", "2026-10-05T09:00:00Z", "2026-10-05T08:59:59Z", 1),
 			lateEv("l2x", "ASN-2", "ACME", "2026-10-06T07:00:00Z", "2026-10-05T09:00:00Z", "2026-10-05T08:59:59Z", 1), // a new id, same ASN: still one row
 			lateEv("l4", "ASN-4", "BOLT", "2026-10-06T06:30:00Z", "2026-10-06T00:00:00Z", "2026-10-05T23:00:00Z", 3600),
@@ -369,11 +369,11 @@ var contractScenarios = []struct {
 		)
 		d5, d6 := zeroDay("2026-10-05"), zeroDay("2026-10-06")
 		d5.AsnTimeliness = []report.SupplierTimeliness{{SupplierRef: "ACME", Registered: 3, Late: 1, ShareOnTime: f(1 - 1.0/3)}}
-		// BOLT outranks LAG by registered count although LAG sorts first by
+		// LAG outranks BOLT by registered count although BOLT sorts first by
 		// name: the rank is biggest-registered-first, ties by name.
 		d6.AsnTimeliness = []report.SupplierTimeliness{
-			{SupplierRef: "BOLT", Registered: 2, Late: 1, ShareOnTime: f(0.5)},
-			{SupplierRef: "LAG", Registered: 1, Late: 1, ShareOnTime: f(0)},
+			{SupplierRef: "LAG", Registered: 2, Late: 1, ShareOnTime: f(0.5)},
+			{SupplierRef: "BOLT", Registered: 1, Late: 1, ShareOnTime: f(0)},
 		}
 		assertDays(t, perf(t, s, "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z"), []report.PerformanceDay{d5, d6})
 	}},
