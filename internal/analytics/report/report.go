@@ -14,15 +14,18 @@ import (
 	"time"
 )
 
-// Kind is which of the eleven projected events a fact came from. The names are
+// Kind is which of the twelve projected events a fact came from. The names are
 // the CloudEvents event names (the last segment of `type`).
 type Kind string
 
-// The eleven events the projection folds; the analytics topic carries more (the
+// The twelve events the projection folds; the analytics topic carries more (the
 // advice overdue alarm is ignored).
 const (
-	KindAsnRegistered        Kind = "ASNRegistered"
-	KindAsnCancelled         Kind = "ASNCancelled"
+	KindAsnRegistered Kind = "ASNRegistered"
+	KindAsnCancelled  Kind = "ASNCancelled"
+	// KindAsnLateForArrival is the ASN-timeliness fact raised at OpenReceipt;
+	// the KPI "% ASNs received before arrival, per supplier" folds it (ADR 0025).
+	KindAsnLateForArrival    Kind = "AsnLateForArrival"
 	KindAppointmentBooked    Kind = "DockAppointmentBooked"
 	KindAppointmentCheckedIn Kind = "DockAppointmentCheckedIn"
 	KindAppointmentCancelled Kind = "DockAppointmentCancelled"
@@ -40,14 +43,16 @@ const (
 // Kinds returns every projected kind, in catalogue order.
 func Kinds() []Kind {
 	return []Kind{
-		KindAsnRegistered, KindAsnCancelled,
+		KindAsnRegistered, KindAsnCancelled, KindAsnLateForArrival,
 		KindAppointmentBooked, KindAppointmentCheckedIn, KindAppointmentCancelled, KindAppointmentCompleted,
 		KindReceiptOpened, KindReceiptLineReceived, KindReceiptClosed, KindReceiptStowCompleted, KindReceivingAdviceIssued,
 	}
 }
 
 // IsAsn reports whether k is an ASN event.
-func (k Kind) IsAsn() bool { return k == KindAsnRegistered || k == KindAsnCancelled }
+func (k Kind) IsAsn() bool {
+	return k == KindAsnRegistered || k == KindAsnCancelled || k == KindAsnLateForArrival
+}
 
 // IsAppointment reports whether k is a dock appointment event.
 func (k Kind) IsAppointment() bool {
@@ -142,6 +147,16 @@ type Event struct {
 	Stow *StowCompleted
 	// Advice is set exactly on a ReceivingAdviceIssued.
 	Advice *AdviceIssued
+
+	// SupplierRef is set on the ASN events that carry one (ASNRegistered,
+	// AsnLateForArrival, ADR 0025).
+	SupplierRef string
+	// VisitID, AsnRegisteredAt, ArrivedAt and LatenessSeconds are set exactly
+	// on an AsnLateForArrival (ADR 0025).
+	VisitID         string
+	AsnRegisteredAt time.Time
+	ArrivedAt       time.Time
+	LatenessSeconds int64
 }
 
 // ErrInvalidEvent marks an event that can never be projected (the consumer
@@ -199,6 +214,27 @@ func (e Event) validateDetail() error {
 				return fmt.Errorf("%w: %s %s discrepancy line %d kind %q", ErrInvalidEvent, e.Kind, e.EventID, d.LineNo, d.Kind)
 			}
 		}
+	case KindAsnLateForArrival:
+		return e.validateAsnLate()
+	}
+	return nil
+}
+
+// validateAsnLate checks the late fact's own fields: a supplier, an
+// appointment and visit, both timestamps and a strictly positive lateness (an
+// equal or earlier registration is on time and never raises the event).
+func (e Event) validateAsnLate() error {
+	switch {
+	case e.SupplierRef == "":
+		return fmt.Errorf("%w: %s %s without a supplier_ref", ErrInvalidEvent, e.Kind, e.EventID)
+	case e.AppointmentID == "":
+		return fmt.Errorf("%w: %s %s without an appointment_id", ErrInvalidEvent, e.Kind, e.EventID)
+	case e.VisitID == "":
+		return fmt.Errorf("%w: %s %s without a visit_id", ErrInvalidEvent, e.Kind, e.EventID)
+	case e.AsnRegisteredAt.IsZero() || e.ArrivedAt.IsZero():
+		return fmt.Errorf("%w: %s %s without asn_registered_at and arrived_at", ErrInvalidEvent, e.Kind, e.EventID)
+	case e.LatenessSeconds < 1:
+		return fmt.Errorf("%w: %s %s lateness_seconds %d is below 1", ErrInvalidEvent, e.Kind, e.EventID, e.LatenessSeconds)
 	}
 	return nil
 }
@@ -362,6 +398,10 @@ type PerformanceDay struct {
 	// Advice is the receiving advices issued in the window and how many of them
 	// were inside the SLA (ADR 0023).
 	Advice AdviceSummary
+	// AsnTimeliness is the per-supplier ASN-timeliness block of the day
+	// (ADR 0025): the day's ASNs by registered_at day, how many were late,
+	// and the on-time share, bounded by MaxTimelinessSuppliers.
+	AsnTimeliness []SupplierTimeliness
 }
 
 // CurrentCounts is the state right now, independent of the report range.

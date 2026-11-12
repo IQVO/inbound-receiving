@@ -24,13 +24,20 @@ type Memory struct {
 	stows        map[string]report.StowCompleted // by receipt id
 	advices      map[string]memAdvice            // by receipt id
 	discrepancy  map[discrepancyKey]time.Time
-	lastAt       *time.Time
+	// lates is the asn_late_facts twin (ADR 0025): one row per ASN, the
+	// first fact wins.
+	lates  map[string]struct{}
+	lastAt *time.Time
 }
 
 type memAsn struct {
 	expectedArrival *time.Time
 	cancelled       *time.Time
 	receiptOpened   *time.Time
+	// supplier and registeredAt fold from ASNRegistered (and from the late
+	// fact's payload) for the asn_timeliness block (ADR 0025).
+	supplier   string
+	registered *time.Time
 }
 
 type memReceipt struct {
@@ -64,6 +71,7 @@ func NewMemory() *Memory {
 		discrepancy:  map[discrepancyKey]time.Time{},
 		stows:        map[string]report.StowCompleted{},
 		advices:      map[string]memAdvice{},
+		lates:        map[string]struct{}{},
 	}
 }
 
@@ -109,14 +117,36 @@ func (m *Memory) asn(number string) *memAsn {
 
 func (m *Memory) foldAsn(e report.Event, at time.Time) {
 	a := m.asn(e.AsnNumber)
-	if e.Kind == report.KindAsnRegistered {
+	switch e.Kind {
+	case report.KindAsnRegistered:
 		if a.expectedArrival == nil && e.ExpectedArrival != nil {
 			u := e.ExpectedArrival.UTC()
 			a.expectedArrival = &u
 		}
-		return
+		m.foldAsnRegistered(a, e)
+	case report.KindAsnLateForArrival:
+		// The late fact also carries the supplier and the registration day
+		// (the SQL upsert does the same), so the join never misses.
+		m.foldAsnRegistered(a, e)
+		if _, exists := m.lates[e.AsnNumber]; !exists { // one row per ASN: the first wins
+			m.lates[e.AsnNumber] = struct{}{}
+		}
+	default:
+		a.cancelled = earliest(a.cancelled, &at)
 	}
-	a.cancelled = earliest(a.cancelled, &at)
+}
+
+// foldAsnRegistered keeps the supplier (first one wins, the SQL COALESCE) and
+// the earliest registration time.
+func (m *Memory) foldAsnRegistered(a *memAsn, e report.Event) {
+	if a.supplier == "" {
+		a.supplier = e.SupplierRef
+	}
+	registered := e.AsnRegisteredAt
+	if e.Kind == report.KindAsnRegistered {
+		registered = e.At
+	}
+	a.registered = earliest(a.registered, &registered)
 }
 
 func (m *Memory) foldAppointment(e report.Event) {
@@ -189,6 +219,9 @@ func checkLikeTheDatabase(e report.Event) error {
 	if e.Kind == report.KindReceivingAdviceIssued && e.Advice == nil {
 		return fmt.Errorf("%w: advice of %s has no within_sla (a NOT NULL column)", report.ErrRejected, e.ReceiptID)
 	}
+	if e.Kind == report.KindAsnLateForArrival && e.LatenessSeconds < 1 {
+		return fmt.Errorf("%w: late fact of %s violates a check constraint", report.ErrRejected, e.AsnNumber)
+	}
 	return nil
 }
 
@@ -237,6 +270,7 @@ func (m *Memory) PerformanceDays(_ context.Context, r report.Range) ([]report.Pe
 		m.countAppointments(&d, w)
 		m.countStows(&d, w)
 		m.countAdvices(&d, w)
+		m.countTimeliness(&d, w)
 		out = append(out, d)
 	}
 	return out, nil
@@ -304,6 +338,23 @@ func (m *Memory) countAdvices(d *report.PerformanceDay, w report.DayWindow) {
 		}
 	}
 	d.Advice = report.AdviceOf(within)
+}
+
+// countTimeliness folds the day's ASNs per supplier into the asn_timeliness
+// block (ADR 0025): both sides of the ratio in the UTC day of the ASN's
+// registration, the late side one row per ASN.
+func (m *Memory) countTimeliness(d *report.PerformanceDay, w report.DayWindow) {
+	registered, late := map[string]int{}, map[string]int{}
+	for number, a := range m.asns {
+		if !inWindow(a.registered, w) {
+			continue
+		}
+		registered[a.supplier]++
+		if _, isLate := m.lates[number]; isLate {
+			late[a.supplier]++
+		}
+	}
+	d.AsnTimeliness = report.AsnTimelinessOf(registered, late)
 }
 
 func (m *Memory) countReceipts(d *report.PerformanceDay, w report.DayWindow) {

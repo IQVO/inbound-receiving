@@ -38,13 +38,14 @@ const claimSQL = `
 // arrive in.
 
 const upsertAsnSQL = `
-	INSERT INTO asn_facts (asn_number, expected_arrival, registered_at, cancelled_at, receipt_opened_at)
-	VALUES ($1, $2::timestamptz, $3::timestamptz, $4::timestamptz, $5::timestamptz)
+	INSERT INTO asn_facts (asn_number, expected_arrival, registered_at, cancelled_at, receipt_opened_at, supplier_ref)
+	VALUES ($1, $2::timestamptz, $3::timestamptz, $4::timestamptz, $5::timestamptz, $6::text)
 	ON CONFLICT (asn_number) DO UPDATE SET
 		expected_arrival  = COALESCE(asn_facts.expected_arrival, EXCLUDED.expected_arrival),
 		registered_at     = LEAST(asn_facts.registered_at, EXCLUDED.registered_at),
 		cancelled_at      = LEAST(asn_facts.cancelled_at, EXCLUDED.cancelled_at),
-		receipt_opened_at = LEAST(asn_facts.receipt_opened_at, EXCLUDED.receipt_opened_at)`
+		receipt_opened_at = LEAST(asn_facts.receipt_opened_at, EXCLUDED.receipt_opened_at),
+		supplier_ref      = COALESCE(asn_facts.supplier_ref, EXCLUDED.supplier_ref)`
 
 const upsertAppointmentSQL = `
 	INSERT INTO appointment_facts (appointment_id, booked_at, checked_in_at, cancelled_at, completed_at)
@@ -110,24 +111,19 @@ func (p *Projection) Apply(ctx context.Context, e report.Event) (bool, error) {
 	return true, nil
 }
 
+// A late fact is one row per ASN; the first one seen wins, so a redelivery
+// under a new id cannot move it (ADR 0025).
+const insertAsnLateSQL = `
+	INSERT INTO asn_late_facts (asn_number, supplier_ref, appointment_id, visit_id, asn_registered_at, arrived_at, lateness_seconds, raised_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	ON CONFLICT (asn_number) DO NOTHING`
+
 // fold writes the facts of one event inside tx.
 func fold(ctx context.Context, tx pgx.Tx, e report.Event) error {
 	at := e.At.UTC()
 	switch {
 	case e.Kind.IsAsn():
-		var registered, cancelled *time.Time
-		var expected *time.Time
-		if e.Kind == report.KindAsnRegistered {
-			registered = &at
-			if e.ExpectedArrival != nil {
-				u := e.ExpectedArrival.UTC()
-				expected = &u
-			}
-		} else {
-			cancelled = &at
-		}
-		_, err := tx.Exec(ctx, upsertAsnSQL, e.AsnNumber, expected, registered, cancelled, nil)
-		return err
+		return foldAsn(ctx, tx, e, at)
 	case e.Kind.IsAppointment():
 		t := report.AppointmentTimesOf(e)
 		_, err := tx.Exec(ctx, upsertAppointmentSQL, e.AppointmentID, t.Booked, t.CheckedIn, t.Cancelled, t.Completed)
@@ -135,6 +131,39 @@ func fold(ctx context.Context, tx pgx.Tx, e report.Event) error {
 	default:
 		return foldReceipt(ctx, tx, e)
 	}
+}
+
+// foldAsn upserts the asn_facts row and, for the late fact, its asn_late_facts
+// row. The late payload also carries the supplier and the registration time,
+// so the fact's join to asn_facts holds even when it is folded first.
+func foldAsn(ctx context.Context, tx pgx.Tx, e report.Event, at time.Time) error {
+	var registered, cancelled *time.Time
+	var expected *time.Time
+	var supplier *string
+	if e.Kind == report.KindAsnRegistered {
+		registered = &at
+		if e.ExpectedArrival != nil {
+			u := e.ExpectedArrival.UTC()
+			expected = &u
+		}
+		supplier = &e.SupplierRef
+	}
+	if e.Kind == report.KindAsnLateForArrival {
+		u := e.AsnRegisteredAt.UTC()
+		registered, supplier = &u, &e.SupplierRef
+	}
+	if e.Kind == report.KindAsnCancelled {
+		cancelled = &at
+	}
+	if _, err := tx.Exec(ctx, upsertAsnSQL, e.AsnNumber, expected, registered, cancelled, nil, supplier); err != nil {
+		return err
+	}
+	if e.Kind != report.KindAsnLateForArrival {
+		return nil
+	}
+	_, err := tx.Exec(ctx, insertAsnLateSQL, e.AsnNumber, e.SupplierRef, e.AppointmentID, e.VisitID,
+		e.AsnRegisteredAt.UTC(), e.ArrivedAt.UTC(), e.LatenessSeconds, at)
+	return err
 }
 
 func foldReceipt(ctx context.Context, tx pgx.Tx, e report.Event) error {
@@ -156,7 +185,7 @@ func foldReceipt(ctx context.Context, tx pgx.Tx, e report.Event) error {
 	}
 	switch e.Kind {
 	case report.KindReceiptOpened:
-		_, err := tx.Exec(ctx, upsertAsnSQL, e.AsnNumber, nil, nil, nil, t.Opened)
+		_, err := tx.Exec(ctx, upsertAsnSQL, e.AsnNumber, nil, nil, nil, t.Opened, nil)
 		return err
 	case report.KindReceiptLineReceived:
 		l := e.Line
