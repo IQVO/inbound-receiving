@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/claudioed/inbound-receiving/internal/application/repository"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
@@ -14,12 +15,15 @@ import (
 // rehydrated copies so callers cannot mutate stored state, and enforces the
 // same version guard as the Postgres adapter.
 type AsnRepo struct {
-	mu    sync.Mutex
-	items map[asn.Number]*asn.Asn
+	mu       sync.Mutex
+	items    map[asn.Number]*asn.Asn
+	lateMark map[asn.Number]bool
 }
 
 // NewAsnRepo constructs an empty AsnRepo.
-func NewAsnRepo() *AsnRepo { return &AsnRepo{items: make(map[asn.Number]*asn.Asn)} }
+func NewAsnRepo() *AsnRepo {
+	return &AsnRepo{items: make(map[asn.Number]*asn.Asn), lateMark: make(map[asn.Number]bool)}
+}
 
 // Get implements ports.AsnRepository.
 func (r *AsnRepo) Get(_ context.Context, number asn.Number) (*asn.Asn, error) {
@@ -108,6 +112,18 @@ func (r *AsnRepo) Snapshot() func() {
 }
 
 func copyAsn(a *asn.Asn) (*asn.Asn, error) { return asn.RehydrateDraft(a.Persisted()) }
+
+// MarkLateArrival implements ports.AsnRepository (ADR 0025): only the first
+// call per ASN reports true, like the Postgres ON CONFLICT DO NOTHING marker.
+func (r *AsnRepo) MarkLateArrival(_ context.Context, n asn.Number, _, _ string, _ time.Time) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.lateMark[n] {
+		return false, nil
+	}
+	r.lateMark[n] = true
+	return true, nil
+}
 
 // ExistingSsccs implements ports.AsnRepository: the given SSCCs found as a
 // carton or pallet SSCC on an ASN that is not cancelled.

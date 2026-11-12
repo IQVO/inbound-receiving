@@ -12,7 +12,6 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
 	"github.com/claudioed/inbound-receiving/internal/application/repository"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
-	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
 )
 
 // AsnRepo is the pgx-backed ports.AsnRepository over asns, asn_lines,
@@ -30,30 +29,34 @@ func NewAsnRepo(pool *pgxpool.Pool) *AsnRepo { return &AsnRepo{pool: pool} }
 
 var _ ports.AsnRepository = (*AsnRepo)(nil)
 
-const asnColumns = `asn_number, supplier_ref, owner_ref, expected_arrival, state, version`
+const asnColumns = `asn_number, supplier_ref, owner_ref, expected_arrival, registered_at, state, version`
 
 type asnRow struct {
 	number          string
 	supplierRef     string
 	ownerRef        *string
 	expectedArrival *time.Time
+	registeredAt    *time.Time
 	state           string
 	version         int64
 }
 
 func (r *asnRow) targets() []any {
-	return []any{&r.number, &r.supplierRef, &r.ownerRef, &r.expectedArrival, &r.state, &r.version}
+	return []any{&r.number, &r.supplierRef, &r.ownerRef, &r.expectedArrival, &r.registeredAt, &r.state, &r.version}
 }
 
 func (r asnRow) toAsn(lines []asn.LineInput, cartons []asn.CartonInput) (*asn.Asn, error) {
-	var arrival time.Time
+	var arrival, registered time.Time
 	if r.expectedArrival != nil {
 		arrival = r.expectedArrival.UTC()
+	}
+	if r.registeredAt != nil {
+		registered = r.registeredAt.UTC()
 	}
 	a, err := asn.RehydrateDraft(asn.Persisted{
 		Draft: asn.Draft{
 			Number: r.number, SupplierRef: r.supplierRef, OwnerRef: deref(r.ownerRef),
-			ExpectedArrival: arrival, Lines: lines, Cartons: cartons,
+			ExpectedArrival: arrival, RegisteredAt: registered, Lines: lines, Cartons: cartons,
 		},
 		State: asn.State(r.state), Version: r.version,
 	})
@@ -222,13 +225,17 @@ func (r *AsnRepo) Save(ctx context.Context, a *asn.Asn, loadedVersion int64) err
 }
 
 func insertAsn(ctx context.Context, q querier, a *asn.Asn) error {
-	var arrival *time.Time
+	var arrival, registered *time.Time
 	if t := a.ExpectedArrival(); !t.IsZero() {
 		arrival = &t
 	}
-	tag, err := q.Exec(ctx, `INSERT INTO asns (`+asnColumns+`) VALUES ($1, $2, $3, $4, $5, $6)
+	if t := a.RegisteredAt(); !t.IsZero() {
+		u := t.UTC()
+		registered = &u
+	}
+	tag, err := q.Exec(ctx, `INSERT INTO asns (`+asnColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (asn_number) DO NOTHING`,
-		string(a.Number()), a.SupplierRef(), optString(string(a.OwnerRef())), arrival, string(a.State()), a.Version())
+		string(a.Number()), a.SupplierRef(), optString(string(a.OwnerRef())), arrival, registered, string(a.State()), a.Version())
 	if err != nil {
 		return fmt.Errorf("insert asn %s: %w", a.Number(), err)
 	}
@@ -269,44 +276,6 @@ func insertAsnCartons(ctx context.Context, q querier, a *asn.Asn) error {
 		}
 	}
 	return nil
-}
-
-// ExistingSsccs implements ports.AsnRepository: the given SSCCs found as a
-// carton or a pallet SSCC on an ASN that is not cancelled.
-func (r *AsnRepo) ExistingSsccs(ctx context.Context, ssccs []gs1.SSCC) ([]gs1.SSCC, error) {
-	raw := make([]string, 0, len(ssccs))
-	for _, s := range ssccs {
-		raw = append(raw, s.String())
-	}
-	rows, err := queryFor(ctx, r.pool).Query(ctx, `
-		SELECT sscc FROM asn_cartons WHERE active AND sscc = ANY($1)
-		UNION
-		SELECT parent_sscc FROM asn_cartons WHERE active AND parent_sscc = ANY($1)
-		ORDER BY 1`, raw)
-	if err != nil {
-		return nil, fmt.Errorf("existing ssccs: %w", err)
-	}
-	defer rows.Close()
-	return scanSsccs(rows)
-}
-
-func scanSsccs(rows pgx.Rows) ([]gs1.SSCC, error) {
-	var out []gs1.SSCC
-	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			return nil, fmt.Errorf("scan sscc: %w", err)
-		}
-		s, err := gs1.ParseSSCC(raw)
-		if err != nil {
-			return nil, fmt.Errorf("stored sscc %q: %w", raw, err)
-		}
-		out = append(out, s)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("scan ssccs: %w", err)
-	}
-	return out, nil
 }
 
 // List implements ports.AsnRepository: ascending number (byte order, the

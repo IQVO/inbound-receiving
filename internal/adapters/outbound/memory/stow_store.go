@@ -19,7 +19,7 @@ import (
 type StowStore struct {
 	mu       sync.Mutex
 	receipts *ReceiptRepo
-	arrivals map[appointment.ID]time.Time
+	arrivals map[appointment.ID]repository.Arrival
 	stows    map[string]time.Time
 	done     map[receipt.ID]struct{}
 }
@@ -27,7 +27,7 @@ type StowStore struct {
 // NewStowStore constructs an empty StowStore over the receipts it evaluates.
 func NewStowStore(receipts *ReceiptRepo) *StowStore {
 	return &StowStore{
-		receipts: receipts, arrivals: map[appointment.ID]time.Time{},
+		receipts: receipts, arrivals: map[appointment.ID]repository.Arrival{},
 		stows: map[string]time.Time{}, done: map[receipt.ID]struct{}{},
 	}
 }
@@ -35,14 +35,22 @@ func NewStowStore(receipts *ReceiptRepo) *StowStore {
 var _ ports.StowStore = (*StowStore)(nil)
 
 // ApplyArrival implements ports.StowStore: the earliest arrival wins.
-func (s *StowStore) ApplyArrival(_ context.Context, id appointment.ID, _ string, arrivedAt time.Time) (bool, error) {
+func (s *StowStore) ApplyArrival(_ context.Context, id appointment.ID, visitID string, arrivedAt time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cur, ok := s.arrivals[id]; ok && !arrivedAt.Before(cur) {
+	if cur, ok := s.arrivals[id]; ok && !arrivedAt.Before(cur.ArrivedAt) {
 		return false, nil
 	}
-	s.arrivals[id] = arrivedAt.UTC()
+	s.arrivals[id] = repository.Arrival{VisitID: visitID, ArrivedAt: arrivedAt.UTC()}
 	return true, nil
+}
+
+// Arrival implements ports.StowStore (ADR 0025).
+func (s *StowStore) Arrival(_ context.Context, id appointment.ID) (repository.Arrival, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.arrivals[id]
+	return a, ok, nil
 }
 
 // ApplyCartonStow implements ports.StowStore: the earliest stow wins.
@@ -73,7 +81,7 @@ func (s *StowStore) ReceiptsOfCarton(_ context.Context, lpn string) ([]*receipt.
 func (s *StowStore) Evidence(_ context.Context, x *receipt.Receipt) (repository.StowEvidence, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ev := repository.StowEvidence{ArrivedAt: s.arrivals[x.AppointmentID()], Stows: map[string]time.Time{}}
+	ev := repository.StowEvidence{ArrivedAt: s.arrivals[x.AppointmentID()].ArrivedAt, Stows: map[string]time.Time{}}
 	for _, lpn := range x.GoodCartonLPNs() {
 		if at, ok := s.stows[lpn]; ok {
 			ev.Stows[lpn] = at
@@ -97,7 +105,7 @@ func (s *StowStore) Complete(_ context.Context, id receipt.ID, _ time.Time) (boo
 func (s *StowStore) Snapshot() func() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	arrivals, stows, done := map[appointment.ID]time.Time{}, map[string]time.Time{}, map[receipt.ID]struct{}{}
+	arrivals, stows, done := map[appointment.ID]repository.Arrival{}, map[string]time.Time{}, map[receipt.ID]struct{}{}
 	for k, v := range s.arrivals {
 		arrivals[k] = v
 	}

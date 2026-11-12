@@ -221,7 +221,7 @@ func TestNewDockToStockDefinesTheShare(t *testing.T) {
 }
 
 func TestKinds(t *testing.T) {
-	want := []Kind{"ASNRegistered", "ASNCancelled", "DockAppointmentBooked", "DockAppointmentCheckedIn",
+	want := []Kind{"ASNRegistered", "ASNCancelled", "AsnLateForArrival", "DockAppointmentBooked", "DockAppointmentCheckedIn",
 		"DockAppointmentCancelled", "DockAppointmentCompleted", "ReceiptOpened", "ReceiptLineReceived", "ReceiptClosed", "ReceiptStowCompleted", "ReceivingAdviceIssued"}
 	if !reflect.DeepEqual(Kinds(), want) {
 		t.Fatalf("Kinds() = %v", Kinds())
@@ -284,6 +284,10 @@ func valid(kind Kind) Event {
 	}
 	if kind == KindReceivingAdviceIssued {
 		e.Advice = &AdviceIssued{WithinSLA: true}
+	}
+	if kind == KindAsnLateForArrival {
+		e.SupplierRef, e.AppointmentID, e.VisitID = "ACME", "appt-1", "visit-1"
+		e.AsnRegisteredAt, e.ArrivedAt, e.LatenessSeconds = t0, t0.Add(-time.Second), 1
 	}
 	return e
 }

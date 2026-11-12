@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/claudioed/inbound-receiving/internal/application/repository"
+	"github.com/claudioed/inbound-receiving/internal/domain/asn"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 	"github.com/claudioed/inbound-receiving/internal/domain/shared"
 	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
@@ -19,7 +20,8 @@ func (uc *ReceiveScan) acceptCarton(ctx context.Context, r *receipt.Receipt, in 
 		return receipt.ScanResult{}, err
 	}
 	scan.ReceivedElsewhere = len(elsewhere) > 0
-	if carton, ok := r.Carton(in.sscc); ok {
+	carton, onLedger := r.Carton(in.sscc)
+	if onLedger {
 		if scan.CasePacks, err = uc.casePacks(ctx, carton, now); err != nil {
 			return receipt.ScanResult{}, err
 		}
@@ -36,7 +38,31 @@ func (uc *ReceiveScan) acceptCarton(ctx context.Context, r *receipt.Receipt, in 
 			return receipt.ScanResult{}, err
 		}
 	}
+	// An SSCC the ledger does not hold is resolved against the ASN: a FLAT
+	// ASN (lines, no carton manifest, ADR 0025) receives by the label's
+	// content GTIN; a carton ASN keeps the strict UnexpectedCarton refusal.
+	if !onLedger {
+		flat, err := uc.flatAsn(ctx, r.AsnNumber())
+		if err != nil {
+			return receipt.ScanResult{}, err
+		}
+		if flat {
+			return r.ReceiveFlatCarton(scan, now)
+		}
+	}
 	return r.AcceptCarton(scan, now)
+}
+
+// flatAsn reports whether the ASN was announced without a carton manifest
+// (the S-O-I form, ADR 0025). Cartons never change after registration, so
+// the ASN, not the receipt's ledger, decides: an accepted flat carton carries
+// an SSCC but does not turn the receipt hierarchical.
+func (uc *ReceiveScan) flatAsn(ctx context.Context, number asn.Number) (bool, error) {
+	a, err := uc.Asns.Get(ctx, number)
+	if err != nil {
+		return false, err
+	}
+	return len(a.Cartons()) == 0, nil
 }
 
 // declared reads the weight and longest side the ASN declared for the carton.

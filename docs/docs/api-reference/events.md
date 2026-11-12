@@ -33,12 +33,13 @@ new `.v2` type and dataschema; an existing one is never mutated.
 
 ## Published
 
-Topic `warehouse.inbound-receiving.events`, written by the outbox relay: ten types, the ones `apis/asyncapi.yaml` declares on that channel.
+Topic `warehouse.inbound-receiving.events`, written by the outbox relay: eleven types, the ones `apis/asyncapi.yaml` declares on that channel.
 
 | Type suffix | Raised | Payload (`data`) |
 | --- | --- | --- |
-| `asn.ASNRegistered` | `POST /asns` | `asn_number`, `supplier_ref`, `owner_ref?`, `expected_arrival?`, `lines[]` = `{line_no, sku, expected_qty}`, `cartons[]?` |
+| `asn.ASNRegistered` | `POST /asns` | `asn_number`, `supplier_ref`, `owner_ref?`, `expected_arrival?`, `registered_at?` (ADR 0025), `lines[]` = `{line_no, sku, expected_qty}`, `cartons[]?` |
 | `asn.ASNCancelled` | `POST /asns/{asnNumber}/cancellations` | `asn_number`, `reason?` |
+| `asn.AsnLateForArrival` | no request: raised once per ASN at `POST /receipts` (OpenReceipt, the only place an ASN and an appointment meet), when the ASN's `registered_at` is after the arrival of the appointment's earliest yard visit (ADR 0025) | `asn_number`, `supplier_ref`, `appointment_id`, `visit_id`, `asn_registered_at`, `arrived_at`, `lateness_seconds` |
 | `receipt.ReceiptOpened` | `POST /receipts` | `receipt_id`, `asn_number`, `appointment_id?`, `door_code?`, `opened_at` |
 | `receipt.ReceiptLineReceived` | `POST /receipts/{receiptId}/lines` | `receipt_id`, `asn_number`, `line_no`, `sku`, `quantity`, `condition` (`Good` or `Damaged`), `received_at`, `owner_ref?`, `pack_gtin?`, `cases?`, `sscc?` |
 | `receipt.ReceiptCartonReceived` | `POST /receipts/{receiptId}/scans` (a carton accepted; identity only) | `receipt_id`, `asn_number`, `owner_ref?`, `sscc?`, `parent_sscc?`, `sealed`, `lpn`, `contents[]` = `{line_no, sku, gtin, qty, lot?, expiry?, condition}`, `received_at`, and, additive and optional ([ADR 0024](/docs/adr/0024-gs1-label-receiving-validation-destination-earliest-best-before-and-receiver-assigned-sscc)), `sscc_source?`, `best_before?`, `expiry?`, `production_date?`, `packaging_date?`, `serial?`, `purchase_order?`, `ship_to_gln?`, `ship_for_gln?` |
@@ -92,4 +93,4 @@ only by this service's `inbound-projector` (group from env
   no longer declared in `apis/asyncapi.yaml`; the `api republish-appointments`
   command that re-announced them is removed. `ReceiptClosed` no longer implies
   a `DockAppointmentCompleted`.
-- `warehouse-planning` no longer reads this topic: its inbound labour demand comes from dock-scheduling's appointments, and no sibling's dispatch code reads the four retired types (ADR 0022). The consumers of the eight current types are listed on [Downstream consumers](/docs/ecosystem/downstream-consumers).
+- `warehouse-planning` no longer reads this topic: its inbound labour demand comes from dock-scheduling's appointments, and no sibling's dispatch code reads the four retired types (ADR 0022). The consumers of the nine current types are listed on [Downstream consumers](/docs/ecosystem/downstream-consumers).

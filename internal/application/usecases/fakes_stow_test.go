@@ -15,28 +15,28 @@ import (
 // the earliest fact per key like the Postgres adapter and reads receipts from
 // the fakeReceipts of the world. Each *Err field fails the one call.
 type fakeStow struct {
-	arrivals map[appointment.ID]time.Time
+	arrivals map[appointment.ID]repository.Arrival
 	stows    map[string]time.Time
 	done     map[receipt.ID]time.Time
 	receipts *fakeReceipts
 
-	applyErr, lookupErr, evidenceErr, completeErr error
+	applyErr, lookupErr, evidenceErr, completeErr, arrivalErr error
 }
 
 func newFakeStow(r *fakeReceipts) *fakeStow {
 	return &fakeStow{
-		arrivals: map[appointment.ID]time.Time{}, stows: map[string]time.Time{}, done: map[receipt.ID]time.Time{}, receipts: r,
+		arrivals: map[appointment.ID]repository.Arrival{}, stows: map[string]time.Time{}, done: map[receipt.ID]time.Time{}, receipts: r,
 	}
 }
 
-func (s *fakeStow) ApplyArrival(_ context.Context, id appointment.ID, _ string, at time.Time) (bool, error) {
+func (s *fakeStow) ApplyArrival(_ context.Context, id appointment.ID, visitID string, at time.Time) (bool, error) {
 	if s.applyErr != nil {
 		return false, s.applyErr
 	}
-	if cur, ok := s.arrivals[id]; ok && !at.Before(cur) {
+	if cur, ok := s.arrivals[id]; ok && !at.Before(cur.ArrivedAt) {
 		return false, nil
 	}
-	s.arrivals[id] = at
+	s.arrivals[id] = repository.Arrival{VisitID: visitID, ArrivedAt: at.UTC()}
 	return true, nil
 }
 
@@ -94,13 +94,22 @@ func (s *fakeStow) Evidence(_ context.Context, r *receipt.Receipt) (repository.S
 	if s.evidenceErr != nil {
 		return repository.StowEvidence{}, s.evidenceErr
 	}
-	ev := repository.StowEvidence{ArrivedAt: s.arrivals[r.AppointmentID()], Stows: map[string]time.Time{}}
+	ev := repository.StowEvidence{ArrivedAt: s.arrivals[r.AppointmentID()].ArrivedAt, Stows: map[string]time.Time{}}
 	for _, lpn := range r.GoodCartonLPNs() {
 		if at, ok := s.stows[lpn]; ok {
 			ev.Stows[lpn] = at
 		}
 	}
 	return ev, nil
+}
+
+// Arrival implements ports.StowStore (ADR 0025).
+func (s *fakeStow) Arrival(_ context.Context, id appointment.ID) (repository.Arrival, bool, error) {
+	if s.arrivalErr != nil {
+		return repository.Arrival{}, false, s.arrivalErr
+	}
+	a, ok := s.arrivals[id]
+	return a, ok, nil
 }
 
 func (s *fakeStow) Complete(_ context.Context, id receipt.ID, at time.Time) (bool, error) {

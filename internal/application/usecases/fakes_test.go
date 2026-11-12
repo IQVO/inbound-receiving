@@ -182,10 +182,12 @@ func (o *fakeOutbox) Insert(_ context.Context, msgs ...outbox.Message) error {
 // ---- fakeAsns ---------------------------------------------------------------
 
 type fakeAsns struct {
-	items   map[asn.Number]*asn.Asn
-	getErr  error
-	saveErr error
-	ssccErr error
+	items    map[asn.Number]*asn.Asn
+	lateMark map[asn.Number]bool
+	getErr   error
+	saveErr  error
+	ssccErr  error
+	lateErr  error
 }
 
 func (r *fakeAsns) Get(_ context.Context, n asn.Number) (*asn.Asn, error) {
@@ -240,6 +242,22 @@ func clone(a *asn.Asn) *asn.Asn {
 		panic(err)
 	}
 	return c
+}
+
+// MarkLateArrival implements ports.AsnRepository (ADR 0025): only the
+// first call per ASN reports true.
+func (r *fakeAsns) MarkLateArrival(_ context.Context, n asn.Number, _, _ string, _ time.Time) (bool, error) {
+	if r.lateErr != nil {
+		return false, r.lateErr
+	}
+	if r.lateMark == nil {
+		r.lateMark = map[asn.Number]bool{}
+	}
+	if r.lateMark[n] {
+		return false, nil
+	}
+	r.lateMark[n] = true
+	return true, nil
 }
 
 func (r *fakeAsns) ExistingSsccs(_ context.Context, ssccs []gs1.SSCC) ([]gs1.SSCC, error) {

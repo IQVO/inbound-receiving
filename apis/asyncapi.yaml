@@ -48,7 +48,7 @@ info:
     validate their appointment against that copy and take its door when they
     open; an open receipt keeps its door.
 
-    **Analytics (ADR 0006).** The ten events are ALSO written, in the
+    **Analytics (ADR 0006).** The eleven events are ALSO written, in the
     same transaction, to `warehouse.inbound-receiving.analytics` with the same
     `type` and the same `id` per occurrence, `dataschema`
     `urn:warehouse:inbound-receiving:analytics:<EventName>:v1` and payloads
@@ -119,6 +119,7 @@ channels:
         oneOf:
           - $ref: "#/components/messages/ASNRegistered"
           - $ref: "#/components/messages/ASNCancelled"
+          - $ref: "#/components/messages/AsnLateForArrival"
           - $ref: "#/components/messages/ReceiptOpened"
           - $ref: "#/components/messages/ReceiptLineReceived"
           - $ref: "#/components/messages/ReceiptCartonReceived"
@@ -157,6 +158,7 @@ channels:
         oneOf:
           - $ref: "#/components/messages/ASNRegisteredAnalytics"
           - $ref: "#/components/messages/ASNCancelledAnalytics"
+          - $ref: "#/components/messages/AsnLateForArrivalAnalytics"
           - $ref: "#/components/messages/ReceiptOpenedAnalytics"
           - $ref: "#/components/messages/ReceiptLineReceivedAnalytics"
           - $ref: "#/components/messages/ReceiptCartonReceivedAnalytics"
@@ -478,6 +480,7 @@ components:
             data:
               asn_number: "ASN-1001"
               supplier_ref: "ACME"
+              registered_at: "2026-10-08T12:00:00Z"
               expected_arrival: "2026-10-09T08:00:00Z"
               lines:
                 - { line_no: 1, sku: "SKU-1", expected_qty: 40 }
@@ -509,6 +512,44 @@ components:
             data:
               asn_number: "ASN-1001"
               reason: "Supplier cancelled the shipment"
+
+    AsnLateForArrival:
+      x-no-consumer-reason: "read only by this service's own analytics projector (the asn_timeliness KPI, ADR 0025); no other consumer built yet"
+      name: AsnLateForArrival
+      title: ASN late for arrival
+      summary: An ASN was registered after the visit it was received under had already arrived.
+      description: |
+        `type` = `com.warehouse.wms.inbound-receiving.asn.AsnLateForArrival`; subject and key = the ASN number.
+        Raised once per ASN, at `OpenReceipt` and only there (the only place an ASN and an
+        appointment meet), when `asn_registered_at > arrived_at` of the appointment's earliest
+        yard visit (ADR 0025); `lateness_seconds` = `asn_registered_at - arrived_at`, whole
+        seconds, >= 1 by construction. An on-time ASN, a walk-in receipt, an appointment with
+        no arrival seen yet and a legacy ASN with an unknown registration raise nothing.
+      contentType: application/cloudevents+json
+      tags:
+        - name: asn
+      payload:
+        $ref: "#/components/schemas/AsnLateForArrivalEvent"
+      examples:
+        - name: late
+          summary: ASN-1001 registered two minutes after the gate arrival of the visit it was received under.
+          payload:
+            specversion: "1.0"
+            id: "5b7c1e93-4a0b-4c6d-9e82-3f1a2b4c5d63"
+            source: "/warehouse/inbound-receiving"
+            type: "com.warehouse.wms.inbound-receiving.asn.AsnLateForArrival"
+            subject: "ASN-1001"
+            time: "2026-10-09T08:05:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inbound-receiving:events:AsnLateForArrival:v1"
+            data:
+              asn_number: "ASN-1001"
+              supplier_ref: "ACME"
+              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
+              visit_id: "visit-9f1c2a34-5b6d-4e7f-8a90-b1c2d3e4f5a6"
+              asn_registered_at: "2026-10-09T08:02:00Z"
+              arrived_at: "2026-10-09T08:00:00Z"
+              lateness_seconds: 120
 
     ReceiptOpened:
       x-no-consumer-reason: "planned warehouse-planning consumer not built (K28)"
@@ -1039,6 +1080,7 @@ components:
             data:
               asn_number: "ASN-1001"
               supplier_ref: "ACME"
+              registered_at: "2026-10-08T12:00:00Z"
               expected_arrival: "2026-10-09T08:00:00Z"
               lines:
                 - { line_no: 1, sku: "SKU-1", expected_qty: 40 }
@@ -1069,6 +1111,37 @@ components:
             data:
               asn_number: "ASN-1001"
               reason: "Supplier cancelled the shipment"
+
+    AsnLateForArrivalAnalytics:
+      name: AsnLateForArrival
+      title: ASN late for arrival (analytics)
+      summary: An ASN was registered after its visit had arrived, on the analytics stream.
+      description: "`type` = `com.warehouse.wms.inbound-receiving.asn.AsnLateForArrival` (the same as on the integration topic); dataschema `urn:warehouse:inbound-receiving:analytics:AsnLateForArrival:v1`; payload equal to the integration payload."
+      contentType: application/cloudevents+json
+      tags:
+        - name: analytics
+      payload:
+        $ref: "#/components/schemas/AsnLateForArrivalEvent"
+      examples:
+        - name: analytics
+          summary: The analytics copy of the integration example (same id).
+          payload:
+            specversion: "1.0"
+            id: "5b7c1e93-4a0b-4c6d-9e82-3f1a2b4c5d63"
+            source: "/warehouse/inbound-receiving"
+            type: "com.warehouse.wms.inbound-receiving.asn.AsnLateForArrival"
+            subject: "ASN-1001"
+            time: "2026-10-09T08:05:00Z"
+            datacontenttype: "application/json"
+            dataschema: "urn:warehouse:inbound-receiving:analytics:AsnLateForArrival:v1"
+            data:
+              asn_number: "ASN-1001"
+              supplier_ref: "ACME"
+              appointment_id: "appt-123e4567-e89b-12d3-a456-426614174000"
+              visit_id: "visit-9f1c2a34-5b6d-4e7f-8a90-b1c2d3e4f5a6"
+              asn_registered_at: "2026-10-09T08:02:00Z"
+              arrived_at: "2026-10-09T08:00:00Z"
+              lateness_seconds: 120
 
     ReceiptOpenedAnalytics:
       name: ReceiptOpened
@@ -1417,6 +1490,7 @@ components:
               properties:
                 asn_number: { type: string }
                 supplier_ref: { type: string }
+                registered_at: { type: string, format: date-time, description: When the ASN was registered here (ADR 0025); omitted on events raised before it existed. }
                 expected_arrival: { type: string, format: date-time, description: Omitted when the supplier gave none. }
                 owner_ref: { type: string, description: Optional opaque tenant tag. }
                 lines:
@@ -1464,6 +1538,23 @@ components:
               properties:
                 asn_number: { type: string }
                 reason: { type: string, description: Omitted when none was given. }
+
+    AsnLateForArrivalEvent:
+      allOf:
+        - $ref: "#/components/schemas/CloudEventEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [asn_number, supplier_ref, appointment_id, visit_id, asn_registered_at, arrived_at, lateness_seconds]
+              properties:
+                asn_number: { type: string }
+                supplier_ref: { type: string }
+                appointment_id: { type: string, description: The appointment the receipt was opened from. }
+                visit_id: { type: string, description: The yard visit whose arrival was the earliest seen for the appointment. }
+                asn_registered_at: { type: string, format: date-time, description: When the ASN was registered here (ADR 0025). }
+                arrived_at: { type: string, format: date-time, description: The earliest gate arrival seen for the appointment (the `visit_arrivals` local copy, ADR 0021). }
+                lateness_seconds: { type: integer, format: int64, minimum: 1, description: "`asn_registered_at - arrived_at`, whole seconds; an equal or earlier registration is on time and raises nothing." }
 
     DockSchedulingAppointmentBookedEvent:
       allOf:

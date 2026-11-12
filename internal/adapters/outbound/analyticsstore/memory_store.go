@@ -24,13 +24,20 @@ type Memory struct {
 	stows        map[string]report.StowCompleted // by receipt id
 	advices      map[string]memAdvice            // by receipt id
 	discrepancy  map[discrepancyKey]time.Time
-	lastAt       *time.Time
+	// lates is the asn_late_facts twin (ADR 0025): one row per ASN, the
+	// first fact wins.
+	lates  map[string]struct{}
+	lastAt *time.Time
 }
 
 type memAsn struct {
 	expectedArrival *time.Time
 	cancelled       *time.Time
 	receiptOpened   *time.Time
+	// supplier and registeredAt fold from ASNRegistered (and from the late
+	// fact's payload) for the asn_timeliness block (ADR 0025).
+	supplier   string
+	registered *time.Time
 }
 
 type memReceipt struct {
@@ -64,6 +71,7 @@ func NewMemory() *Memory {
 		discrepancy:  map[discrepancyKey]time.Time{},
 		stows:        map[string]report.StowCompleted{},
 		advices:      map[string]memAdvice{},
+		lates:        map[string]struct{}{},
 	}
 }
 
@@ -109,14 +117,36 @@ func (m *Memory) asn(number string) *memAsn {
 
 func (m *Memory) foldAsn(e report.Event, at time.Time) {
 	a := m.asn(e.AsnNumber)
-	if e.Kind == report.KindAsnRegistered {
+	switch e.Kind {
+	case report.KindAsnRegistered:
 		if a.expectedArrival == nil && e.ExpectedArrival != nil {
 			u := e.ExpectedArrival.UTC()
 			a.expectedArrival = &u
 		}
-		return
+		m.foldAsnRegistered(a, e)
+	case report.KindAsnLateForArrival:
+		// The late fact also carries the supplier and the registration day
+		// (the SQL upsert does the same), so the join never misses.
+		m.foldAsnRegistered(a, e)
+		if _, exists := m.lates[e.AsnNumber]; !exists { // one row per ASN: the first wins
+			m.lates[e.AsnNumber] = struct{}{}
+		}
+	default:
+		a.cancelled = earliest(a.cancelled, &at)
 	}
-	a.cancelled = earliest(a.cancelled, &at)
+}
+
+// foldAsnRegistered keeps the supplier (first one wins, the SQL COALESCE) and
+// the earliest registration time.
+func (m *Memory) foldAsnRegistered(a *memAsn, e report.Event) {
+	if a.supplier == "" {
+		a.supplier = e.SupplierRef
+	}
+	registered := e.AsnRegisteredAt
+	if e.Kind == report.KindAsnRegistered {
+		registered = e.At
+	}
+	a.registered = earliest(a.registered, &registered)
 }
 
 func (m *Memory) foldAppointment(e report.Event) {
@@ -189,6 +219,9 @@ func checkLikeTheDatabase(e report.Event) error {
 	if e.Kind == report.KindReceivingAdviceIssued && e.Advice == nil {
 		return fmt.Errorf("%w: advice of %s has no within_sla (a NOT NULL column)", report.ErrRejected, e.ReceiptID)
 	}
+	if e.Kind == report.KindAsnLateForArrival && e.LatenessSeconds < 1 {
+		return fmt.Errorf("%w: late fact of %s violates a check constraint", report.ErrRejected, e.AsnNumber)
+	}
 	return nil
 }
 
@@ -210,141 +243,3 @@ func inWindow(t *time.Time, w report.DayWindow) bool {
 }
 
 func inWindowAt(t time.Time, w report.DayWindow) bool { return inWindow(&t, w) }
-
-func count(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
-// seconds is the clamped (never negative) duration between two instants.
-func seconds(from, to time.Time) float64 {
-	return max(0, to.Sub(from).Seconds())
-}
-
-// PerformanceDays implements report.Reader.
-func (m *Memory) PerformanceDays(_ context.Context, r report.Range) ([]report.PerformanceDay, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	windows := report.DayWindows(r)
-	out := make([]report.PerformanceDay, 0, len(windows))
-	for _, w := range windows {
-		d := report.PerformanceDay{Day: w.Day}
-		m.countReceipts(&d, w)
-		m.countLines(&d, w)
-		m.countDiscrepancies(&d, w)
-		m.countAppointments(&d, w)
-		m.countStows(&d, w)
-		m.countAdvices(&d, w)
-		out = append(out, d)
-	}
-	return out, nil
-}
-
-func (m *Memory) countLines(d *report.PerformanceDay, w report.DayWindow) {
-	for _, l := range m.lines {
-		if !inWindowAt(l.at, w) {
-			continue
-		}
-		d.LinesReceived++
-		if l.condition == report.ConditionGood {
-			d.UnitsGood += l.quantity
-		} else {
-			d.UnitsDamaged += l.quantity
-		}
-	}
-}
-
-func (m *Memory) countDiscrepancies(d *report.PerformanceDay, w report.DayWindow) {
-	for k, closedAt := range m.discrepancy {
-		if !inWindowAt(closedAt, w) {
-			continue
-		}
-		switch k.kind {
-		case report.DiscrepancyShort:
-			d.Discrepancies.Short++
-		case report.DiscrepancyOver:
-			d.Discrepancies.Over++
-		case report.DiscrepancyDamaged:
-			d.Discrepancies.Damaged++
-		}
-	}
-}
-
-func (m *Memory) countAppointments(d *report.PerformanceDay, w report.DayWindow) {
-	var dwell []float64
-	for _, a := range m.appointments {
-		d.Appointments.Booked += count(inWindow(a.Booked, w))
-		d.Appointments.CheckedIn += count(inWindow(a.CheckedIn, w))
-		d.Appointments.Cancelled += count(inWindow(a.Cancelled, w))
-		d.Appointments.Completed += count(inWindow(a.Completed, w))
-		if inWindow(a.Completed, w) && a.CheckedIn != nil {
-			dwell = append(dwell, seconds(*a.CheckedIn, *a.Completed))
-		}
-	}
-	d.DockDwell = report.TimingOf(dwell)
-}
-
-func (m *Memory) countStows(d *report.PerformanceDay, w report.DayWindow) {
-	var secs []float64
-	for _, s := range m.stows {
-		if inWindowAt(s.StowedAt, w) {
-			secs = append(secs, float64(s.DockToStockSeconds))
-		}
-	}
-	d.DockToStock = report.DockToStockOf(secs)
-}
-
-func (m *Memory) countAdvices(d *report.PerformanceDay, w report.DayWindow) {
-	var within []bool
-	for _, a := range m.advices {
-		if inWindowAt(a.issuedAt, w) {
-			within = append(within, a.withinSLA)
-		}
-	}
-	d.Advice = report.AdviceOf(within)
-}
-
-func (m *Memory) countReceipts(d *report.PerformanceDay, w report.DayWindow) {
-	var cycle []float64
-	for _, r := range m.receipts {
-		if !inWindow(r.closed, w) {
-			continue
-		}
-		d.ReceiptsClosed++
-		if r.opened != nil {
-			cycle = append(cycle, seconds(*r.opened, *r.closed))
-		}
-	}
-	d.ReceiptCycle = report.TimingOf(cycle)
-}
-
-// Current implements report.Reader.
-func (m *Memory) Current(_ context.Context, today report.DayWindow) (report.CurrentCounts, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var c report.CurrentCounts
-	for _, r := range m.receipts {
-		c.OpenReceipts += count(r.opened != nil && r.closed == nil)
-	}
-	for _, a := range m.asns {
-		if a.cancelled != nil || !inWindow(a.expectedArrival, today) {
-			continue
-		}
-		c.ExpectedToday++
-		c.ExpectedTodayStarted += count(a.receiptOpened != nil)
-	}
-	return c, nil
-}
-
-// LastEventAt implements report.Reader.
-func (m *Memory) LastEventAt(_ context.Context) (*time.Time, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.lastAt == nil {
-		return nil, nil
-	}
-	at := *m.lastAt
-	return &at, nil
-}

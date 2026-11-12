@@ -59,6 +59,7 @@ const (
 	// differ from its manifest for a SKU (Expected and Actual are "sku:qty").
 	KindMixedCartonContentMismatch Kind = "MixedCartonContentMismatch"
 	// KindLabelNonCompliant and KindWrongDestination (ADR 0024) are in label.go.
+	// KindMissingContentGtin (ADR 0025) is in carton_flat.go.
 )
 
 // CartonLimits are the handling limits a carton is checked against at

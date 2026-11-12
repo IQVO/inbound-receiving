@@ -255,9 +255,9 @@ func anBooked(t *testing.T, id string, at time.Time) []byte {
 	})
 }
 
-// anLifecycle is a full receiving lifecycle: every one of the ten events once,
-// the ASN and receipt events encoded by the real encoder, the four historical
-// dockappointment events built by hand (anApptEvent).
+// anLifecycle is a full receiving lifecycle: every one of the twelve projected
+// kinds once, the ASN and receipt events encoded by the real encoder, the four
+// historical dockappointment events built by hand (anApptEvent).
 func anLifecycle(t *testing.T) [][]byte {
 	t.Helper()
 	at := func(m int) time.Time { return anAt.Add(time.Duration(m) * time.Minute) }
@@ -270,6 +270,12 @@ func anLifecycle(t *testing.T) [][]byte {
 		anApptEvent(t, "e-in", "DockAppointmentCheckedIn", anAppt, at(60), map[string]any{"checked_in_at": at(60)}),
 		anApptEvent(t, "e-cancel", "DockAppointmentCancelled", anAppt2, at(3), map[string]any{}),
 		anRcptEvent(t, "e-open", receipt.ReceiptOpened{Header: anRcptHeader(at(65)), AppointmentID: anAppt, DoorCode: "D1"}),
+		// The late fact of the opened receipt (ADR 0025): the same unit of
+		// work, the real encoder.
+		anEncode(t, "e-late", func(e *outboundkafka.AnalyticsEncoder) ([]outbox.Message, error) {
+			return e.EncodeAsn(asn.AsnLateForArrival{Header: asn.Header{Number: "ASN-1", At: at(65)}, SupplierRef: "ACME",
+				AppointmentID: anAppt, VisitID: "visit-1", AsnRegisteredAt: at(62), ArrivedAt: at(60), LatenessSeconds: 120})
+		}),
 		anRcptEvent(t, "e-line1", receipt.ReceiptLineReceived{Header: anRcptHeader(at(70)), LineNo: 1, SKU: "SKU-1", Quantity: 30, Condition: receipt.ConditionGood}),
 		anRcptEvent(t, "e-line2", receipt.ReceiptLineReceived{Header: anRcptHeader(at(71)), LineNo: 1, SKU: "SKU-1", Quantity: 4, Condition: receipt.ConditionDamaged}),
 		anRcptEvent(t, "e-close", receipt.ReceiptClosed{Header: anRcptHeader(at(125)), Discrepancies: []receipt.Discrepancy{
@@ -297,9 +303,16 @@ func assertLifecycleDay(t *testing.T, d report.PerformanceDay) {
 		d.Appointments == (report.AppointmentCounts{Booked: 1, CheckedIn: 1, Cancelled: 1, Completed: 1})
 	timings := d.ReceiptCycle.Count == 1 && d.DockDwell.Count == 1 && *d.ReceiptCycle.P50 == 3600 && *d.DockDwell.P50 == 3900 &&
 		d.DockToStock.Count == 1 && *d.DockToStock.P50 == 10800
-	if !counts || !timings || !adviceIsOneInsideTheSLA(d.Advice) {
+	if !counts || !timings || !lateIsOneAcmeShareZero(d.AsnTimeliness) || !adviceIsOneInsideTheSLA(d.Advice) {
 		t.Fatalf("day = %+v", d)
 	}
+}
+
+// lateIsOneAcmeShareZero: the lifecycle's one ASN was registered for ACME and
+// was late, so its on-time share is 0 (ADR 0025).
+func lateIsOneAcmeShareZero(rows []report.SupplierTimeliness) bool {
+	return len(rows) == 1 && rows[0].SupplierRef == "ACME" && rows[0].Registered == 1 &&
+		rows[0].Late == 1 && rows[0].ShareOnTime != nil && *rows[0].ShareOnTime == 0
 }
 
 // adviceIsOneInsideTheSLA: the lifecycle raises one advice, inside the SLA (ADR 0023).
@@ -516,7 +529,7 @@ func TestAnalyticsConsumer_EventMapping(t *testing.T) {
 	h.run(t, values...)
 	at := func(m int) time.Time { return anAt.Add(time.Duration(m) * time.Minute) }
 
-	asnReg := report.Event{Kind: report.KindAsnRegistered, EventID: "e-asn", At: anAt, AsnNumber: "ASN-1", ExpectedArrival: &arrival}
+	asnReg := report.Event{Kind: report.KindAsnRegistered, EventID: "e-asn", At: anAt, AsnNumber: "ASN-1", SupplierRef: "ACME", ExpectedArrival: &arrival}
 	appt := func(k report.Kind, id string, m int, apptID string) report.Event {
 		return report.Event{Kind: k, EventID: id, At: at(m), AppointmentID: apptID}
 	}
@@ -541,7 +554,13 @@ func TestAnalyticsConsumer_EventMapping(t *testing.T) {
 		appt(report.KindAppointmentBooked, "e-book", 2, anAppt),
 		appt(report.KindAppointmentCheckedIn, "e-in", 60, anAppt),
 		appt(report.KindAppointmentCancelled, "e-cancel", 3, anAppt2),
-		rcpt(report.KindReceiptOpened, "e-open", 65), line1, line2, closed,
+		rcpt(report.KindReceiptOpened, "e-open", 65),
+		{
+			Kind: report.KindAsnLateForArrival, EventID: "e-late", At: at(65), AsnNumber: "ASN-1",
+			SupplierRef: "ACME", AppointmentID: anAppt, VisitID: "visit-1",
+			AsnRegisteredAt: at(62), ArrivedAt: at(60), LatenessSeconds: 120,
+		},
+		line1, line2, closed,
 		appt(report.KindAppointmentCompleted, "e-done", 125, anAppt),
 		stow, advice,
 	}

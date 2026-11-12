@@ -3,6 +3,7 @@ package analyticsstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"reflect"
 	"testing"
@@ -122,6 +123,8 @@ func assertDay(t *testing.T, got, want report.PerformanceDay) {
 		t.Fatalf("%s advice = %+v, want %+v", want.Day.Format("2006-01-02"), got.Advice, want.Advice)
 	}
 	got.Advice, want.Advice = report.AdviceSummary{}, report.AdviceSummary{}
+	assertTimeliness(t, want.Day, got.AsnTimeliness, want.AsnTimeliness)
+	got.AsnTimeliness, want.AsnTimeliness = nil, nil
 	got.Day = want.Day
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("day = %+v, want %+v", got, want)
@@ -132,6 +135,20 @@ func assertDockToStock(t *testing.T, day time.Time, got, want report.DockToStock
 	t.Helper()
 	if got.Count != want.Count || got.UnderTarget != want.UnderTarget || !approx(got.P50, want.P50) || !approx(got.P90, want.P90) || !approx(got.ShareUnderTarget, want.ShareUnderTarget) {
 		t.Fatalf("%s dock to stock = %+v, want %+v", day.Format("2006-01-02"), got, want)
+	}
+}
+
+// assertTimeliness compares a day's asn_timeliness block in rank order, with
+// the shares within 1e-6.
+func assertTimeliness(t *testing.T, day time.Time, got, want []report.SupplierTimeliness) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s asn timeliness = %+v, want %+v", day.Format("2006-01-02"), got, want)
+	}
+	for i := range got {
+		if got[i].SupplierRef != want[i].SupplierRef || got[i].Registered != want[i].Registered || got[i].Late != want[i].Late || !approx(got[i].ShareOnTime, want[i].ShareOnTime) {
+			t.Fatalf("%s asn timeliness[%d] = %+v, want %+v", day.Format("2006-01-02"), i, got[i], want[i])
+		}
 	}
 }
 
@@ -338,12 +355,76 @@ var contractScenarios = []struct {
 			t.Fatalf("the same id must be applicable once fixed: %v, %v", applied, err)
 		}
 	}},
+	{"asn timeliness: both sides in the registered_at day, one row per ASN, a late fact folded first still joins", func(t *testing.T, s store) {
+		mustApply(t, s,
+			regEv("r1", "ASN-1", "ACME", "2026-10-05T08:00:00Z"),
+			regEv("r2", "ASN-2", "ACME", "2026-10-05T09:00:00Z"),
+			regEv("r3", "ASN-3", "ACME", "2026-10-05T23:59:59Z"),
+			regEv("r4", "ASN-4", "BOLT", "2026-10-06T00:00:00Z"), // midnight: day 6
+			regEv("r10", "ASN-10", "LAG", "2026-10-06T03:00:00Z"),
+			lateEv("l2", "ASN-2", "ACME", "2026-10-06T06:00:00Z", "2026-10-05T09:00:00Z", "2026-10-05T08:59:59Z", 1),
+			lateEv("l2x", "ASN-2", "ACME", "2026-10-06T07:00:00Z", "2026-10-05T09:00:00Z", "2026-10-05T08:59:59Z", 1), // a new id, same ASN: still one row
+			lateEv("l4", "ASN-4", "BOLT", "2026-10-06T06:30:00Z", "2026-10-06T00:00:00Z", "2026-10-05T23:00:00Z", 3600),
+			lateEv("l9", "ASN-9", "LAG", "2026-10-06T08:00:00Z", "2026-10-06T02:00:00Z", "2026-10-06T01:00:00Z", 3600), // before any ASNRegistered of its own
+		)
+		d5, d6 := zeroDay("2026-10-05"), zeroDay("2026-10-06")
+		d5.AsnTimeliness = []report.SupplierTimeliness{{SupplierRef: "ACME", Registered: 3, Late: 1, ShareOnTime: f(1 - 1.0/3)}}
+		// LAG outranks BOLT by registered count although BOLT sorts first by
+		// name: the rank is biggest-registered-first, ties by name.
+		d6.AsnTimeliness = []report.SupplierTimeliness{
+			{SupplierRef: "LAG", Registered: 2, Late: 1, ShareOnTime: f(0.5)},
+			{SupplierRef: "BOLT", Registered: 1, Late: 1, ShareOnTime: f(0)},
+		}
+		assertDays(t, perf(t, s, "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z"), []report.PerformanceDay{d5, d6})
+	}},
+	{"asn timeliness: the day's block ranks by registered and is bounded to the top ten suppliers", func(t *testing.T, s store) {
+		events := []report.Event{lateEv("l0", "ASN-00", "S00", "2026-10-06T03:00:00Z", "2026-10-06T02:00:00Z", "2026-10-06T01:00:00Z", 3600)}
+		for i := 1; i <= 12; i++ {
+			events = append(events, regEv(fmt.Sprintf("r%02d", i), fmt.Sprintf("ASN-%02d", i), fmt.Sprintf("S%02d", i), "2026-10-06T08:00:00Z"))
+		}
+		mustApply(t, s, events...)
+		days := perf(t, s, "2026-10-06T00:00:00Z", "2026-10-07T00:00:00Z")
+		block := days[0].AsnTimeliness
+		if len(block) != report.MaxTimelinessSuppliers {
+			t.Fatalf("rows = %d, want %d: %+v", len(block), report.MaxTimelinessSuppliers, block)
+		}
+		// Every supplier registered one ASN, so the rank is the name order and
+		// the tie at the cut drops S10..S12.
+		for i, row := range block {
+			if want := fmt.Sprintf("S%02d", i); row.SupplierRef != want || row.Registered != 1 {
+				t.Fatalf("row %d = %+v, want %s with 1 registered", i, row, want)
+			}
+			if row.SupplierRef == "S00" && (row.Late != 1 || row.ShareOnTime == nil || *row.ShareOnTime != 0) {
+				t.Fatalf("S00 = %+v, want its one late fact and share 0", row)
+			}
+			if row.SupplierRef != "S00" && row.Late != 0 {
+				t.Fatalf("%s = %+v, want no late fact", row.SupplierRef, row)
+			}
+		}
+	}},
 }
 
 // stowEv is a ReceiptStowCompleted whose stow happened at stowed.
 func stowEv(id, receipt, arrived, stowed string, seconds int64, cartons int) report.Event {
 	e := rcptEv(id, report.KindReceiptStowCompleted, receipt, "ASN-X", stowed)
 	e.Stow = &report.StowCompleted{ArrivedAt: at(arrived), StowedAt: at(stowed), DockToStockSeconds: seconds, CartonCount: cartons}
+	return e
+}
+
+// regEv is an ASNRegistered carrying a supplier (the asn_timeliness fold,
+// ADR 0025).
+func regEv(id, number, supplier, when string) report.Event {
+	e := asnEv(id, report.KindAsnRegistered, number, when)
+	e.SupplierRef = supplier
+	return e
+}
+
+// lateEv is an AsnLateForArrival raised at raised, for an ASN registered at
+// registeredAt after the visit arrived at arrivedAt (ADR 0025).
+func lateEv(id, number, supplier, raised, registeredAt, arrivedAt string, seconds int64) report.Event {
+	e := asnEv(id, report.KindAsnLateForArrival, number, raised)
+	e.SupplierRef, e.AppointmentID, e.VisitID = supplier, "appt-1", "visit-1"
+	e.AsnRegisteredAt, e.ArrivedAt, e.LatenessSeconds = at(registeredAt), at(arrivedAt), seconds
 	return e
 }
 

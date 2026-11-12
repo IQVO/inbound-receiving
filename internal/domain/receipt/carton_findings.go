@@ -33,6 +33,7 @@ var cartonKinds = map[Kind]bool{
 	KindUnexpectedCarton: true, KindMissingCarton: true, KindDuplicateSscc: true, KindUnknownGtin: true,
 	KindCaseQtyMismatch: true, KindMixedCaseDeclaredAsCasePack: true, KindUnlabelledCarton: true,
 	KindCartonOverLimit: true, KindMixedCartonContentMismatch: true, KindLabelNonCompliant: true, KindWrongDestination: true,
+	KindMissingContentGtin: true,
 }
 
 // CartonDiscrepancies returns every carton discrepancy raised on the receipt,
