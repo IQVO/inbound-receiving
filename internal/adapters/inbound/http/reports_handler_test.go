@@ -45,10 +45,16 @@ func seededReportsStore(t *testing.T) *analyticsstore.Memory {
 	advIn.Advice = &report.AdviceIssued{WithinSLA: true}
 	advLate := rcpt(report.KindReceivingAdviceIssued, "v2", "R-3", "ASN-3", "2026-10-06T12:00:00Z")
 	advLate.Advice = &report.AdviceIssued{WithinSLA: false}
+	late := rcpt(report.KindAsnLateForArrival, "t1", "", "ASN-0", "2026-10-06T09:00:00Z")
+	late.AsnNumber, late.SupplierRef, late.AppointmentID, late.VisitID = "ASN-T", "ACME", "appt-1", "visit-1"
+	late.AsnRegisteredAt, late.ArrivedAt, late.LatenessSeconds = at("2026-10-06T08:30:00Z"), at("2026-10-06T08:00:00Z"), 1800
 	events := []report.Event{
 		advIn, advLate,
 		{Kind: report.KindAsnRegistered, EventID: "a1", At: at("2026-10-01T08:00:00Z"), AsnNumber: "ASN-1", ExpectedArrival: arrival("2026-10-07T08:00:00Z")},
 		{Kind: report.KindAsnRegistered, EventID: "a2", At: at("2026-10-01T08:00:00Z"), AsnNumber: "ASN-2", ExpectedArrival: arrival("2026-10-07T09:00:00Z")},
+		{Kind: report.KindAsnRegistered, EventID: "a4", At: at("2026-10-06T08:30:00Z"), AsnNumber: "ASN-T", SupplierRef: "ACME"},
+		{Kind: report.KindAsnRegistered, EventID: "a5", At: at("2026-10-06T09:00:00Z"), AsnNumber: "ASN-U", SupplierRef: "BOLT"},
+		late,
 		{Kind: report.KindAsnCancelled, EventID: "a3", At: at("2026-10-02T08:00:00Z"), AsnNumber: "ASN-2"},
 		rcpt(report.KindReceiptOpened, "o1", "R-1", "ASN-0", "2026-10-06T08:00:00Z"), line, damaged, closed,
 		rcpt(report.KindReceiptOpened, "o2", "R-2", "ASN-1", "2026-10-07T08:05:00Z"),
@@ -78,14 +84,15 @@ func TestReports_ReceivingPerformance(t *testing.T) {
 		`"appointments":{"booked":0,"checked_in":1,"cancelled":0,"completed":1},` +
 		`"dock_dwell":{"count":1,"p50_seconds":10800,"p95_seconds":10800},` +
 		`"dock_to_stock":{"count":1,"p50_seconds":14400,"p90_seconds":14400,"under_target":0,"share_under_target":0},` +
-		`"advice":{"count":2,"within_sla":1,"share_within_sla":0.5}},` +
+		`"advice":{"count":2,"within_sla":1,"share_within_sla":0.5},` +
+		`"asn_timeliness":[{"supplier_ref":"ACME","registered":1,"late":1,"share_on_time":0},{"supplier_ref":"BOLT","registered":1,"late":0,"share_on_time":1}]},` +
 		`{"day":"2026-10-07","receipts_closed":0,"lines_received":0,"units_good":0,"units_damaged":0,` +
 		`"discrepancies":{"short":0,"over":0,"damaged":0},` +
 		`"receipt_cycle":{"count":0,"p50_seconds":null,"p95_seconds":null},` +
 		`"appointments":{"booked":0,"checked_in":0,"cancelled":0,"completed":0},` +
 		`"dock_dwell":{"count":0,"p50_seconds":null,"p95_seconds":null},` +
 		`"dock_to_stock":{"count":0,"p50_seconds":null,"p90_seconds":null,"under_target":0,"share_under_target":null},` +
-		`"advice":{"count":0,"within_sla":0,"share_within_sla":null}}],` +
+		`"advice":{"count":0,"within_sla":0,"share_within_sla":null},"asn_timeliness":[]}],` +
 		`"current":{"open_receipts":1,"expected_today":1,"expected_today_started":1}}` + "\n"
 	if rec.Body.String() != want {
 		t.Fatalf("body:\n got %s\nwant %s", rec.Body, want)

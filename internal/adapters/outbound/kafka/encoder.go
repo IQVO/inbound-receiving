@@ -141,9 +141,17 @@ func asnRow(ev asn.Event) (row, error) {
 		if !e.ExpectedArrival.IsZero() {
 			d.ExpectedArrival = ts(e.ExpectedArrival)
 		}
+		if !e.RegisteredAt.IsZero() {
+			d.RegisteredAt = ts(e.RegisteredAt)
+		}
 		r.data = d
 	case asn.ASNCancelled:
 		r.data = asnCancelledData{AsnNumber: number, Reason: e.Reason}
+	case asn.AsnLateForArrival:
+		r.data = asnLateData{
+			AsnNumber: number, SupplierRef: e.SupplierRef, AppointmentID: e.AppointmentID, VisitID: e.VisitID,
+			AsnRegisteredAt: ts(e.AsnRegisteredAt), ArrivedAt: ts(e.ArrivedAt), LatenessSeconds: e.LatenessSeconds,
+		}
 	default:
 		return row{}, fmt.Errorf("kafka encoder: %s is not a published asn event", ev.EventName())
 	}

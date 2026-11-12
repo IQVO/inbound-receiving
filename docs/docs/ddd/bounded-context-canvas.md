@@ -104,7 +104,7 @@ flowchart LR
     BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>ReceiptCartonReceived,<br/>CartonDiscrepancyRaised,<br/>ReceiptClosed"| out3
     BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>CartonDiscrepancyRaised"| out4
     BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.events<br/>ReceiptStowCompleted"| out5
-    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.analytics<br/>all eight events (analytics<br/>copy)"| out6
+    BC ==>|"evt - Kafka<br/>warehouse.inbound-receiving.analytics<br/>all eleven events (analytics<br/>copy)"| out6
     linkStyle 0 stroke:#e8590c,stroke-width:2.5px
     linkStyle 1 stroke:#e8590c,stroke-width:2.5px
     linkStyle 2 stroke:#e8590c,stroke-width:2.5px
@@ -190,7 +190,7 @@ outbox and the relay in `cmd/api`.
 | `network-fulfillment` | `ReceiptCartonReceived`, `CartonDiscrepancyRaised`, `ReceiptClosed` | Event | same topic, `...receipt.*` | OHS + PL; group `INBOUND_RECEIPT_CONSUMER_GROUP` |
 | `exception-management` | `CartonDiscrepancyRaised` | Event | same topic, `...receipt.CartonDiscrepancyRaised` | OHS + PL; group `CARTON_DISCREPANCY_CONSUMER_GROUP` |
 | none today | `ReceiptStowCompleted` | Event | same topic, `...receipt.ReceiptStowCompleted` | OHS + PL |
-| this context's own `inbound-projector` | all eight events, same `type` and `id` (it folds six of them plus the four historical `dockappointment` types and ignores the two carton types) | Event | Kafka `warehouse.inbound-receiving.analytics` (DLQ `.dlq`), `dataschema=urn:warehouse:inbound-receiving:analytics:<EventName>:v1` | internal data stream, not an integration contract (ADR 0006) |
+| this context's own `inbound-projector` | all eleven events, same `type` and `id` (it folds eight of them plus the four historical `dockappointment` types and ignores the two carton types and the overdue alarm) | Event | Kafka `warehouse.inbound-receiving.analytics` (DLQ `.dlq`), `dataschema=urn:warehouse:inbound-receiving:analytics:<EventName>:v1` | internal data stream, not an integration contract (ADR 0006) |
 
 The four `dockappointment.DockAppointment*` types are not an outbound message any more: ADR 0022 retired them and no sibling's dispatch code reads them. The full list with payloads is on [Domain events](/docs/ddd/domain-events).
 
@@ -225,7 +225,7 @@ Over / Damaged), **Walk-in**, **Snapshot**, **Local copy**, **Version**.
 
 - ASNs arrive through the REST API already structured: no EDI parsing, purchase
   orders or supplier master data here (ADR 0001).
-- Consumers of the receipt events can rely on per-ASN order: all eight published
+- Consumers of the receipt events can rely on per-ASN order: all eleven published
   types are keyed by `asn_number` (`asnRow` and `receiptRow` in the encoder). The
   four retired `dockappointment` types were keyed by `appointment_id`, so their
   order relative to receipt events was never guaranteed (ADR 0004).

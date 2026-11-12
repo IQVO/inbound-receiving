@@ -25,6 +25,8 @@ func TestCodingTable(t *testing.T) {
 		// ADR 0024: two rows, both unmapped.
 		KindLabelNonCompliant: {W13: "", CBV: "non_conformant"},
 		KindWrongDestination:  {W13: "", CBV: "mismatch_instance"},
+		// ADR 0025: the flat-ASN scan kind, unmapped.
+		KindMissingContentGtin: {W13: "", CBV: "non_conformant"},
 	}
 	for kind, coding := range want {
 		got, ok := CodingOf(kind)
@@ -35,15 +37,15 @@ func TestCodingTable(t *testing.T) {
 			t.Errorf("%s: Mapped() = %v, want %v", kind, got.Mapped(), coding.W13 != "")
 		}
 	}
-	if len(want) != 16 {
-		t.Fatalf("the table under test has %d rows, ADR 0023 has 14 and ADR 0024 adds 2", len(want))
+	if len(want) != 17 {
+		t.Fatalf("the table under test has %d rows, ADR 0023 has 14, ADR 0024 adds 2 and ADR 0025 one", len(want))
 	}
 }
 
 func TestEveryKindIsCoded(t *testing.T) {
 	kinds := AllKinds()
-	if len(kinds) != 16 {
-		t.Fatalf("AllKinds() = %d kinds, want 16: %v", len(kinds), kinds)
+	if len(kinds) != 17 {
+		t.Fatalf("AllKinds() = %d kinds, want 17: %v", len(kinds), kinds)
 	}
 	seen := map[Kind]bool{}
 	for _, k := range kinds {
@@ -91,14 +93,14 @@ func TestUnknownKindHasNoCoding(t *testing.T) {
 	}
 }
 
-func TestTheElevenCartonKinds(t *testing.T) {
+func TestTheTwelveCartonKinds(t *testing.T) {
 	want := []Kind{
 		KindUnexpectedCarton, KindMissingCarton, KindDuplicateSscc, KindUnknownGtin, KindCaseQtyMismatch,
 		KindMixedCaseDeclaredAsCasePack, KindUnlabelledCarton, KindCartonOverLimit, KindMixedCartonContentMismatch,
-		KindLabelNonCompliant, KindWrongDestination,
+		KindLabelNonCompliant, KindWrongDestination, KindMissingContentGtin,
 	}
-	if len(cartonKinds) != 11 {
-		t.Fatalf("%d carton kinds, ADR 0024 says 11", len(cartonKinds))
+	if len(cartonKinds) != 12 {
+		t.Fatalf("%d carton kinds, ADR 0024 said 11 and ADR 0025 adds one", len(cartonKinds))
 	}
 	for _, k := range want {
 		if !cartonKinds[k] {

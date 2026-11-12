@@ -41,6 +41,7 @@ erDiagram
     text asn_number PK
     text supplier_ref
     timestamptz expected_arrival
+    timestamptz registered_at "nullable; 0025, NULL on a row older than the ADR (unknown)"
     text state
     bigint version
     timestamptz created_at
@@ -99,7 +100,7 @@ erDiagram
   receipt_carton_discrepancies {
     text receipt_id PK
     int position PK "raise order on the receipt, 0004"
-    text kind "UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch, LabelNonCompliant, WrongDestination (0008)"
+    text kind "UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch, LabelNonCompliant, WrongDestination, MissingContentGtin (0008, 0025)"
     text supplier_ref "nullable; the ASN supplier on label findings, 0008"
     text sscc "nullable; NULL when the finding is not about a scanned SSCC"
     text expected "nullable"
@@ -128,6 +129,12 @@ erDiagram
     bigint qty "eaches, CHECK 1..2147483647"
     text lot "nullable"
     text expiry "nullable"
+  }
+  asn_late_arrivals {
+    text asn_number PK "the exactly-once marker, 0025"
+    text appointment_id
+    text visit_id
+    timestamptz raised_at
   }
   pack_levels {
     text gtin PK "14 digits, 0003"
@@ -276,6 +283,17 @@ erDiagram
     timestamptz registered_at "nullable"
     timestamptz cancelled_at "nullable"
     timestamptz receipt_opened_at "nullable; earliest ReceiptOpened of any receipt of the ASN"
+    text supplier_ref "nullable; 0025, from ASNRegistered and AsnLateForArrival"
+  }
+  asn_late_facts {
+    text asn_number PK "one row per late ASN, 0025"
+    text supplier_ref
+    text appointment_id
+    text visit_id
+    timestamptz asn_registered_at
+    timestamptz arrived_at
+    bigint lateness_seconds "CHECK at least 1"
+    timestamptz raised_at
   }
   appointment_facts {
     text appointment_id PK
@@ -308,6 +326,7 @@ erDiagram
   }
 ```
 
-Source: `analytics/migrations/0001_receiving_performance.up.sql`.
+Source: `analytics/migrations/0001_receiving_performance.up.sql` through
+`0004_asn_timeliness.up.sql`.
 Omits: the partial milestone indexes (one per nullable milestone column) and
 `schema_migrations`.

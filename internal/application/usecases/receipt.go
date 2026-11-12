@@ -79,6 +79,11 @@ func (uc *OpenReceipt) open(ctx context.Context, number asn.Number, apptID appoi
 	if err := uc.saveReceipt(ctx, r, 0, events); err != nil {
 		return nil, err
 	}
+	// The ASN-timeliness fact (ADR 0025) follows the open in the same unit of
+	// work: this is the only place the ASN and the visit's arrival meet.
+	if err := uc.raiseAsnLate(ctx, a, apptID); err != nil {
+		return nil, err
+	}
 	return r, nil
 }
 

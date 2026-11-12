@@ -1,6 +1,7 @@
 package http_test
 
 import (
+	"fmt"
 	"net/http"
 	"reflect"
 	"testing"
@@ -8,6 +9,12 @@ import (
 )
 
 const scanUnexpected = `{"kind":"SSCC","id":"340123450000000017"}`
+
+// scanUnexpectedCartonAsnBody announces one carton of 20 SKU-1: the scan above
+// hits a HIERARCHICAL ASN (ADR 0025 keeps its unknown SSCC an
+// UnexpectedCarton) with an SSCC the manifest does not carry.
+const scanUnexpectedCartonAsnBody = `{"asnNumber":"%s","supplierRef":"ACME","lines":[{"lineNo":1,"sku":"SKU-1","expectedQty":20}],` +
+	`"cartons":[{"sscc":"340123450000000024","kind":"HOMOGENEOUS_CASE","contents":[{"lineNo":1,"sku":"SKU-1","gtin":"10001234567892","qty":20}]}]}`
 
 // cartonDiscrepancies reads the field of a Receipt response, failing when it is
 // absent, null or not an array (the contract: always an array, [] when none).
@@ -44,7 +51,8 @@ func TestGetReceiptWithoutCartonFindingsAnswersAnEmptyArray(t *testing.T) {
 
 func TestGetReceiptListsTheCartonFindingsRaisedByScans(t *testing.T) {
 	f := newFixture(t)
-	id := f.seedReceipt(t, "ASN-CF")
+	f.mustPost(t, "/asns", fmt.Sprintf(scanUnexpectedCartonAsnBody, "ASN-CF"), http.StatusCreated)
+	id := str(f.mustPost(t, "/receipts", `{"asnNumber":"ASN-CF"}`, http.StatusCreated), "receiptId")
 	f.clock.set(startOfDay.Add(15 * time.Minute))
 	scan := f.post(t, "/receipts/"+id+"/scans", scanUnexpected)
 	expectStatus(t, scan, http.StatusOK)
@@ -60,11 +68,16 @@ func TestGetReceiptListsTheCartonFindingsRaisedByScans(t *testing.T) {
 		t.Fatalf("cartonDiscrepancies = %v, want %v", got, want)
 	}
 
-	// A close does not hide them, and the closed receipt keeps its three line kinds only.
+	// A close does not hide them (and raises the MissingCarton of the
+	// manifest carton that was never accepted), and the closed receipt keeps
+	// its three line kinds only.
 	closed := f.post(t, "/receipts/"+id+"/closures", "")
 	expectStatus(t, closed, http.StatusOK)
-	if got := cartonDiscrepancies(t, f.get(t, "/receipts/"+id)); !reflect.DeepEqual(got, want) {
-		t.Fatalf("after close cartonDiscrepancies = %v, want %v", got, want)
+	afterClose := append(append([]any{}, want...), map[string]any{
+		"kind": "MissingCarton", "expected": "340123450000000024", "at": "2026-10-09T07:20:00Z", "w13Code": "02", "cbvDisposition": "mismatch_quantity",
+	})
+	if got := cartonDiscrepancies(t, f.get(t, "/receipts/"+id)); !reflect.DeepEqual(got, afterClose) {
+		t.Fatalf("after close cartonDiscrepancies = %v, want %v", got, afterClose)
 	}
 	for _, d := range closed.body["discrepancies"].([]any) {
 		if k := d.(map[string]any)["kind"]; k != "Short" && k != "Over" && k != "Damaged" {

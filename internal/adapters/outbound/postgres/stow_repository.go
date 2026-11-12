@@ -123,6 +123,22 @@ func (r *StowRepo) Evidence(ctx context.Context, x *receipt.Receipt) (repository
 	return ev, nil
 }
 
+// Arrival implements ports.StowStore (ADR 0025): the visit id and the
+// EARLIEST arrived_at stored for the appointment.
+func (r *StowRepo) Arrival(ctx context.Context, id appointment.ID) (repository.Arrival, bool, error) {
+	var a repository.Arrival
+	err := queryFor(ctx, r.pool).QueryRow(ctx, `SELECT visit_id, arrived_at FROM visit_arrivals WHERE appointment_id = $1`, string(id)).
+		Scan(&a.VisitID, &a.ArrivedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return repository.Arrival{}, false, nil
+	}
+	if err != nil {
+		return repository.Arrival{}, false, fmt.Errorf("read visit arrival %s: %w", id, err)
+	}
+	a.ArrivedAt = a.ArrivedAt.UTC()
+	return a, true, nil
+}
+
 // Complete implements ports.StowStore: only the call that inserts the marker
 // reports true.
 func (r *StowRepo) Complete(ctx context.Context, id receipt.ID, stowedAt time.Time) (bool, error) {

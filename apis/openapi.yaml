@@ -148,6 +148,7 @@ paths:
               example:
                 asnNumber: ASN-1001
                 supplierRef: ACME
+                registeredAt: "2026-10-08T12:00:00Z"
                 expectedArrival: "2026-10-09T08:00:00Z"
                 state: Registered
                 lines:
@@ -188,6 +189,7 @@ paths:
                 items:
                   - asnNumber: ASN-1001
                     supplierRef: ACME
+                    registeredAt: "2026-10-08T12:00:00Z"
                     state: Registered
                     lines:
                       - { lineNo: 1, sku: SKU-1, expectedQty: 40 }
@@ -1058,6 +1060,18 @@ paths:
         unit received) and `share_within_sla` (`within_sla / count`, null when
         `count` is 0). Receipts closed before the advice existed have none.
 
+        `asn_timeliness` (ADR 0025) is the KPI "% ASNs received before
+        arrival, per supplier": one row per supplier, both sides counted in the
+        UTC day of the ASN's `registered_at` -- `registered` (ASNs registered
+        for the supplier that day) and `late` (of those, the ones registered
+        after the visit they were received under had arrived;
+        `AsnLateForArrival`). `share_on_time` is `1 - late / registered`, null
+        when `registered` is 0. The list holds at most the day's top ten
+        suppliers by `registered` (ties by `supplier_ref` ascending); a
+        supplier outside the bound is absent from that day's block and its
+        facts stay in the tables. ASNs with an unknown `registered_at` (rows
+        older than ADR 0025) count on neither side.
+
         `current` is the state right now, independent of the range:
         `open_receipts` (opened, not yet closed), `expected_today` (ASNs not
         cancelled whose expected arrival falls in today's UTC day) and
@@ -1089,6 +1103,9 @@ paths:
                     dock_dwell: { count: 14, p50_seconds: 3300, p95_seconds: 8100 }
                     dock_to_stock: { count: 12, p50_seconds: 9300, p90_seconds: 15600, under_target: 8, share_under_target: 0.6666666666666666 }
                     advice: { count: 14, within_sla: 13, share_within_sla: 0.9285714285714286 }
+                    asn_timeliness:
+                      - { supplier_ref: ACME, registered: 9, late: 3, share_on_time: 0.6666666666666666 }
+                      - { supplier_ref: BOLT, registered: 5, late: 0, share_on_time: 1 }
                   - day: "2026-10-06"
                     receipts_closed: 0
                     lines_received: 0
@@ -1100,6 +1117,7 @@ paths:
                     dock_dwell: { count: 0, p50_seconds: null, p95_seconds: null }
                     dock_to_stock: { count: 0, p50_seconds: null, p90_seconds: null, under_target: 0, share_under_target: null }
                     advice: { count: 0, within_sla: 0, share_within_sla: null }
+                    asn_timeliness: []
                 current:
                   open_receipts: 2
                   expected_today: 9
@@ -1775,9 +1793,14 @@ components:
         `conflicting_ais`, `missing_ai`, `unknown_ai`, ...; `actual` the raw
         scan; nothing is booked); `WrongDestination` = the label's ship-to GLN
         (AI 410) is not a site of this receiving (`actual` is the GLN; nothing
-        is booked). Neither kind has a W13 code; their CBV dispositions are
-        `non_conformant` and `mismatch_instance` (ADR 0024).
-      enum: [UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch, LabelNonCompliant, WrongDestination]
+        is booked); `MissingContentGtin` = a carton scan against a FLAT ASN
+        (lines, no carton manifest, ADR 0025) carried no AI 02 content GTIN, so
+        no line could be resolved (`sscc` carries the parsed SSCC, the label
+        may itself be GS1-compliant; nothing is booked). The last three kinds
+        have no W13 code; their CBV dispositions are
+        `non_conformant`, `mismatch_instance` and `non_conformant`
+        (ADR 0024, ADR 0025).
+      enum: [UnexpectedCarton, MissingCarton, DuplicateSscc, UnknownGtin, CaseQtyMismatch, MixedCaseDeclaredAsCasePack, UnlabelledCarton, CartonOverLimit, MixedCartonContentMismatch, LabelNonCompliant, WrongDestination, MissingContentGtin]
     CartonDiscrepancy:
       type: object
       required: [kind]
@@ -1841,6 +1864,10 @@ components:
           example: ASN-1001
         supplierRef:
           type: string
+        registeredAt:
+          type: string
+          format: date-time
+          description: When the ASN was registered here (ADR 0025); omitted on a row written before it existed (unknown, and an unknown registration can never be late).
         expectedArrival:
           type: string
           format: date-time
@@ -2153,7 +2180,7 @@ components:
           $ref: "#/components/schemas/ReceivingCurrent"
     ReceivingPerformanceDay:
       type: object
-      required: [day, receipts_closed, lines_received, units_good, units_damaged, discrepancies, receipt_cycle, appointments, dock_dwell, dock_to_stock, advice]
+      required: [day, receipts_closed, lines_received, units_good, units_damaged, discrepancies, receipt_cycle, appointments, dock_dwell, dock_to_stock, advice, asn_timeliness]
       properties:
         day:
           type: string
@@ -2191,6 +2218,14 @@ components:
           $ref: "#/components/schemas/DockToStockSummary"
         advice:
           $ref: "#/components/schemas/AdviceSummary"
+        asn_timeliness:
+          type: array
+          description: |
+            The day's per-supplier ASN timeliness (ADR 0025), biggest
+            `registered` first, ties by `supplier_ref` ascending, at most the
+            top ten suppliers of the day; `[]` when none registered.
+          items:
+            $ref: "#/components/schemas/SupplierTimeliness"
     DiscrepancyCounts:
       type: object
       description: Discrepancies of the receipts closed in the window, by kind.
@@ -2244,6 +2279,20 @@ components:
         count: { type: integer, format: int32, minimum: 0, description: "Advices issued (`ReceivingAdviceIssued`) in the window, by the UTC day of their `issued_at`." }
         within_sla: { type: integer, format: int32, minimum: 0, description: "Of those, how many had `within_sla` true." }
         share_within_sla: { type: number, format: double, nullable: true, minimum: 0, maximum: 1, description: "within_sla / count; null when count is 0." }
+    SupplierTimeliness:
+      type: object
+      description: |
+        One supplier's ASN timeliness of a day (ADR 0025): how many of the
+        day's ASNs were registered for it (counted in the UTC day of the ASN's
+        `registered_at`) and how many of those were registered after the visit
+        they were received under had arrived (`AsnLateForArrival`). The KPI
+        "% ASNs received before arrival" is `share_on_time`.
+      required: [supplier_ref, registered, late, share_on_time]
+      properties:
+        supplier_ref: { type: string, description: The supplier the ASNs were registered for. }
+        registered: { type: integer, format: int32, minimum: 0, description: "ASNs of this supplier registered in the day (by `registered_at`)." }
+        late: { type: integer, format: int32, minimum: 0, description: "Of those, how many were late for their visit's arrival." }
+        share_on_time: { type: number, format: double, nullable: true, minimum: 0, maximum: 1, description: "1 - late / registered; null when registered is 0." }
     ReceivingCurrent:
       type: object
       description: The state right now (not range-bound).

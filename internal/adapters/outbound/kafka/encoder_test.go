@@ -77,7 +77,7 @@ func TestEncoderGoldenAsnEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertRow(t, registered[0], "asn.ASNRegistered", "ASN-1001", "ASN-1001", envelope("asn", "ASNRegistered", "ASN-1001", "2026-10-08T12:00:00Z",
-		`{"asn_number":"ASN-1001","supplier_ref":"ACME","expected_arrival":"2026-10-09T08:00:00Z","lines":[{"line_no":1,"sku":"SKU-1","expected_qty":40},{"line_no":2,"sku":"SKU-2","expected_qty":5}]}`))
+		`{"asn_number":"ASN-1001","supplier_ref":"ACME","expected_arrival":"2026-10-09T08:00:00Z","registered_at":"2026-10-08T12:00:00Z","lines":[{"line_no":1,"sku":"SKU-1","expected_qty":40},{"line_no":2,"sku":"SKU-2","expected_qty":5}]}`))
 	assertRow(t, cancelled[0], "asn.ASNCancelled", "ASN-1001", "ASN-1001", envelope("asn", "ASNCancelled", "ASN-1001", "2026-10-08T12:30:00Z",
 		`{"asn_number":"ASN-1001","reason":"Supplier cancelled the shipment"}`))
 }
@@ -139,7 +139,7 @@ func TestEncoderOptionalFieldsAreOmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	wants := map[string]string{
-		string(registered[0].Value): `"data":{"asn_number":"ASN-1001","supplier_ref":"ACME","lines":[{"line_no":1,"sku":"SKU-1","expected_qty":40},{"line_no":2,"sku":"SKU-2","expected_qty":5}]}}`,
+		string(registered[0].Value): `"data":{"asn_number":"ASN-1001","supplier_ref":"ACME","registered_at":"2026-10-08T12:00:00Z","lines":[{"line_no":1,"sku":"SKU-1","expected_qty":40},{"line_no":2,"sku":"SKU-2","expected_qty":5}]}}`,
 		string(registered[1].Value): `"data":{"asn_number":"ASN-1001"}}`,
 		string(opened[0].Value):     `"data":{"receipt_id":"` + rcptID + `","asn_number":"ASN-1001","opened_at":"2026-10-09T08:05:00Z"}}`,
 		string(opened[1].Value):     `"data":{"receipt_id":"` + rcptID + `","asn_number":"ASN-1001","closed_at":"2026-10-09T09:30:00Z","discrepancies":[]}}`,

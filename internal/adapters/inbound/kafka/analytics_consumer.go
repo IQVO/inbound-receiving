@@ -38,7 +38,7 @@ func entityOf(k report.Kind) string {
 	}
 }
 
-// analyticsKinds maps the FULL CloudEvents type of the eleven projected events
+// analyticsKinds maps the FULL CloudEvents type of the twelve projected events
 // to their report.Kind. Every other type on the topic is acknowledged and
 // ignored.
 var analyticsKinds = func() map[string]report.Kind {
@@ -55,6 +55,10 @@ var analyticsKinds = func() map[string]report.Kind {
 type analyticsData struct {
 	AsnNumber       string     `json:"asn_number"`
 	ExpectedArrival *time.Time `json:"expected_arrival"`
+	SupplierRef     string     `json:"supplier_ref"`
+	VisitID         string     `json:"visit_id"`
+	AsnRegisteredAt time.Time  `json:"asn_registered_at"`
+	LatenessSeconds int64      `json:"lateness_seconds"`
 	AppointmentID   string     `json:"appointment_id"`
 	ReceiptID       string     `json:"receipt_id"`
 	ArrivedAt       time.Time  `json:"arrived_at"`
@@ -184,9 +188,17 @@ func toReportEvent(kind report.Kind, evt ce.Event) (report.Event, error) {
 	switch {
 	case kind.IsAsn():
 		subjectKey = d.AsnNumber
-		if kind == report.KindAsnRegistered && d.ExpectedArrival != nil {
-			x := d.ExpectedArrival.UTC()
-			e.ExpectedArrival = &x
+		if kind == report.KindAsnRegistered {
+			e.SupplierRef = d.SupplierRef
+			if d.ExpectedArrival != nil {
+				x := d.ExpectedArrival.UTC()
+				e.ExpectedArrival = &x
+			}
+		}
+		if kind == report.KindAsnLateForArrival {
+			e.SupplierRef, e.AppointmentID, e.VisitID = d.SupplierRef, d.AppointmentID, d.VisitID
+			e.AsnRegisteredAt, e.ArrivedAt = d.AsnRegisteredAt.UTC(), d.ArrivedAt.UTC()
+			e.LatenessSeconds = d.LatenessSeconds
 		}
 	case kind.IsAppointment():
 		e.AppointmentID, subjectKey = d.AppointmentID, d.AppointmentID

@@ -3,6 +3,7 @@ package analyticsstore
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -89,6 +90,75 @@ const performanceDaysSQL = `
 	) adv
 	ORDER BY days.day`
 
+// timelinessDaysSQL builds the same day windows as performanceDaysSQL and
+// folds the day's ASNs per supplier for the asn_timeliness block (ADR 0025):
+// registered in the UTC day of the ASN's registered_at, late the subset with
+// an asn_late_facts row. A day with no registration reports no rows.
+const timelinessDaysSQL = `
+	WITH days AS (
+		SELECT d::date AS day,
+		       GREATEST(d AT TIME ZONE 'UTC', $1::timestamptz)                    AS lo,
+		       LEAST((d + interval '1 day') AT TIME ZONE 'UTC', $2::timestamptz) AS hi
+		FROM generate_series(
+		         date_trunc('day', $1::timestamptz AT TIME ZONE 'UTC'),
+		         ($2::timestamptz - interval '1 microsecond') AT TIME ZONE 'UTC',
+		         interval '1 day') AS d
+		WHERE $1::timestamptz < $2::timestamptz
+	)
+	SELECT days.day, COALESCE(a.supplier_ref, ''), count(a.asn_number), count(l.asn_number) FILTER (WHERE l.asn_number IS NOT NULL)
+	FROM days
+	JOIN asn_facts a ON a.registered_at >= days.lo AND a.registered_at < days.hi
+	LEFT JOIN asn_late_facts l ON l.asn_number = a.asn_number
+	GROUP BY days.day, COALESCE(a.supplier_ref, '')
+	ORDER BY days.day, COALESCE(a.supplier_ref, '')`
+
+// readTimeliness fills each day's AsnTimeliness block (ADR 0025), bounded by
+// report.MaxTimelinessSuppliers.
+func (r *Reader) readTimeliness(ctx context.Context, rg report.Range, days []report.PerformanceDay) error {
+	byDay := map[string][]report.SupplierTimeliness{}
+	rows, err := r.pool.Query(ctx, timelinessDaysSQL, rg.From.UTC(), rg.To.UTC())
+	if err != nil {
+		return fmt.Errorf("analyticsstore: asn timeliness days: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var day time.Time
+		var row report.SupplierTimeliness
+		if err := rows.Scan(&day, &row.SupplierRef, &row.Registered, &row.Late); err != nil {
+			return fmt.Errorf("analyticsstore: scan asn timeliness: %w", err)
+		}
+		if row.Registered > 0 {
+			share := 1 - float64(row.Late)/float64(row.Registered)
+			row.ShareOnTime = &share
+		}
+		byDay[day.UTC().Format("2006-01-02")] = append(byDay[day.UTC().Format("2006-01-02")], row)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("analyticsstore: asn timeliness rows: %w", err)
+	}
+	for i := range days {
+		days[i].AsnTimeliness = boundedTimeliness(byDay[days[i].Day.UTC().Format("2006-01-02")])
+	}
+	return nil
+}
+
+// boundedTimeliness ranks the day's suppliers exactly like
+// report.AsnTimelinessOf: biggest registered count first, ties broken by
+// supplier_ref ascending (the SQL only groups; the rank is defined once), then
+// keeps the top MaxTimelinessSuppliers.
+func boundedTimeliness(rows []report.SupplierTimeliness) []report.SupplierTimeliness {
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Registered != rows[j].Registered {
+			return rows[i].Registered > rows[j].Registered
+		}
+		return rows[i].SupplierRef < rows[j].SupplierRef
+	})
+	if len(rows) > report.MaxTimelinessSuppliers {
+		rows = rows[:report.MaxTimelinessSuppliers]
+	}
+	return rows
+}
+
 // PerformanceDays implements report.Reader.
 func (r *Reader) PerformanceDays(ctx context.Context, rg report.Range) ([]report.PerformanceDay, error) {
 	rows, err := r.pool.Query(ctx, performanceDaysSQL, rg.From.UTC(), rg.To.UTC(), report.DockToStockTargetSeconds)
@@ -120,6 +190,9 @@ func (r *Reader) PerformanceDays(ctx context.Context, rg report.Range) ([]report
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("analyticsstore: performance days rows: %w", err)
+	}
+	if err := r.readTimeliness(ctx, rg, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
