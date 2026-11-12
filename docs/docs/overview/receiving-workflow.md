@@ -110,10 +110,12 @@ only. A refused scan books nothing, answers `200` with `accepted=false` and rais
 | `MixedCartonContentMismatch` | `countedContents` of a MIXED carton differ from its manifest per SKU; the counted quantity is received | yes |
 | `LabelNonCompliant` | a raw `scan` breaks the GS1 rules (bad check digit, AI 01 with AI 02, a missing mandatory AI, ...); `expected` is the reason code, `actual` the raw scan | no |
 | `WrongDestination` | the label's ship-to GLN (AI 410) is not in `RECEIVING_SITE_GLNS`; `actual` is that GLN | no |
+| `MissingContentGtin` | a carton scan against a FLAT ASN (lines, no carton manifest) carried no AI 02 content GTIN, so no line could be resolved (ADR 0025) | no |
 
-The last two are raised **at the scan** ([ADR 0024](/docs/adr/0024-gs1-label-receiving-validation-destination-earliest-best-before-and-receiver-assigned-sscc)): nothing is booked, the finding keeps the ASN's
-`supplierRef` so a first-pass rate per supplier can be computed, and neither has a W13 code (their CBV
-dispositions are `non_conformant` and `mismatch_instance`). A label with no AI 410 is never refused for its
+The last three are raised **at the scan** (ADR 0024 and
+[ADR 0025](/docs/adr/0025-asn-timeliness-from-the-visit-arrival-copy-and-flat-soi-asn-receiving)):
+nothing is booked, and none has a W13 code (their CBV
+dispositions are `non_conformant`, `mismatch_instance` and `non_conformant`). A label with no AI 410 is never refused for its
 destination, and the destination rule is off while `RECEIVING_SITE_GLNS` is empty.
 
 The label data of an accepted carton (`lpn`, `CODE128`, human readable text, SKU, units) is
@@ -147,7 +149,7 @@ eaches; a homogeneous case reads "Case of N eaches".
 | Screen | Route under `/inbound-receiving` | Data |
 | --- | --- | --- |
 | ASN carton tree | `asns/:asnNumber/cartons` | `GET /asns/{asnNumber}/cartons`: pallet SSCC → carton SSCC → contents per SKU, status `Expected` / `Accepted` / `Missing` |
-| Carton discrepancies | `receipts/:receiptId/discrepancies` | `GET /receipts/{receiptId}` (`cartonDiscrepancies`) and `POST /receipts/{receiptId}/scans` (a scan form); explains the nine kinds of ADR 0012/0014 with what to do (the two label kinds of ADR 0024 are listed by the receipt read but not yet explained on this screen: `web/` is a separate change) |
+| Carton discrepancies | `receipts/:receiptId/discrepancies` | `GET /receipts/{receiptId}` (`cartonDiscrepancies`) and `POST /receipts/{receiptId}/scans` (a scan form); explains the nine kinds of ADR 0012/0014 with what to do (the two label kinds of ADR 0024 and the flat-ASN kind of ADR 0025 are listed by the receipt read but not yet explained on this screen: `web/` is a separate change) |
 | Carton label | `receipts/:receiptId/cartons/:lpn/label` | `GET /receipts/{receiptId}/cartons/{lpn}/label`; Code 128 drawn as inline SVG (GS1-128 for an SSCC), printed with `window.print()` and a print stylesheet |
 
 The receipt keeps every carton discrepancy it raises (ADR 0015): `GET /receipts/{receiptId}` lists them as

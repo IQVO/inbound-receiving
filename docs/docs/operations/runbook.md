@@ -266,7 +266,11 @@ the numbers are illustrative):
       "appointments": {"booked": 4, "checked_in": 3, "cancelled": 1, "completed": 3},
       "dock_dwell": {"count": 3, "p50_seconds": 4200, "p95_seconds": 7100},
       "dock_to_stock": {"count": 2, "p50_seconds": 9300, "p90_seconds": 12100, "under_target": 1, "share_under_target": 0.5},
-      "advice": {"count": 3, "within_sla": 3, "share_within_sla": 1}
+      "advice": {"count": 3, "within_sla": 3, "share_within_sla": 1},
+      "asn_timeliness": [
+        {"supplier_ref": "ACME", "registered": 6, "late": 2, "share_on_time": 0.6666666666666666},
+        {"supplier_ref": "BOLT", "registered": 3, "late": 0, "share_on_time": 1}
+      ]
     }
   ],
   "current": {"open_receipts": 2, "expected_today": 5, "expected_today_started": 3}
@@ -294,6 +298,13 @@ issued in the day: `count`, `within_sla` (issued inside `RECEIVING_ADVICE_SLA`,
 default 24 h, after the last unit received) and `share_within_sla`
 (`within_sla / count`, null when `count` is 0). The `advice_facts` table is
 rebuilt by the same replay. A receipt closed before the advice existed has none.
+
+`asn_timeliness` (ADR 0025) is the per-supplier KPI "% ASNs received before
+arrival": `registered` and `late` are both counted in the UTC day of the ASN's
+`registered_at` (from `asn_facts` and `asn_late_facts`, rebuilt by the same
+replay), `share_on_time` is `1 - late / registered` (null when `registered` is
+0), and the list holds at most the day's top ten suppliers by `registered`
+(ties by `supplier_ref` ascending). An empty day reports `[]`.
 
 ### Receiving advice overdue
 

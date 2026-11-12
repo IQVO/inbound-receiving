@@ -32,15 +32,16 @@ of work; the relay in `cmd/api` publishes them. Common attributes:
 `source=/warehouse/inbound-receiving`, `time` = domain occurred-at (UTC),
 `datacontenttype=application/json`,
 `dataschema=urn:warehouse:inbound-receiving:events:<EventName>:v1`. Topic
-`warehouse.inbound-receiving.events` for all ten (the `<entity>` segment is `asn`
+`warehouse.inbound-receiving.events` for all eleven (the `<entity>` segment is `asn`
 or `receipt`: `asnRow` and `receiptRow` in the encoder reject every other event, and
-`apis/asyncapi.yaml` declares exactly these ten on the integration channel). The
+`apis/asyncapi.yaml` declares exactly these eleven on the integration channel). The
 partitioner is the `Hash` balancer on the Kafka key.
 
 | Full CloudEvents type | `subject` / Kafka key | Producer use case | Payload (`data`) | Known consumers |
 | --- | --- | --- | --- | --- |
-| `com.warehouse.wms.inbound-receiving.asn.ASNRegistered` | `asn_number` / `asn_number` | `RegisterAsn` | `asn_number`, `supplier_ref`, `owner_ref?`, `expected_arrival?`, `lines[]` = `{line_no, sku, expected_qty}`, `cartons[]?` | `dock-scheduling` (`ASN_CONSUMER_GROUP`), `yard-management` (`INBOUND_RECEIVING_CONSUMER_GROUP`) |
+| `com.warehouse.wms.inbound-receiving.asn.ASNRegistered` | `asn_number` / `asn_number` | `RegisterAsn` | `asn_number`, `supplier_ref`, `owner_ref?`, `expected_arrival?`, `registered_at?` (ADR 0025), `lines[]` = `{line_no, sku, expected_qty}`, `cartons[]?` | `dock-scheduling` (`ASN_CONSUMER_GROUP`), `yard-management` (`INBOUND_RECEIVING_CONSUMER_GROUP`) |
 | `com.warehouse.wms.inbound-receiving.asn.ASNCancelled` | `asn_number` / `asn_number` | `CancelAsn` | `asn_number`, `reason?` | `dock-scheduling`, `yard-management` (same groups) |
+| `com.warehouse.wms.inbound-receiving.asn.AsnLateForArrival` | `asn_number` / `asn_number` | `OpenReceipt` (once per ASN, only under an appointment whose earliest yard visit had already arrived; ADR 0025) | `asn_number`, `supplier_ref`, `appointment_id`, `visit_id`, `asn_registered_at`, `arrived_at`, `lateness_seconds` | none yet (the projector folds the analytics copy into `asn_timeliness`) |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptOpened` | `receipt_id` / `asn_number` | `OpenReceipt` | `receipt_id`, `asn_number`, `appointment_id?`, `door_code?`, `opened_at` | `yard-management` |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptLineReceived` | `receipt_id` / `asn_number` | `ReceiveLine`, `ReceiveScan` (a case or each scan) | `receipt_id`, `asn_number`, `line_no`, `sku`, `quantity`, `condition` (`Good` or `Damaged`), `received_at`, `owner_ref?`, `pack_gtin?`, `cases?`, `sscc?` | `inventory-storage` (`INBOUND_RECEIPT_CONSUMER_GROUP`, books `Good` only) |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptCartonReceived` | `receipt_id` / `asn_number` | `ReceiveScan` (a carton accepted; identity only, books no quantity) | `receipt_id`, `asn_number`, `owner_ref?`, `sscc?`, `parent_sscc?`, `sealed`, `lpn`, `contents[]` = `{line_no, sku, gtin, qty, lot?, expiry?, condition}`, `received_at`, and, additive and optional ([ADR 0024](/docs/adr/0024-gs1-label-receiving-validation-destination-earliest-best-before-and-receiver-assigned-sscc)), `sscc_source?` (`supplier` / `receiver`), `best_before?`, `expiry?`, `production_date?`, `packaging_date?`, `serial?`, `purchase_order?`, `ship_to_gln?`, `ship_for_gln?` | `inventory-storage`, `network-fulfillment` (`INBOUND_RECEIPT_CONSUMER_GROUP` in each) |
@@ -52,13 +53,14 @@ partitioner is the `Hash` balancer on the Kafka key.
 
 `?` marks a field omitted when unset. The line-level discrepancy `kind` on
 `ReceiptClosed` is `Short`, `Over` or `Damaged`; the `kind` on
-`CartonDiscrepancyRaised` is one of the carton kinds (`UnexpectedCarton`,
+`CartonDiscrepancyRaised` is one of the twelve carton kinds (`UnexpectedCarton`,
 `MissingCarton`, `DuplicateSscc`, `UnknownGtin`, `CaseQtyMismatch`,
 `MixedCaseDeclaredAsCasePack`, `UnlabelledCarton`, `CartonOverLimit`,
-`MixedCartonContentMismatch`, `LabelNonCompliant`, `WrongDestination`; `cartonKinds` in
+`MixedCartonContentMismatch`, `LabelNonCompliant`, `WrongDestination`,
+`MissingContentGtin` (ADR 0025); `cartonKinds` in
 `internal/domain/receipt/carton_findings.go`). `discrepancies` is present and empty
 (`[]`) when everything matched, and a line can appear once per kind; `received_qty`
-is good + damaged. Every receipt event, and both ASN events, is keyed by
+is good + damaged. Every receipt event, and every ASN event, is keyed by
 `asn_number`, so everything that happens while one ASN is received stays ordered on
 one partition. The four `dockappointment.DockAppointment*` types are not in this
 table because nothing raises them any more (ADR 0022); the known-consumer column was
@@ -104,15 +106,16 @@ work and under the same CloudEvents `id`, `type`, `subject` and Kafka key, to
 `dataschema=urn:warehouse:inbound-receiving:analytics:<EventName>:v1` and a
 payload byte-for-byte equal to the integration payload (`FanoutEncoder`,
 `internal/adapters/outbound/kafka/analytics_encoder.go`). The topic therefore
-carries the same ten types as the integration topic; `apis/asyncapi.yaml`
-declares ten analytics messages. Its only consumer is this context's own
+carries the same eleven types as the integration topic; `apis/asyncapi.yaml`
+declares eleven analytics messages. Its only consumer is this context's own
 `inbound-projector` (group `ANALYTICS_CONSUMER_GROUP`, default
 `inbound-receiving-analytics`); it is not an integration contract, so sibling
 contexts keep reading `warehouse.inbound-receiving.events`.
 
-The projector folds eleven kinds (`report.Kinds()`): seven of the ten current types
-(`ASNRegistered`, `ASNCancelled`, `ReceiptOpened`, `ReceiptLineReceived`,
-`ReceiptClosed`, `ReceiptStowCompleted`, `ReceivingAdviceIssued`) and the four historical
+The projector folds twelve kinds (`report.Kinds()`): eight of the eleven current types
+(`ASNRegistered`, `ASNCancelled`, `AsnLateForArrival`, `ReceiptOpened`,
+`ReceiptLineReceived`, `ReceiptClosed`, `ReceiptStowCompleted`,
+`ReceivingAdviceIssued`) and the four historical
 `dockappointment.DockAppointment*` types. It does not fold `ReceiptCartonReceived`,
 `CartonDiscrepancyRaised` or `ReceivingAdviceOverdue`: an unknown type is ignored (a DEBUG line). The four
 historical types stay in the projector on purpose ([ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)):

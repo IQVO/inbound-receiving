@@ -6,8 +6,8 @@ sidebar_position: 1
 
 # Downstream consumers
 
-`inbound-receiving` publishes on `warehouse.inbound-receiving.events`: eight
-types (`ASNRegistered`, `ASNCancelled`, `ReceiptOpened`,
+`inbound-receiving` publishes on `warehouse.inbound-receiving.events`: nine
+types (`ASNRegistered`, `ASNCancelled`, `AsnLateForArrival`, `ReceiptOpened`,
 `ReceiptLineReceived`, `ReceiptCartonReceived`, `CartonDiscrepancyRaised`,
 `ReceiptClosed`, `ReceiptStowCompleted`) and no longer the four legacy `DockAppointment*` types ([ADR 0019](/docs/adr/0019-dockappointment-moves-to-dock-scheduling),
 retired from the contract by [ADR 0022](/docs/adr/0022-stage-e-removes-the-backfill-the-legacy-encoders-and-replay)). None of its
@@ -25,8 +25,9 @@ non-test Go for `com.warehouse.wms.inbound-receiving.*` types).
 | `dock-scheduling` | `asn.ASNRegistered`, `asn.ASNCancelled` | `ASN_CONSUMER_GROUP` | ASN copy (an appointment can only cover a known, not-cancelled ASN; CANCELLED is sticky); its legacy importer of the `dockappointment` types was removed (dock-scheduling ADR 0011) | 0003, 0009 |
 
 `receipt.ReceiptStowCompleted` (the dock-to-stock fact, [ADR 0021](/docs/adr/0021-dock-to-stock-kpi-from-yard-arrival-and-inventory-stow-facts))
-has **no consumer yet** outside this service's own projector, which folds its
-analytics copy into `GET /reports/receiving-performance`.
+and `asn.AsnLateForArrival` (the ASN-timeliness fact, [ADR 0025](/docs/adr/0025-asn-timeliness-from-the-visit-arrival-copy-and-flat-soi-asn-receiving))
+have **no consumer yet** outside this service's own projector, which folds their
+analytics copies into `GET /reports/receiving-performance`.
 
 `receipt.ReceivingAdviceIssued` and `receipt.ReceivingAdviceOverdue` (the receiving
 advice with W13/CBV-coded discrepancies and its SLA alarm,
@@ -93,8 +94,8 @@ plan, not here.
 
 ## Events with no consumer yet
 
-Seven of the eight current types have at least one consumer (the table above);
-`ReceiptStowCompleted` has none yet (see above). The four retired
+Seven of the nine current types have at least one consumer (the table above);
+`ReceiptStowCompleted` and `AsnLateForArrival` have none yet (see above). The four retired
 `DockAppointment*` types have none: dock-scheduling's importer is removed
 (its ADR 0011) and this context no longer declares them (ADR 0022).
 All types are also copied to the internal analytics topic, whose only consumer
