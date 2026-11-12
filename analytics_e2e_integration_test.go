@@ -411,6 +411,8 @@ func assertReceivingPerformance(t *testing.T, got e2eReport) {
 			"dock_dwell":    zeroTiming,
 			"dock_to_stock": zeroDockToStock,
 			"advice":        zeroAdvice,
+			// ASN-1..3 all registered 2026-10-05 for ACME, none late (ADR 0025).
+			"asn_timeliness": []any{map[string]any{"supplier_ref": "ACME", "registered": 3.0, "late": 0.0, "share_on_time": 1.0}},
 		},
 		{
 			"day": "2026-10-06", "receipts_closed": 1.0, "lines_received": 3.0, "units_good": 15.0, "units_damaged": 1.0,
@@ -421,6 +423,8 @@ func assertReceivingPerformance(t *testing.T, got e2eReport) {
 			"dock_to_stock": map[string]any{"count": 1.0, "p50_seconds": 7200.0, "p90_seconds": 7200.0, "under_target": 1.0, "share_under_target": 1.0},
 			// The receipt closed 09:30, minutes after its last unit: the advice is inside the 24 h SLA.
 			"advice": map[string]any{"count": 1.0, "within_sla": 1.0, "share_within_sla": 1.0},
+			// No ASN was registered on 10-06: the block is empty, never null.
+			"asn_timeliness": []any{},
 		},
 	}
 	if !reflect.DeepEqual(got.Days, wantDays) {
