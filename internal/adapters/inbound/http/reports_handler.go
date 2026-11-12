@@ -55,6 +55,16 @@ type adviceDTO struct {
 	ShareWithinSLA *float64 `json:"share_within_sla"`
 }
 
+// supplierTimelinessDTO is one supplier's ASN timeliness of a day (ADR 0025):
+// the day's ASNs registered for it, how many were late for their visit's
+// arrival, and the on-time share (null while none was registered).
+type supplierTimelinessDTO struct {
+	SupplierRef string   `json:"supplier_ref"`
+	Registered  int      `json:"registered"`
+	Late        int      `json:"late"`
+	ShareOnTime *float64 `json:"share_on_time"`
+}
+
 type discrepanciesDTO struct {
 	Short   int `json:"short"`
 	Over    int `json:"over"`
@@ -69,17 +79,18 @@ type appointmentsDTO struct {
 }
 
 type performanceDayDTO struct {
-	Day            string           `json:"day"`
-	ReceiptsClosed int              `json:"receipts_closed"`
-	LinesReceived  int              `json:"lines_received"`
-	UnitsGood      int64            `json:"units_good"`
-	UnitsDamaged   int64            `json:"units_damaged"`
-	Discrepancies  discrepanciesDTO `json:"discrepancies"`
-	ReceiptCycle   timingDTO        `json:"receipt_cycle"`
-	Appointments   appointmentsDTO  `json:"appointments"`
-	DockDwell      timingDTO        `json:"dock_dwell"`
-	DockToStock    dockToStockDTO   `json:"dock_to_stock"`
-	Advice         adviceDTO        `json:"advice"`
+	Day            string                  `json:"day"`
+	ReceiptsClosed int                     `json:"receipts_closed"`
+	LinesReceived  int                     `json:"lines_received"`
+	UnitsGood      int64                   `json:"units_good"`
+	UnitsDamaged   int64                   `json:"units_damaged"`
+	Discrepancies  discrepanciesDTO        `json:"discrepancies"`
+	ReceiptCycle   timingDTO               `json:"receipt_cycle"`
+	Appointments   appointmentsDTO         `json:"appointments"`
+	DockDwell      timingDTO               `json:"dock_dwell"`
+	DockToStock    dockToStockDTO          `json:"dock_to_stock"`
+	Advice         adviceDTO               `json:"advice"`
+	AsnTimeliness  []supplierTimelinessDTO `json:"asn_timeliness"`
 }
 
 type currentDTO struct {
@@ -137,8 +148,19 @@ func dayToDTO(d report.PerformanceDay) performanceDayDTO {
 			Count: d.DockToStock.Count, P50Seconds: d.DockToStock.P50, P90Seconds: d.DockToStock.P90,
 			UnderTarget: d.DockToStock.UnderTarget, ShareUnderTarget: d.DockToStock.ShareUnderTarget,
 		},
-		Advice: adviceDTO{Count: d.Advice.Count, WithinSLA: d.Advice.WithinSLA, ShareWithinSLA: d.Advice.ShareWithinSLA},
+		Advice:        adviceDTO{Count: d.Advice.Count, WithinSLA: d.Advice.WithinSLA, ShareWithinSLA: d.Advice.ShareWithinSLA},
+		AsnTimeliness: timelinessToDTO(d.AsnTimeliness),
 	}
+}
+
+// timelinessToDTO keeps the day's bounded supplier list; an empty block is an
+// empty array, never null.
+func timelinessToDTO(rows []report.SupplierTimeliness) []supplierTimelinessDTO {
+	out := make([]supplierTimelinessDTO, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, supplierTimelinessDTO{SupplierRef: r.SupplierRef, Registered: r.Registered, Late: r.Late, ShareOnTime: r.ShareOnTime})
+	}
+	return out
 }
 
 // handleReceivingPerformance serves the per-day counts over ?from=&to= and
