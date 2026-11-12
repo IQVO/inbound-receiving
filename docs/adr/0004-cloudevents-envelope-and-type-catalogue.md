@@ -38,6 +38,7 @@ catalogue of every type inbound-receiving publishes or consumes;
 |---|---|---|---|
 | `com.warehouse.wms.inbound-receiving.asn.ASNRegistered` | asn_number | asn_number | an ASN is registered |
 | `com.warehouse.wms.inbound-receiving.asn.ASNCancelled` | asn_number | asn_number | a Registered ASN is cancelled |
+| `com.warehouse.wms.inbound-receiving.asn.AsnLateForArrival` | asn_number | asn_number | at OpenReceipt, the ASN was registered after the visit it is received under had already arrived (ADR 0025) |
 | `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentBooked` | appointment_id | appointment_id | (retired, ADR 0022) a door window is booked |
 | `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCheckedIn` | appointment_id | appointment_id | (retired, ADR 0022) the carrier checks in |
 | `com.warehouse.wms.inbound-receiving.dockappointment.DockAppointmentCancelled` | appointment_id | appointment_id | (retired, ADR 0022) a Booked appointment is cancelled |
@@ -60,8 +61,9 @@ guaranteed; consumers must not depend on it.
 
 | type (entity.Event) | fields |
 |---|---|
-| `asn.ASNRegistered` | `asn_number`, `supplier_ref`, `expected_arrival?`, `lines[]` = `{line_no, sku, expected_qty}` |
+| `asn.ASNRegistered` | `asn_number`, `supplier_ref`, `expected_arrival?`, `registered_at?` (ADR 0025), `lines[]` = `{line_no, sku, expected_qty}` |
 | `asn.ASNCancelled` | `asn_number`, `reason?` |
+| `asn.AsnLateForArrival` | `asn_number`, `supplier_ref`, `appointment_id`, `visit_id`, `asn_registered_at`, `arrived_at`, `lateness_seconds` (ADR 0025) |
 | `dockappointment.DockAppointmentBooked` | `appointment_id`, `door_code`, `carrier`, `window_start`, `window_end`, `asn_numbers[]` |
 | `dockappointment.DockAppointmentCheckedIn` | `appointment_id`, `door_code`, `checked_in_at` |
 | `dockappointment.DockAppointmentCancelled` | `appointment_id`, `door_code`, `reason?` |
