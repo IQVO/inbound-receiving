@@ -97,3 +97,25 @@ func TestAsnTimelinessBound(t *testing.T) {
 }
 
 func ptr(v float64) *float64 { return &v }
+
+// A count tie keeps the NAME order whatever the map iterated: the stable
+// sort must not move equal counts (the boundary mutant that reorders a tie
+// fails here deterministically).
+func TestAsnTimelinessTieKeepsNameOrder(t *testing.T) {
+	got := AsnTimelinessOf(map[string]int{"ZULU": 5, "ALPHA": 5, "MIKE": 5}, nil)
+	want := []string{"ALPHA", "MIKE", "ZULU"}
+	for i, name := range want {
+		if got[i].SupplierRef != name {
+			t.Fatalf("row %d = %s, want %s (tie must stay name-ascending)", i, got[i].SupplierRef, name)
+		}
+	}
+}
+
+// Name order opposite to count order: rank follows the COUNT, not the name
+// (kills a comparator that falls back to the name for differing counts).
+func TestAsnTimelinessRankBeatsName(t *testing.T) {
+	got := AsnTimelinessOf(map[string]int{"AAA": 1, "ZZZ": 9}, nil)
+	if got[0].SupplierRef != "ZZZ" || got[1].SupplierRef != "AAA" {
+		t.Fatalf("rank = %s then %s, want ZZZ (9 registered) then AAA (1)", got[0].SupplierRef, got[1].SupplierRef)
+	}
+}

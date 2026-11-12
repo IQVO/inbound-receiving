@@ -1,6 +1,10 @@
 package report
 
-import "sort"
+import (
+	"maps"
+	"slices"
+	"sort"
+)
 
 // MaxTimelinessSuppliers bounds the per-supplier asn_timeliness block of a
 // day (ADR 0025): at most the day's top ten suppliers by ASNs registered,
@@ -26,15 +30,19 @@ type SupplierTimeliness struct {
 // once, and the list is cut at MaxTimelinessSuppliers, biggest registered
 // count first, ties by supplier_ref ascending.
 func AsnTimelinessOf(registered, late map[string]int) []SupplierTimeliness {
-	seen := make(map[string]bool, len(registered)+len(late))
-	out := make([]SupplierTimeliness, 0, len(registered)+len(late))
+	seen := make(map[string]bool)
 	for s := range registered {
 		seen[s] = true
 	}
 	for s := range late {
 		seen[s] = true
 	}
-	for s := range seen {
+	// Rows are built in supplier_ref order (sorted keys), then counted into
+	// place with a STABLE sort on the registered count alone: the tie order
+	// is therefore the name order, deterministically, whatever the map's
+	// iteration order was.
+	out := make([]SupplierTimeliness, 0, len(seen))
+	for _, s := range slices.Sorted(maps.Keys(seen)) {
 		row := SupplierTimeliness{SupplierRef: s, Registered: registered[s], Late: late[s]}
 		if row.Registered > 0 {
 			share := 1 - float64(row.Late)/float64(row.Registered)
@@ -42,15 +50,10 @@ func AsnTimelinessOf(registered, late map[string]int) []SupplierTimeliness {
 		}
 		out = append(out, row)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Registered != out[j].Registered {
-			return out[i].Registered > out[j].Registered
-		}
-		return out[i].SupplierRef < out[j].SupplierRef
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Registered > out[j].Registered
 	})
-	if len(out) > MaxTimelinessSuppliers {
-		out = out[:MaxTimelinessSuppliers]
-	}
+	out = out[:min(len(out), MaxTimelinessSuppliers)]
 	if len(out) == 0 {
 		return nil
 	}
