@@ -169,6 +169,9 @@ type Discrepancy struct {
 	ExpectedQty int64
 	ReceivedQty int64
 	DamagedQty  int64
+	// Reason is the override reason code the operator confirmed, set exactly
+	// on the tolerance kinds (ADR 0026).
+	Reason OverrideReason
 }
 
 // Persisted is the stored shape of a receipt, used to rebuild one.
@@ -371,14 +374,22 @@ func (r *Receipt) Close(at time.Time) ([]Event, error) {
 	if r.state != StateOpen {
 		return nil, ErrReceiptClosed
 	}
+	return r.finishClose(at, r.Discrepancies(), nil), nil
+}
+
+// finishClose is the shared body of Close and CloseUnderPolicy: the state
+// change, the MissingCarton findings of never-accepted manifest cartons, then
+// ReceiptClosed. applied is the tolerance the close was judged under (nil =
+// no policy, ADR 0026).
+func (r *Receipt) finishClose(at time.Time, discrepancies []Discrepancy, applied *AppliedPolicy) []Event {
 	r.state = StateClosed
 	r.closedAt = at.UTC()
 	r.version++
 	// Manifest cartons never accepted are raised first (MissingCarton), then
 	// ReceiptClosed; the receiving advice (ADR 0023) follows it, raised by
-	// the use case. ReceiptClosed itself keeps its three line-level kinds.
-	closed := ReceiptClosed{Header: r.header(at), Discrepancies: r.Discrepancies()}
-	return append(r.missingCartonEvents(at), closed), nil
+	// the use case. ReceiptClosed itself keeps its line-level kinds.
+	closed := ReceiptClosed{Header: r.header(at), Discrepancies: discrepancies, Tolerance: applied}
+	return append(r.missingCartonEvents(at), closed)
 }
 
 // Discrepancies computes the differences between announced and received

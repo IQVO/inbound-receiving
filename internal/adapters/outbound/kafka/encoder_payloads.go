@@ -139,6 +139,9 @@ type discrepancyData struct {
 	DamagedQty     int64  `json:"damaged_qty"`
 	W13Code        string `json:"w13_code,omitempty"`
 	CBVDisposition string `json:"cbv_disposition,omitempty"`
+	// ReasonCode is the override reason the tolerance kinds carry (ADR 0026);
+	// absent on every other kind.
+	ReasonCode string `json:"reason_code,omitempty"`
 }
 
 type receiptClosedData struct {
@@ -146,6 +149,29 @@ type receiptClosedData struct {
 	AsnNumber     string            `json:"asn_number"`
 	ClosedAt      string            `json:"closed_at"`
 	Discrepancies []discrepancyData `json:"discrepancies"`
+	// Tolerance is the policy the close was judged under (ADR 0026); absent
+	// when no policy was declared.
+	Tolerance *toleranceData `json:"tolerance,omitempty"`
+}
+
+// toleranceData is the band a close was judged under (ADR 0026).
+type toleranceData struct {
+	OverTolerance  float64 `json:"over_tolerance"`
+	UnderTolerance float64 `json:"under_tolerance"`
+	OverHardStop   float64 `json:"over_hard_stop"`
+	UnderHardStop  float64 `json:"under_hard_stop"`
+}
+
+// policyDeclaredData is the payload of ReceivingPolicyDeclared (ADR 0026).
+type policyDeclaredData struct {
+	SupplierRef    string  `json:"supplier_ref"`
+	OwnerRef       string  `json:"owner_ref,omitempty"`
+	OverTolerance  float64 `json:"over_tolerance"`
+	UnderTolerance float64 `json:"under_tolerance"`
+	OverHardStop   float64 `json:"over_hard_stop"`
+	UnderHardStop  float64 `json:"under_hard_stop"`
+	Version        int64   `json:"version"`
+	DeclaredAt     string  `json:"declared_at"`
 }
 
 // stowCompletedData is the payload of ReceiptStowCompleted (ADR 0021).
@@ -166,6 +192,8 @@ type adviceDiscrepancyData struct {
 	Quantity       int64  `json:"quantity"`
 	W13Code        string `json:"w13_code,omitempty"`
 	CBVDisposition string `json:"cbv_disposition"`
+	// ReasonCode is the override reason the tolerance kinds carry (ADR 0026).
+	ReasonCode string `json:"reason_code,omitempty"`
 }
 
 type adviceLineData struct {

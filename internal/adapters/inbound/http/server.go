@@ -44,6 +44,10 @@ type Server struct {
 	GetReceipt       *usecases.GetReceipt
 	ListReceipts     *usecases.ListReceipts
 	ListDocks        *usecases.ListDocks
+	// DeclareReceivingPolicy and GetReceivingPolicy back the declarative
+	// admin surface of ADR 0026.
+	DeclareReceivingPolicy *usecases.DeclareReceivingPolicy
+	GetReceivingPolicy     *usecases.GetReceivingPolicy
 
 	// Idempotency backs the Idempotency-Key middleware.
 	Idempotency ports.IdempotencyStore
@@ -109,6 +113,10 @@ func NewRouter(s *Server) http.Handler {
 	keyed.Post("/receipts/{receiptId}/scans", s.handleReceiveScan)
 	keyed.Post("/receipts/{receiptId}/closures", s.handleCloseReceipt)
 	keyed.Post("/receipts/{receiptId}/sscc-assignments", s.handleAssignSscc)
+
+	// The receiving tolerance policy's declarative admin surface (ADR 0026).
+	keyed.Post("/receiving-policies", s.handleDeclareReceivingPolicy)
+	r.Get("/receiving-policies/{supplierRef}", s.handleGetReceivingPolicy)
 
 	r.Get("/docks", s.handleListDocks)
 	return r

@@ -8,6 +8,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
+	"github.com/claudioed/inbound-receiving/internal/domain/policy"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 	"github.com/claudioed/inbound-receiving/internal/domain/shared"
 	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
@@ -72,6 +73,9 @@ var problemCatalogue = []struct {
 	{appointment.ErrInvalidID, bad("invalid-appointment-id", "Appointment id is invalid")},
 	{receipt.ErrInvalidID, bad("invalid-receipt-id", "Receipt id is invalid")},
 	{appointment.ErrInvalidDoorCode, bad("invalid-door-code", "Door code is invalid")},
+	// ADR 0026: the policy admin surface's value validations.
+	{receipt.ErrInvalidOverrideReason, bad("invalid-override-reason", "Override reason must be one of the declared receiving reason codes")},
+	{policy.ErrInvalidBand, bad("invalid-tolerance-band", "Tolerance band must satisfy 0 <= tolerance < hardStop <= 1 per side")},
 	{appointment.ErrInvalidCarrier, bad("invalid-carrier", "Carrier is invalid")},
 	{appointment.ErrInvalidWindow, bad("invalid-window", "Window is invalid")},
 	{appointment.ErrNoAsns, bad("appointment-requires-asns", "An appointment requires at least one ASN")},
@@ -93,6 +97,7 @@ var problemCatalogue = []struct {
 	{repository.ErrAsnNotFound, notFound("asn-not-found", "ASN not found")},
 	{repository.ErrAppointmentNotFound, notFound("appointment-not-found", "Appointment not found")},
 	{repository.ErrReceiptNotFound, notFound("receipt-not-found", "Receipt not found")},
+	{repository.ErrPolicyNotFound, notFound("receiving-policy-not-found", "No receiving policy is declared for this owner and supplier")},
 	{usecases.ErrCartonNotFound, notFound("carton-not-found", "Carton not found on the receipt")},
 
 	{usecases.ErrAsnAlreadyExists, conflict("asn-already-exists", "ASN already exists")},
@@ -103,6 +108,10 @@ var problemCatalogue = []struct {
 	{asn.ErrAsnNotReceiving, conflict("asn-not-receivable", "ASN is not being received")},
 	{repository.ErrReceiptAlreadyOpen, conflict("receipt-already-open", "ASN already has an open receipt")},
 	{receipt.ErrReceiptClosed, conflict("receipt-closed", "Receipt is closed")},
+	// ADR 0026: the two tolerance refusals. The detail carries the line, its
+	// quantities, the variance and the band it was judged against.
+	{receipt.ErrToleranceOverrideRequired, conflict("tolerance-override-required", "The variance is beyond the tolerance band: an override reason code is required")},
+	{receipt.ErrToleranceBlocked, conflict("tolerance-blocked", "The variance is at or beyond the tolerance hard stop: no override can pass and the receipt stays open")},
 	// ADR 0024: no company prefix is configured (a licensed asset, no default), or its serials are used up.
 	{receipt.ErrCompanyPrefixNotConfigured, conflict("sscc-prefix-not-configured", "No GS1 company prefix is configured for receiver-assigned SSCCs")},
 	{repository.ErrSsccSerialsExhausted, conflict("sscc-serial-exhausted", "Every SSCC serial of the company prefix has been used")},

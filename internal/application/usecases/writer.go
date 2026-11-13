@@ -19,12 +19,16 @@ import (
 // read side of the local copy (OpenReceipt validates against it); this
 // context never writes an appointment from a use case (ADR 0019). Stows is
 // the dock-to-stock store (ADR 0021): when it is nil no stow completion is
-// evaluated, which only a test may do; cmd/api always sets it.
+// evaluated, which only a test may do; cmd/api always sets it. Advice holds
+// the receiving advice markers (ADR 0023) with the same nil rule. Policies
+// is the receiving-policy store (ADR 0026): nil (or a not-found key) means
+// no policy is declared and receiving keeps today's behaviour.
 type Writer struct {
 	Asns         ports.AsnRepository
 	Appointments ports.AppointmentRepository
 	Receipts     ports.ReceiptRepository
 	Stows        ports.StowStore
+	Policies     ports.ReceivingPolicyRepository
 	// Advice holds the receiving advice markers (ADR 0023): when it is nil no
 	// advice is issued and no overdue is raised, which only a test may do;
 	// cmd/api always sets it. AdviceSLA is the committed window (a zero or

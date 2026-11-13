@@ -12,6 +12,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
+	"github.com/claudioed/inbound-receiving/internal/domain/policy"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
 )
@@ -26,7 +27,8 @@ var stowT0 = time.Date(2026, 11, 9, 5, 0, 0, 0, time.UTC)
 // stowEncoder is a one-row-per-event encoder that names the event.
 type stowEncoder struct{}
 
-func (stowEncoder) EncodeAsn(...asn.Event) ([]outbox.Message, error) { return nil, nil }
+func (stowEncoder) EncodeAsn(...asn.Event) ([]outbox.Message, error)       { return nil, nil }
+func (stowEncoder) EncodePolicy(...policy.Event) ([]outbox.Message, error) { return nil, nil }
 func (stowEncoder) EncodeReceipt(events ...receipt.Event) ([]outbox.Message, error) {
 	out := make([]outbox.Message, 0, len(events))
 	for _, e := range events {

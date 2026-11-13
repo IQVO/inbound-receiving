@@ -16,6 +16,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
+	"github.com/claudioed/inbound-receiving/internal/domain/policy"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
 
@@ -27,6 +28,7 @@ const Topic = "warehouse.inbound-receiving.events"
 const (
 	EntityAsn     = "asn"
 	EntityReceipt = "receipt"
+	EntityPolicy  = "policy"
 )
 
 // schemaVersion is the dataschema version of every payload below
@@ -68,6 +70,11 @@ func (e *Encoder) EncodeAsn(events ...asn.Event) ([]outbox.Message, error) {
 // EncodeReceipt encodes Receipt events in order.
 func (e *Encoder) EncodeReceipt(events ...receipt.Event) ([]outbox.Message, error) {
 	return encodeAll(e, events, receiptRow)
+}
+
+// EncodePolicy encodes ReceivingPolicy events in order (ADR 0026).
+func (e *Encoder) EncodePolicy(events ...policy.Event) ([]outbox.Message, error) {
+	return encodeAll(e, events, policyRow)
 }
 
 func encodeAll[T interface{ EventName() string }](e *Encoder, events []T, toRow func(T) (row, error)) ([]outbox.Message, error) {
@@ -127,6 +134,23 @@ func build(r row, id, topic, stream string) (outbox.Message, error) {
 }
 
 func ts(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
+
+// policyRow maps a ReceivingPolicy event to its row (ADR 0026): subject and
+// key are the supplier reference, the owner variant travels in the payload.
+func policyRow(ev policy.Event) (row, error) {
+	e, ok := ev.(policy.ReceivingPolicyDeclared)
+	if !ok {
+		return row{}, fmt.Errorf("kafka encoder: %s is not a published policy event", ev.EventName())
+	}
+	return row{
+		entity: EntityPolicy, eventName: ev.EventName(), subject: e.SupplierRef, key: e.SupplierRef, at: ev.OccurredAt(),
+		data: policyDeclaredData{
+			SupplierRef: e.SupplierRef, OwnerRef: string(e.OwnerRef),
+			OverTolerance: e.Over, UnderTolerance: e.Under, OverHardStop: e.OverStop, UnderHardStop: e.UnderStop,
+			Version: e.Version, DeclaredAt: ts(e.DeclaredAt),
+		},
+	}, nil
+}
 
 func asnRow(ev asn.Event) (row, error) {
 	number := string(ev.AsnNumber())
@@ -222,9 +246,17 @@ func receiptRow(ev receipt.Event) (row, error) {
 				LineNo: d.LineNo, SKU: string(d.SKU), Kind: string(d.Kind),
 				ExpectedQty: d.ExpectedQty, ReceivedQty: d.ReceivedQty, DamagedQty: d.DamagedQty,
 				W13Code: string(coding.W13), CBVDisposition: string(coding.CBV),
+				ReasonCode: string(d.Reason),
 			})
 		}
-		r.data = receiptClosedData{ReceiptID: id, AsnNumber: number, ClosedAt: ts(e.At), Discrepancies: ds}
+		var tol *toleranceData
+		if e.Tolerance != nil {
+			tol = &toleranceData{
+				OverTolerance: e.Tolerance.Band.Over, UnderTolerance: e.Tolerance.Band.Under,
+				OverHardStop: e.Tolerance.Band.OverStop, UnderHardStop: e.Tolerance.Band.UnderStop,
+			}
+		}
+		r.data = receiptClosedData{ReceiptID: id, AsnNumber: number, ClosedAt: ts(e.At), Discrepancies: ds, Tolerance: tol}
 	case receipt.ReceiptStowCompleted:
 		r.data = stowCompletedData{
 			ReceiptID: id, AsnNumber: number, AppointmentID: string(e.AppointmentID), ArrivedAt: ts(e.ArrivedAt),
@@ -252,6 +284,7 @@ func receivingAdviceIssued(id, number string, e receipt.ReceivingAdviceIssued) r
 		for _, d := range l.Discrepancies {
 			ds = append(ds, adviceDiscrepancyData{
 				Kind: string(d.Kind), Quantity: d.Quantity, W13Code: string(d.Coding.W13), CBVDisposition: string(d.Coding.CBV),
+				ReasonCode: string(d.Reason),
 			})
 		}
 		var ssccs []string

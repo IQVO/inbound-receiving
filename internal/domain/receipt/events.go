@@ -71,10 +71,12 @@ type ReceiptLineReceived struct {
 func (ReceiptLineReceived) EventName() string { return "ReceiptLineReceived" }
 
 // ReceiptClosed is raised when receiving ends. Discrepancies is empty (not
-// nil) when everything matched.
+// nil) when everything matched. Tolerance is the receiving policy the close
+// was judged under (nil when none was declared, ADR 0026).
 type ReceiptClosed struct {
 	Header
 	Discrepancies []Discrepancy
+	Tolerance     *AppliedPolicy
 }
 
 // EventName returns "ReceiptClosed".

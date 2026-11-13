@@ -264,7 +264,7 @@ func TestAdviceLinesCarryTheEarliestDates(t *testing.T) {
 	if _, err := r.Close(at(9)); err != nil {
 		t.Fatal(err)
 	}
-	ev, err := r.IssueAdvice("ACME", 24*time.Hour, at(10))
+	ev, err := r.IssueAdvice("ACME", 24*time.Hour, at(10), AppliedPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}

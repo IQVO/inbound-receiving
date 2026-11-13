@@ -5,6 +5,7 @@ import (
 
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
+	"github.com/claudioed/inbound-receiving/internal/domain/policy"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
 
@@ -23,6 +24,7 @@ type OutboxRepository interface {
 type EventEncoder interface {
 	EncodeAsn(events ...asn.Event) ([]outbox.Message, error)
 	EncodeReceipt(events ...receipt.Event) ([]outbox.Message, error)
+	EncodePolicy(events ...policy.Event) ([]outbox.Message, error)
 }
 
 // ProcessedEvents is the inbound-consumer idempotency guard. Claim records

@@ -14,6 +14,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 	"github.com/claudioed/inbound-receiving/internal/domain/appointment"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
+	"github.com/claudioed/inbound-receiving/internal/domain/policy"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 	"github.com/claudioed/inbound-receiving/internal/domain/shared"
 	"github.com/claudioed/inbound-receiving/internal/domain/shared/gs1"
@@ -154,6 +155,14 @@ func (fakeEncoder) EncodeAsn(events ...asn.Event) ([]outbox.Message, error) {
 	out := make([]outbox.Message, 0, len(events))
 	for _, e := range events {
 		out = append(out, outbox.Message{EventType: "asn." + e.EventName(), Subject: string(e.AsnNumber())})
+	}
+	return out, nil
+}
+
+func (fakeEncoder) EncodePolicy(events ...policy.Event) ([]outbox.Message, error) {
+	out := make([]outbox.Message, 0, len(events))
+	for _, e := range events {
+		out = append(out, outbox.Message{EventType: "policy." + e.EventName(), Subject: e.Key()})
 	}
 	return out, nil
 }

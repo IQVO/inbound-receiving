@@ -39,6 +39,10 @@ var (
 	// ErrSsccSerialsExhausted is returned by SsccSerials when every serial
 	// reference of the company prefix has been given (ADR 0024).
 	ErrSsccSerialsExhausted = errors.New("every SSCC serial of the company prefix has been used")
+	// ErrPolicyNotFound is returned by ReceivingPolicyRepository.Get for an
+	// unknown (ownerRef, supplierRef) key (ADR 0026): no policy is declared,
+	// which is exactly today's receiving behaviour.
+	ErrPolicyNotFound = errors.New("receiving policy not found")
 )
 
 // AsnFilter narrows AsnRepository.List. The zero value means no filter.

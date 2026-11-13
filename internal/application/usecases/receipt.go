@@ -200,10 +200,14 @@ func (uc *ReceiveLine) Handle(ctx context.Context, cmd ReceiveLineCommand) (*rec
 	return out, nil
 }
 
-// CloseReceiptCommand is the input of CloseReceipt.
+// CloseReceiptCommand is the input of CloseReceipt. OverrideReason is the
+// optional tolerance override of ADR 0026: required when a line sits between
+// the declared band and its hard stop, refused as unknown when not on the
+// closed list.
 type CloseReceiptCommand struct {
 	ReceiptID       string
 	ExpectedVersion int64
+	OverrideReason  string
 }
 
 // CloseReceipt ends receiving. The receipt close and the ASN completion are
@@ -228,41 +232,16 @@ func (uc *CloseReceipt) Handle(ctx context.Context, cmd CloseReceiptCommand) (*r
 	if err != nil {
 		return nil, err
 	}
+	reason, err := parseOverrideReason(cmd.OverrideReason)
+	if err != nil {
+		return nil, err
+	}
 	var out *receipt.Receipt
 	var advice struct{ issued, withinSLA bool }
 	err = uc.UoW.Do(ctx, func(ctx context.Context) error {
-		r, err := uc.Receipts.Get(ctx, id)
-		if err != nil {
-			return err
-		}
-		loaded := r.Version()
-		if err := checkVersion(cmd.ExpectedVersion, loaded); err != nil {
-			return err
-		}
-		now := uc.now()
-		events, err := r.Close(now)
-		if err != nil {
-			return err
-		}
-		supplierRef, err := uc.completeAsn(ctx, r.AsnNumber())
-		if err != nil {
-			return err
-		}
-		if err := uc.saveReceipt(ctx, r, loaded, events); err != nil {
-			return err
-		}
-		// The receiving advice follows ReceiptClosed in the same unit of work
-		// (ADR 0023), once, behind its marker.
-		if advice.issued, advice.withinSLA, err = uc.issueAdvice(ctx, r, supplierRef, now); err != nil {
-			return err
-		}
-		// Stows and the arrival may have been seen while the receipt was
-		// open: evaluate now that it is closed (ADR 0021).
-		if err := uc.completeStow(ctx, r); err != nil {
-			return err
-		}
-		out = r
-		return nil
+		result, err := uc.close(ctx, id, cmd.ExpectedVersion, reason)
+		out, advice.issued, advice.withinSLA = result.receipt, result.adviceIssued, result.adviceWithinSLA
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -274,16 +253,78 @@ func (uc *CloseReceipt) Handle(ctx context.Context, cmd CloseReceiptCommand) (*r
 	return out, nil
 }
 
-// completeAsn completes the ASN of the closed receipt and returns the supplier
-// reference the receiving advice carries.
-func (uc *CloseReceipt) completeAsn(ctx context.Context, number asn.Number) (string, error) {
+// closeResult is what one close produced inside its unit of work.
+type closeResult struct {
+	receipt         *receipt.Receipt
+	adviceIssued    bool
+	adviceWithinSLA bool
+}
+
+// close is the body of the unit of work: load, judge the tolerance band,
+// close, complete the ASN, save, issue the advice and complete the stow.
+func (uc *CloseReceipt) close(ctx context.Context, id receipt.ID, expectedVersion int64, reason receipt.OverrideReason) (closeResult, error) {
+	r, err := uc.Receipts.Get(ctx, id)
+	if err != nil {
+		return closeResult{}, err
+	}
+	loaded := r.Version()
+	if err := checkVersion(expectedVersion, loaded); err != nil {
+		return closeResult{}, err
+	}
+	a, supplierRef, err := uc.asnOf(ctx, r.AsnNumber())
+	if err != nil {
+		return closeResult{}, err
+	}
+	// The receiving policy's band is resolved in the same unit of work as
+	// the close (ADR 0026): inside the band the variance accepts silently,
+	// between band and hard stop the reason code is required, at the hard
+	// stop the close is refused and the receipt stays open.
+	applied, err := uc.appliedPolicy(ctx, r, a)
+	if err != nil {
+		return closeResult{}, err
+	}
+	applied.Reason = reason
+	now := uc.now()
+	events, err := r.CloseUnderPolicy(now, applied)
+	if err != nil {
+		return closeResult{}, err
+	}
+	if err := uc.completeAsnLoaded(ctx, a); err != nil {
+		return closeResult{}, err
+	}
+	if err := uc.saveReceipt(ctx, r, loaded, events); err != nil {
+		return closeResult{}, err
+	}
+	// The receiving advice follows ReceiptClosed in the same unit of work
+	// (ADR 0023), once, behind its marker, judged under the same band.
+	issued, withinSLA, err := uc.issueAdvice(ctx, r, supplierRef, now, applied)
+	if err != nil {
+		return closeResult{}, err
+	}
+	// Stows and the arrival may have been seen while the receipt was open:
+	// evaluate now that it is closed (ADR 0021).
+	if err := uc.completeStow(ctx, r); err != nil {
+		return closeResult{}, err
+	}
+	return closeResult{receipt: r, adviceIssued: issued, adviceWithinSLA: withinSLA}, nil
+}
+
+// asnOf loads the receipt's ASN and returns it with the supplier reference
+// the receiving advice carries.
+func (uc *CloseReceipt) asnOf(ctx context.Context, number asn.Number) (*asn.Asn, string, error) {
 	a, err := uc.Asns.Get(ctx, number)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
+	return a, a.SupplierRef(), nil
+}
+
+// completeAsnLoaded completes the ASN of the closed receipt (already loaded
+// for the policy lookup, so the version guard stays exact).
+func (uc *CloseReceipt) completeAsnLoaded(ctx context.Context, a *asn.Asn) error {
 	loaded := a.Version()
 	if err := a.Complete(); err != nil {
-		return "", err
+		return err
 	}
-	return a.SupplierRef(), uc.saveAsn(ctx, a, loaded, nil)
+	return uc.saveAsn(ctx, a, loaded, nil)
 }
