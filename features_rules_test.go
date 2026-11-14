@@ -202,6 +202,20 @@ func (w *world) iCancelWithReasonOfLength(number string, n int) error {
 	return w.call(http.MethodPost, "/asns/"+number+"/cancellations", w.freshKey(), body, nil)
 }
 
+// lineIsCounted books a Good and a Damaged count on one line, skipping a zero
+// (a quantity of 0 is not a valid receive).
+func (w *world) lineIsCounted(line, good, damaged int) error {
+	if good > 0 {
+		if err := w.iReceive(good, line, "Good"); err != nil {
+			return err
+		}
+	}
+	if damaged > 0 {
+		return w.iReceive(damaged, line, "Damaged")
+	}
+	return nil
+}
+
 func (w *world) iReceiveWithIfMatch(version, body string) error {
 	return w.call(http.MethodPost, w.expand("/receipts/{receipt}/lines"), w.freshKey(), body, map[string]string{"If-Match": `"` + version + `"`})
 }
@@ -242,11 +256,11 @@ func (w *world) dockSchedulingSendsFollowUp(ctx context.Context, kind string, ve
 	id := w.nextEventID("bdd-appt-follow")
 	if kind == "reschedule" {
 		start, _ := time.Parse(time.RFC3339, "2026-10-09T14:00:00Z")
-		ev := usecases.DockAppointmentRescheduled{AppointmentID: w.appointment, DoorCode: "DOOR-STALE", WindowStart: start, WindowEnd: start.Add(time.Hour), Version: version}
+		ev := usecases.DockAppointmentRescheduled{AppointmentID: w.appointment, DoorCode: "DOOR-NEW", WindowStart: start, WindowEnd: start.Add(time.Hour), Version: version}
 		uc := &usecases.ApplyDockAppointmentRescheduled{UoW: w.uow, ProcessedEvents: w.processed, Appointments: w.appts}
 		w.rules.redeliverLast = func(ctx context.Context) (usecases.Outcome, error) { return uc.Handle(ctx, id, ev) }
 	} else {
-		ev := usecases.DockAppointmentDoorReassigned{AppointmentID: w.appointment, FromDoorCode: "DOOR-1", ToDoorCode: "DOOR-STALE", Version: version}
+		ev := usecases.DockAppointmentDoorReassigned{AppointmentID: w.appointment, FromDoorCode: "DOOR-1", ToDoorCode: "DOOR-NEW", Version: version}
 		uc := &usecases.ApplyDockAppointmentDoorReassigned{UoW: w.uow, ProcessedEvents: w.processed, Appointments: w.appts}
 		w.rules.redeliverLast = func(ctx context.Context) (usecases.Outcome, error) { return uc.Handle(ctx, id, ev) }
 	}
@@ -389,13 +403,14 @@ func (w *world) registerRules(sc *godog.ScenarioContext) {
 
 	sc.Step(`^I POST "([^"]*)" with an idempotency key of (\d+) characters and body '(.*)'$`, w.iPOSTWithKeyOfLength)
 	sc.Step(`^I cancel the ASN "([^"]*)" with a reason of (\d+) characters$`, w.iCancelWithReasonOfLength)
+	sc.Step(`^line (\d+) is counted (\d+) Good and (\d+) Damaged$`, w.lineIsCounted)
 	sc.Step(`^I receive with If-Match "([^"]*)" the body '(.*)'$`, w.iReceiveWithIfMatch)
 	sc.Step(`^I close the receipt with If-Match "([^"]*)"$`, w.iCloseWithIfMatch)
 
 	sc.Step(`^an appointment at door "([^"]*)" from "([^"]*)" to "([^"]*)" covers the ASNs "([^"]*)"$`, w.anAppointmentCoversAsns)
 	sc.Step(`^dock-scheduling announces an appointment with direction "([^"]*)" at door "([^"]*)" from "([^"]*)" to "([^"]*)" for the ASNs "([^"]*)" at version (\d+)$`, w.dockSchedulingAnnounces)
 	sc.Step(`^dock-scheduling sends a (reschedule|reassignment) of the appointment at version (\d+)$`, w.dockSchedulingSendsFollowUp)
-	sc.Step(`^dock-scheduling redelivers the last follow-up announcement$`, w.dockSchedulingRedeliversFollowUp)
+	sc.Step(`^the last follow-up announcement is redelivered$`, w.dockSchedulingRedeliversFollowUp)
 	sc.Step(`^dock-scheduling cancels the appointment at version (\d+)$`, w.dockSchedulingCancelsAtVersion)
 	sc.Step(`^dock-scheduling cancels an appointment this service never copied$`, w.dockSchedulingCancelsANeverCopied)
 
