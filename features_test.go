@@ -99,6 +99,8 @@ type world struct {
 	siteGLNs receipt.SiteGLNs
 	prefix   receipt.CompanyPrefix
 	serials  *memory.SsccSerials
+	// rules holds the readiness gate and the reports service of the documentation-derived rules.
+	rules rulesState
 }
 
 func (w *world) start() {
@@ -113,6 +115,7 @@ func (w *world) start() {
 	w.lpn, w.limits = "", receipt.CartonLimits{}
 	w.siteGLNs, w.prefix, w.serials = receipt.SiteGLNs{}, receipt.CompanyPrefix{}, memory.NewSsccSerials()
 	w.wave2, w.apptSeq, w.apptVersion, w.lastAppt, w.stowFeed = wave2State{}, 0, 0, apptAnnouncement{}, stowFeed{}
+	w.rules = rulesState{}
 	w.stows, w.advice, w.holdErr = memory.NewStowStore(receipts), memory.NewAdviceStore(receipts), nil
 	uow := memory.NewUnitOfWork(asns, appts, receipts, w.skus, w.doors, w.packaging, ob, processed, w.stows, w.advice)
 	w.uow = uow
@@ -143,6 +146,7 @@ func (w *world) start() {
 			ListReceipts:     &usecases.ListReceipts{Receipts: receipts},
 			ListDocks:        &usecases.ListDocks{Doors: w.doors, Mode: w.doorMode},
 			Idempotency:      idem,
+			Readiness:        w.rules.readiness,
 		}
 		return httptest.NewServer(inboundhttp.NewRouter(s))
 	}
@@ -523,4 +527,5 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	w.registerStows(sc)
 	w.registerAdvice(sc)
 	w.registerAsnTimeliness(sc)
+	w.registerRules(sc)
 }
