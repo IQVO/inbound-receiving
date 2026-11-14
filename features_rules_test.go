@@ -173,8 +173,11 @@ func (w *world) theOutboxHoldsN(n int, kind string) error {
 // as "Kind@line" pairs in order, or "none".
 func (w *world) theDiscrepanciesAre(want string) error {
 	v, ok, err := w.field("discrepancies")
-	if err != nil || !ok {
-		return fmt.Errorf("no discrepancies in %s (%v)", w.body, err)
+	if err != nil {
+		return fmt.Errorf("no discrepancies in %s: %w", w.body, err)
+	}
+	if !ok {
+		return fmt.Errorf("no discrepancies in %s", w.body)
 	}
 	items, _ := v.([]any)
 	got := make([]string, 0, len(items))
@@ -234,8 +237,11 @@ func (w *world) anAppointmentCoversAsns(ctx context.Context, door, from, to, asn
 	}
 	e.AsnNumbers = splitList(asns)
 	w.feedBooked(ctx, e)
-	if w.wave2.err != nil || w.wave2.outcome != usecases.Applied {
-		return fmt.Errorf("setup: booking gave %q: %v", w.wave2.outcome, w.wave2.err)
+	if w.wave2.err != nil {
+		return fmt.Errorf("setup: booking gave %q: %w", w.wave2.outcome, w.wave2.err)
+	}
+	if w.wave2.outcome != usecases.Applied {
+		return fmt.Errorf("setup: booking gave %q, want %q", w.wave2.outcome, usecases.Applied)
 	}
 	w.appointment, w.apptVersion = e.AppointmentID, e.Version
 	return nil
