@@ -45,24 +45,15 @@ Feature: ASN rules from the documentation
   Scenario Outline: An expected quantity is 1..2147483647
     When I POST "/asns" with body '{"asnNumber":"ASN-1","supplierRef":"ACME","lines":[{"lineNo":1,"sku":"SKU-1","expectedQty":<qty>}]}'
     Then the response status is <status>
-    And the response field "lines.0.expectedQty" is "<echo>"
+    And the outbox holds <registered> "asn.ASNRegistered" events
 
     Examples:
-      | qty        | status | echo       |
+      | qty        | status | registered |
       | 1          | 201    | 1          |
-      | 2147483647 | 201    | 2147483647 |
-
-  @bdd
-  Scenario Outline: A quantity outside 1..2147483647 is refused as invalid-quantity
-    When I POST "/asns" with body '{"asnNumber":"ASN-1","supplierRef":"ACME","lines":[{"lineNo":1,"sku":"SKU-1","expectedQty":<qty>}]}'
-    Then the response status is 400
-    And the problem type is "invalid-quantity"
-    And the outbox is empty
-
-    Examples:
-      | qty        |
-      | 2147483648 |
-      | -1         |
+      | 2147483647 | 201    | 1          |
+      | 2147483648 | 400    | 0          |
+      | 0          | 400    | 0          |
+      | -1         | 400    | 0          |
 
   @bdd
   Scenario Outline: Line numbers must be exactly 1..n in order

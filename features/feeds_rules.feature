@@ -70,6 +70,27 @@ Feature: Local copies and dock-to-stock rules from the documentation
     Then the consumer reports "ignored"
 
   @bdd
+  Scenario: A follow-up announcement this context would reject is refused and leaves the copy as it was
+    Given the ASN "ASN-1" is registered
+    And an appointment at door "DOOR-1" from "2026-10-09T08:00:00Z" to "2026-10-09T10:00:00Z" covers the ASN "ASN-1"
+    When dock-scheduling sends a reassignment of the appointment at version 0
+    Then the consumer refuses the event as invalid
+    When dock-scheduling sends a reschedule of the appointment at version 0
+    Then the consumer refuses the event as invalid
+    When dock-scheduling cancels the appointment at version 0
+    Then the consumer refuses the event as invalid
+    When dock-scheduling cancels the appointment "not-an-appointment" at version 2
+    Then the consumer refuses the event as invalid
+    When dock-scheduling reschedules the appointment to door "DOOR-4" from "2026-10-09T10:00:00Z" to "2026-10-09T08:00:00Z"
+    Then the consumer refuses the event as invalid
+    When the yard reassigns the appointment to door "DOOR 1"
+    Then the consumer refuses the event as invalid
+    When I GET "/appointments/{appointment}"
+    Then the response field "doorCode" is "DOOR-1"
+    And the response field "state" is "Booked"
+    And the response field "version" is "1"
+
+  @bdd
   Scenario Outline: A booking this context would reject is refused before anything is claimed
     When dock-scheduling announces an appointment with direction "<direction>" at door "<door>" from "<from>" to "<to>" for the ASNs "<asns>" at version <version>
     Then the consumer refuses the event as invalid

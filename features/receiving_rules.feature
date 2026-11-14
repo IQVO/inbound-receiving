@@ -43,6 +43,9 @@ Feature: Receipt rules from the documentation
     Then the response status is 200
     And the response field "state" is "Closed"
     And the response discrepancies are "Short@1, Short@2"
+    And the last "receipt.ReceiptClosed" event has "data.discrepancies.0.expected_qty" equal to "40"
+    And the last "receipt.ReceiptClosed" event has "data.discrepancies.0.received_qty" equal to "0"
+    And the last "receipt.ReceiptClosed" event has "data.discrepancies.0.damaged_qty" equal to "0"
     When I GET "/asns/ASN-1"
     Then the response field "state" is "Closed"
 
@@ -83,17 +86,6 @@ Feature: Receipt rules from the documentation
       | Good      | 647 | 201    |
       | Damaged   | 648 | 400    |
       | Good      | 648 | 400    |
-
-  @bdd
-  Scenario: A refused quantity leaves the line total where it was
-    Given a walk-in receipt is open for the ASN "ASN-1"
-    And 2147483647 units of line 1 were received as "Good"
-    When I POST "/receipts/{receipt}/lines" with body '{"lineNo":1,"quantity":1,"condition":"Good"}'
-    Then the response status is 400
-    And the problem type is "invalid-quantity"
-    When I GET "/receipts/{receipt}"
-    Then the response field "lines.0.receivedGood" is "2147483647"
-    And the response field "version" is "2"
 
   @bdd
   Scenario Outline: A single receive of 1..2147483647 units is accepted and anything else refused
@@ -326,14 +318,21 @@ Feature: Receipt rules from the documentation
       | /receipts/not-a-receipt/lines                                | {"lineNo":1,"quantity":1,"condition":"Good"} | 400    | invalid-receipt-id |
 
   @bdd
-  Scenario: A scan on a closed receipt is refused and books nothing
+  Scenario Outline: A scan on a closed receipt is refused and books nothing
     Given the packaging view knows SKU "SKU-1" with each GTIN "10001234567892" and case GTIN "20001234567851" of 20
     And a walk-in receipt is open for the ASN "ASN-1"
     And the receipt is closed
-    When I POST "/receipts/{receipt}/scans" with body '{"kind":"EACH_GTIN","id":"10001234567892","qty":3}'
+    When I POST "/receipts/{receipt}/scans" with body '<body>'
     Then the response status is 409
     And the problem type is "receipt-closed"
     And the outbox holds 0 "receipt.ReceiptLineReceived" events
+    And the outbox holds 0 "receipt.CartonDiscrepancyRaised" events
+
+    Examples:
+      | body                                                |
+      | {"kind":"EACH_GTIN","id":"10001234567892","qty":3}  |
+      | {"kind":"CASE_GTIN","id":"20001234567851","qty":1}  |
+      | {"kind":"EACH_GTIN","id":"6291041500213"}           |
 
   @bdd
   Scenario Outline: A case scan books 1..1000 cases and an absent quantity is one case

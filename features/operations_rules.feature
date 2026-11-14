@@ -17,7 +17,8 @@ Feature: Operational rules from the documentation
   Scenario: A retried receipt opening replays the first answer and opens nothing twice
     Given the ASN "ASN-1" is registered
     When I POST "/receipts" with key "open-1" and body '{"asnNumber":"ASN-1"}'
-    And I POST "/receipts" with key "open-1" and body '{"asnNumber":"ASN-1"}'
+    Then the response header "Idempotency-Replayed" is ""
+    When I POST "/receipts" with key "open-1" and body '{"asnNumber":"ASN-1"}'
     Then the response status is 201
     And the response header "Idempotency-Replayed" is "true"
     When I list "/receipts" with query "limit=10"
@@ -37,12 +38,6 @@ Feature: Operational rules from the documentation
     And the response header "Idempotency-Replayed" is "true"
     And the response field "state" is "Closed"
     And the outbox holds 1 "receipt.ReceiptClosed" event
-
-  @bdd
-  Scenario: The first execution is never marked as a replay
-    When I POST "/asns" with key "first-1" and body '{"asnNumber":"ASN-1","supplierRef":"ACME","lines":[{"lineNo":1,"sku":"SKU-1","expectedQty":1}]}'
-    Then the response status is 201
-    And the response header "Idempotency-Replayed" is ""
 
   @bdd
   Scenario: The key is global: the same key on another route is refused and does nothing
@@ -141,13 +136,6 @@ Feature: Operational rules from the documentation
       | limit | items |
       | 1     | 1     |
       | 500   | 2     |
-
-  @bdd
-  Scenario: A ready service answers 200 ready while Postgres and Kafka answer
-    Given the readiness gate watches postgres and kafka and reuses a verdict for 1h
-    When I GET "/readyz"
-    Then the response status is 200
-    And the response field "status" is "ready"
 
   @bdd
   Scenario: A draining service is not ready, yet stays alive

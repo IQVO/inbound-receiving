@@ -282,6 +282,12 @@ func (w *world) dockSchedulingCancelsAtVersion(ctx context.Context, version int6
 	return nil
 }
 
+func (w *world) dockSchedulingCancelsAppointmentAtVersion(ctx context.Context, id string, version int64) error {
+	uc := &usecases.ApplyDockAppointmentCancelled{UoW: w.uow, ProcessedEvents: w.processed, Appointments: w.appts}
+	w.wave2.outcome, w.wave2.err = uc.Handle(ctx, w.nextEventID("bdd-appt-cancel"), id, version)
+	return nil
+}
+
 func (w *world) dockSchedulingCancelsANeverCopied(ctx context.Context) error {
 	uc := &usecases.ApplyDockAppointmentCancelled{UoW: w.uow, ProcessedEvents: w.processed, Appointments: w.appts}
 	w.wave2.outcome, w.wave2.err = uc.Handle(ctx, w.nextEventID("bdd-appt-cancel"), "appt-00000000-0000-4000-8000-0000000000aa", 2)
@@ -412,6 +418,7 @@ func (w *world) registerRules(sc *godog.ScenarioContext) {
 	sc.Step(`^dock-scheduling sends a (reschedule|reassignment) of the appointment at version (\d+)$`, w.dockSchedulingSendsFollowUp)
 	sc.Step(`^the last follow-up announcement is redelivered$`, w.dockSchedulingRedeliversFollowUp)
 	sc.Step(`^dock-scheduling cancels the appointment at version (\d+)$`, w.dockSchedulingCancelsAtVersion)
+	sc.Step(`^dock-scheduling cancels the appointment "([^"]*)" at version (\d+)$`, w.dockSchedulingCancelsAppointmentAtVersion)
 	sc.Step(`^dock-scheduling cancels an appointment this service never copied$`, w.dockSchedulingCancelsANeverCopied)
 
 	sc.Step(`^product-master declares the case GTIN "([^"]*)" of SKU "([^"]*)" as (-?\d+) eaches of "([^"]*)" at version (\d+)$`, w.productMasterDeclaresCase)
