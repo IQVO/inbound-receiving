@@ -46,8 +46,10 @@ exist: their routes answer `410 appointment-moved` (ADR 0019).
 | `ListDocks` | `GET /docks` | The known inbound dock doors in door-code order plus the current `DOCK_DOOR_MODE`. |
 
 Lists use cursor paging: `limit` 1..500 (default 100) and the opaque `cursor`
-that is the previous page's `nextCursor`; a bad value is `400 invalid-query`
-(`usecases.ErrInvalidListQuery`).
+that is the previous page's `nextCursor`; a bad `limit` is `400 invalid-limit`, a
+bad `cursor` `400 invalid-cursor` (both refine `usecases.ErrInvalidListQuery`,
+which stays `400 invalid-query` for a bad `state`, `door` or instant, ADR 0017).
+The MCP tools and the A2A skills report all of them as `invalid-query`.
 
 ## Event-driven use cases (local copies)
 
@@ -84,8 +86,7 @@ Response shapes: [Runbook — Reports API](../operations/runbook.md#reports-api-
 - **Errors** are RFC 7807 problems from one table, `problemCatalogue` in
   `internal/adapters/inbound/http/errors.go`.
 
-Acceptance scenarios are in `features/*.feature` (7 files, 71 scenarios:
-`register_asn`, `dock_appointments`, `receiving`, `idempotent_replays`,
-`list_receipts_and_docks`, `dock_door_registry`, `probes`; godog,
-`features_test.go` and `features_wave2_test.go`). See
-[Testing](../development/testing.md).
+Acceptance scenarios are in `features/*.feature` (19 files, 226 scenario
+definitions executed as 342 scenarios with every Examples row expanded; godog,
+`features_test.go` and the sibling `features_*_test.go` files). The per-file list
+is in [Testing](../development/testing.md).
