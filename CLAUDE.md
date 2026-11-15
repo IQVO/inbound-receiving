@@ -41,7 +41,7 @@ micro-frontend remote `inbound_mfe`.
 5. **No outbound calls to sibling contexts, ever.** Product SKUs and inbound
    dock doors are LOCAL COPIES fed from `warehouse.product-master.events` and
    `warehouse.facility.events` (ADR 0003), gated by `PRODUCT_MODE` /
-   `DOCK_DOOR_MODE` (`permissive` default, `kafka` enforces). Consumer group ids
+   `DOCK_DOOR_MODE` (`kafka` is the default and the only legal value: `permissive`/`off` are boot errors since ADR 0011). Consumer group ids
    come from env (`PRODUCT_CONSUMER_GROUP`, `DOCK_DOOR_CONSUMER_GROUP`,
    `DOCK_APPOINTMENT_CONSUMER_GROUP`, `ANALYTICS_CONSUMER_GROUP`), never literals
    (`TestKafkaConsumerGroupNeverHardcodedInline`).
