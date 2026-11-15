@@ -94,10 +94,11 @@ repository never calls either and does not depend on them being up.
 
 `PRODUCT_MODE` and `DOCK_DOOR_MODE` are `kafka` (the default and the only legal
 value since [ADR 0011](/docs/adr/0011-postgres-and-kafka-are-the-only-runtime)):
-the copies are always consulted. An unknown SKU is `422 unknown-sku` and an
-unknown door `422 unknown-dock-door`, including right after a fresh deploy
-until the consumers have replayed the source topics (the earlier `permissive`
-fail-open of ADR 0001 is gone).
+the copies are always consulted. An unknown SKU is `422 unknown-sku`, including
+right after a fresh deploy until the product consumer has replayed its source
+topic (the earlier `permissive` fail-open of ADR 0001 is gone). The dock-door
+copy only feeds `GET /docks`: since ADR 0019 a receipt takes its door from the
+appointment copy, and no write answers `unknown-dock-door`.
 
 ## Out of scope
 
