@@ -1474,7 +1474,7 @@ components:
         sku: { type: string }
         kind: { type: string, enum: [Short, Over, Damaged] }
         expected_qty: { type: integer, minimum: 1 }
-        received_qty: { type: integer, minimum: 0, description: Good plus damaged. }
+        received_qty: { type: integer, minimum: 1, description: Good plus damaged. }
         damaged_qty: { type: integer, minimum: 0 }
         w13_code: { type: string, enum: ["01", "02", "03"], description: "X12 W13 receiving condition code of the kind (ADR 0023): Damaged 01, Short 02, Over 03." }
         cbv_disposition: { type: string, enum: [damaged, mismatch_quantity], description: "GS1 CBV disposition of the kind (ADR 0023)." }
