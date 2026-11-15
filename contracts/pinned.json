@@ -1,0 +1,41 @@
+{
+  "_doc": "Every contract copy this repo pins from a producer, and the producer branch it must equal. scripts/harness/pinned_contract_gate.py fails when a copy differs from the producer's develop. Refresh = copy the file, never edit it. The five event pins cover every topic this repo's readers actually subscribe to (derived from the consumer topic constants in internal/adapters/inbound/kafka, not from spec operations); the inbound-receiving self-pin is this repo's own analytics topic, whose DLQ semantics the analytics contract tests cover.",
+  "pins": [
+    {
+      "local": "internal/adapters/inbound/kafka/testdata/dock-scheduling.asyncapi.yaml",
+      "repo": "IQVO/dock-scheduling",
+      "path": "apis/asyncapi.yaml",
+      "ref": "develop"
+    },
+    {
+      "local": "internal/adapters/inbound/kafka/testdata/facility-layout.asyncapi.yaml",
+      "repo": "IQVO/facility-layout",
+      "path": "apis/asyncapi.yaml",
+      "ref": "develop"
+    },
+    {
+      "local": "internal/adapters/inbound/kafka/testdata/inventory-storage.asyncapi.yaml",
+      "repo": "IQVO/inventory-storage",
+      "path": "apis/asyncapi.yaml",
+      "ref": "develop"
+    },
+    {
+      "local": "internal/adapters/inbound/kafka/testdata/product-master.asyncapi.yaml",
+      "repo": "IQVO/product-master",
+      "path": "apis/asyncapi.yaml",
+      "ref": "develop"
+    },
+    {
+      "local": "internal/adapters/inbound/kafka/testdata/yard-management.asyncapi.yaml",
+      "repo": "IQVO/yard-management",
+      "path": "apis/asyncapi.yaml",
+      "ref": "develop"
+    },
+    {
+      "local": "internal/adapters/inbound/kafka/testdata/inbound-receiving.asyncapi.yaml",
+      "repo": "IQVO/inbound-receiving",
+      "path": "apis/asyncapi.yaml",
+      "ref": "develop"
+    }
+  ]
+}
