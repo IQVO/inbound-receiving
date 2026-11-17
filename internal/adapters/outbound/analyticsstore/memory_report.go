@@ -2,6 +2,7 @@ package analyticsstore
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/claudioed/inbound-receiving/internal/analytics/report"
@@ -38,6 +39,7 @@ func (m *Memory) PerformanceDays(_ context.Context, r report.Range) ([]report.Pe
 		m.countStows(&d, w)
 		m.countAdvices(&d, w)
 		m.countTimeliness(&d, w)
+		m.countTolerance(&d, w)
 		out = append(out, d)
 	}
 	return out, nil
@@ -71,6 +73,68 @@ func (m *Memory) countDiscrepancies(d *report.PerformanceDay, w report.DayWindow
 			d.Discrepancies.Damaged++
 		}
 	}
+}
+
+// countTolerance fills the day's tolerance block (ADR 0026): the closes under
+// a declared policy, how many closed without an override finding, the
+// auto-accepted count and the bounded reason Pareto.
+func (m *Memory) countTolerance(d *report.PerformanceDay, w report.DayWindow) {
+	overrides := map[string]bool{}
+	reasons := map[string]int{}
+	for k, closedAt := range m.discrepancy {
+		if !k.kind.ToleranceKind() || !inWindowAt(closedAt, w) {
+			continue
+		}
+		overrides[k.receiptID] = true
+		if reason := m.discrepancyReason[k]; reason != "" {
+			reasons[reason]++
+		}
+	}
+	pareto := make([]report.OverrideReasonCount, 0, len(reasons))
+	for reason, c := range reasons {
+		pareto = append(pareto, report.OverrideReasonCount{Reason: reason, Count: c})
+	}
+	sort.Slice(pareto, func(i, j int) bool {
+		if pareto[i].Count != pareto[j].Count {
+			return pareto[i].Count > pareto[j].Count
+		}
+		return pareto[i].Reason < pareto[j].Reason
+	})
+	if len(pareto) > report.MaxOverrideReasons {
+		pareto = pareto[:report.MaxOverrideReasons]
+	}
+	if len(pareto) > 0 {
+		d.Tolerance.Reasons = pareto
+	}
+	d.Tolerance.Overrides = len(overrides)
+	for id, r := range m.receipts {
+		if !inWindow(r.closed, w) {
+			continue
+		}
+		d.Tolerance.Closed++
+		if !r.toleranceApplied {
+			continue
+		}
+		d.Tolerance.WithPolicy++
+		if !m.receiptHasOverride(id) {
+			d.Tolerance.AutoAccepted++
+		}
+	}
+	if d.Tolerance.Closed > 0 {
+		share := 1 - float64(len(overrides))/float64(d.Tolerance.Closed)
+		d.Tolerance.ShareWithoutOverride = &share
+	}
+}
+
+// receiptHasOverride reports whether the receipt has any tolerance finding at
+// all (folded at any time: the close day governs both counts).
+func (m *Memory) receiptHasOverride(id string) bool {
+	for k := range m.discrepancy {
+		if k.receiptID == id && k.kind.ToleranceKind() {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Memory) countAppointments(d *report.PerformanceDay, w report.DayWindow) {

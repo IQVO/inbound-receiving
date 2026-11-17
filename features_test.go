@@ -69,6 +69,15 @@ type world struct {
 	// holdErr the outcome of the last Hold command.
 	advice  *memory.AdviceStore
 	holdErr error
+	// policies is the memory twin of the receiving tolerance policies (ADR
+	// 0026); ownReceipt is the second, owner-keyed receipt of those scenarios.
+	policies   *memory.PolicyRepo
+	ownReceipt string
+	// lastTolerance is the tolerance fact of the last ReceiptClosed the
+	// tolerance scenarios read (nil on a legacy close).
+	lastTolerance *struct {
+		OverTolerance float64 `json:"over_tolerance"`
+	}
 
 	packaging *memory.PackagingView
 
@@ -117,10 +126,11 @@ func (w *world) start() {
 	w.wave2, w.apptSeq, w.apptVersion, w.lastAppt, w.stowFeed = wave2State{}, 0, 0, apptAnnouncement{}, stowFeed{}
 	w.rules = rulesState{}
 	w.stows, w.advice, w.holdErr = memory.NewStowStore(receipts), memory.NewAdviceStore(receipts), nil
-	uow := memory.NewUnitOfWork(asns, appts, receipts, w.skus, w.doors, w.packaging, ob, processed, w.stows, w.advice)
+	w.policies, w.ownReceipt = memory.NewPolicyRepo(), ""
+	uow := memory.NewUnitOfWork(asns, appts, receipts, w.skus, w.doors, w.packaging, ob, processed, w.stows, w.advice, w.policies)
 	w.uow = uow
 	writer := usecases.Writer{
-		Asns: asns, Appointments: appts, Receipts: receipts, Stows: w.stows, Advice: w.advice, AdviceSLA: adviceSLA, Outbox: ob, Encoder: outboundkafka.NewEncoder(),
+		Asns: asns, Appointments: appts, Receipts: receipts, Stows: w.stows, Policies: w.policies, Advice: w.advice, AdviceSLA: adviceSLA, Outbox: ob, Encoder: outboundkafka.NewEncoder(),
 		UoW: uow, Clock: w.clock, IDs: idgen.UUID{},
 	}
 	w.writer = writer
@@ -145,8 +155,11 @@ func (w *world) start() {
 			GetReceipt:       &usecases.GetReceipt{Receipts: receipts},
 			ListReceipts:     &usecases.ListReceipts{Receipts: receipts},
 			ListDocks:        &usecases.ListDocks{Doors: w.doors, Mode: w.doorMode},
-			Idempotency:      idem,
-			Readiness:        w.rules.readiness,
+			// The tolerance policy admin surface (ADR 0026).
+			DeclareReceivingPolicy: &usecases.DeclareReceivingPolicy{Writer: writer},
+			GetReceivingPolicy:     &usecases.GetReceivingPolicy{Writer: writer},
+			Idempotency:            idem,
+			Readiness:              w.rules.readiness,
 		}
 		return httptest.NewServer(inboundhttp.NewRouter(s))
 	}
@@ -528,4 +541,5 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	w.registerAdvice(sc)
 	w.registerAsnTimeliness(sc)
 	w.registerRules(sc)
+	w.registerTolerance(sc)
 }

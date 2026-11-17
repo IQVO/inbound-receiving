@@ -74,7 +74,16 @@ type analyticsData struct {
 		LineNo int    `json:"line_no"`
 		SKU    string `json:"sku"`
 		Kind   string `json:"kind"`
+		Reason string `json:"reason_code"`
 	} `json:"discrepancies"`
+	// Tolerance is the policy object a policy-ruled close carries (ADR 0026);
+	// nil on a legacy close.
+	Tolerance *struct {
+		Over      float64 `json:"over_tolerance"`
+		Under     float64 `json:"under_tolerance"`
+		OverStop  float64 `json:"over_hard_stop"`
+		UnderStop float64 `json:"under_hard_stop"`
+	} `json:"tolerance"`
 }
 
 // AnalyticsConsumer is the projector's consumer: it reads the analytics topic
@@ -230,7 +239,10 @@ func applyReceiptDetail(e *report.Event, d analyticsData) {
 	case report.KindReceiptClosed:
 		e.Discrepancies = make([]report.Discrepancy, 0, len(d.Discrepancies))
 		for _, x := range d.Discrepancies {
-			e.Discrepancies = append(e.Discrepancies, report.Discrepancy{LineNo: x.LineNo, SKU: x.SKU, Kind: report.DiscrepancyKind(x.Kind)})
+			e.Discrepancies = append(e.Discrepancies, report.Discrepancy{LineNo: x.LineNo, SKU: x.SKU, Kind: report.DiscrepancyKind(x.Kind), Reason: x.Reason})
+		}
+		if d.Tolerance != nil {
+			e.Tolerance = &report.ToleranceBands{Over: d.Tolerance.Over, Under: d.Tolerance.Under, OverStop: d.Tolerance.OverStop, UnderStop: d.Tolerance.UnderStop}
 		}
 	}
 }

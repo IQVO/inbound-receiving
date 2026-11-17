@@ -57,11 +57,12 @@ const upsertAppointmentSQL = `
 		completed_at  = LEAST(appointment_facts.completed_at, EXCLUDED.completed_at)`
 
 const upsertReceiptSQL = `
-	INSERT INTO receipt_facts (receipt_id, asn_number, opened_at, closed_at)
-	VALUES ($1, $2, $3::timestamptz, $4::timestamptz)
+	INSERT INTO receipt_facts (receipt_id, asn_number, opened_at, closed_at, tolerance_applied)
+	VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5)
 	ON CONFLICT (receipt_id) DO UPDATE SET
 		opened_at = LEAST(receipt_facts.opened_at, EXCLUDED.opened_at),
-		closed_at = LEAST(receipt_facts.closed_at, EXCLUDED.closed_at)`
+		closed_at = LEAST(receipt_facts.closed_at, EXCLUDED.closed_at),
+		tolerance_applied = receipt_facts.tolerance_applied OR EXCLUDED.tolerance_applied`
 
 // A stow fact is one row per receipt; the earliest-seen values win like every
 // other fact, so a redelivery under a new id cannot move it.
@@ -83,8 +84,8 @@ const insertLineSQL = `
 	ON CONFLICT (event_id) DO NOTHING`
 
 const insertDiscrepancySQL = `
-	INSERT INTO receipt_discrepancies (receipt_id, line_no, kind, sku, closed_at)
-	VALUES ($1, $2, $3, $4, $5)
+	INSERT INTO receipt_discrepancies (receipt_id, line_no, kind, sku, reason_code, closed_at)
+	VALUES ($1, $2, $3, $4, $5, $6)
 	ON CONFLICT (receipt_id, line_no, kind) DO NOTHING`
 
 // Apply implements report.Projection.
@@ -180,7 +181,7 @@ func foldReceipt(ctx context.Context, tx pgx.Tx, e report.Event) error {
 		return err
 	}
 	t := report.ReceiptTimesOf(e)
-	if _, err := tx.Exec(ctx, upsertReceiptSQL, e.ReceiptID, e.AsnNumber, t.Opened, t.Closed); err != nil {
+	if _, err := tx.Exec(ctx, upsertReceiptSQL, e.ReceiptID, e.AsnNumber, t.Opened, t.Closed, e.Tolerance != nil); err != nil {
 		return err
 	}
 	switch e.Kind {
@@ -193,7 +194,12 @@ func foldReceipt(ctx context.Context, tx pgx.Tx, e report.Event) error {
 		return err
 	case report.KindReceiptClosed:
 		for _, d := range e.Discrepancies {
-			if _, err := tx.Exec(ctx, insertDiscrepancySQL, e.ReceiptID, d.LineNo, string(d.Kind), d.SKU, e.At.UTC()); err != nil {
+			var reason *string
+			if d.Reason != "" {
+				r := d.Reason
+				reason = &r
+			}
+			if _, err := tx.Exec(ctx, insertDiscrepancySQL, e.ReceiptID, d.LineNo, string(d.Kind), d.SKU, reason, e.At.UTC()); err != nil {
 				return err
 			}
 		}

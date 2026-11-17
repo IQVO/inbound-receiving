@@ -220,7 +220,7 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 	writes := e2eWrites{t: t, clock: clock, appts: postgres.NewAppointmentRepo(oltp), analyticsTopic: analyticsTopic, w: usecases.Writer{
 		Asns: postgres.NewAsnRepo(oltp), Appointments: postgres.NewAppointmentRepo(oltp), Receipts: postgres.NewReceiptRepo(oltp),
 		Outbox: ob, UoW: postgres.NewUnitOfWork(oltp), Clock: clock, IDs: idgen.UUID{},
-		Advice: postgres.NewAdviceRepo(oltp), AdviceSLA: 24 * time.Hour,
+		Policies: postgres.NewPolicyRepo(oltp), Advice: postgres.NewAdviceRepo(oltp), AdviceSLA: 24 * time.Hour,
 		Encoder: &outboundkafka.FanoutEncoder{
 			Integration: &outboundkafka.Encoder{Topic: integrationTopic},
 			Analytics:   &outboundkafka.AnalyticsEncoder{Topic: analyticsTopic},
@@ -228,14 +228,14 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 		},
 	}}
 	e2eScenario(t, writes)
-	// 12 events raised by the service (both topics; the receiving advice is the
-	// twelfth) + the 3 historical DockAppointment events of the pre-cutover
-	// history (analytics stream only).
-	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, analyticsTopic); n != 15 {
-		t.Fatalf("analytics outbox rows = %d, want 15 (12 raised + 3 historical appointment events)", n)
+	// 13 events raised by the service (both topics; the receiving advice is the
+	// twelfth and the policy declaration the thirteenth) + the 3 historical
+	// DockAppointment events of the pre-cutover history (analytics stream only).
+	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, analyticsTopic); n != 16 {
+		t.Fatalf("analytics outbox rows = %d, want 16 (13 raised + 3 historical appointment events)", n)
 	}
-	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, integrationTopic); n != 12 {
-		t.Fatalf("integration outbox rows = %d, want 12 (this service raises no appointment event any more)", n)
+	if n := countRows(t, oltp, `SELECT count(*) FROM outbox_events WHERE topic = $1`, integrationTopic); n != 13 {
+		t.Fatalf("integration outbox rows = %d, want 13 (this service raises no appointment event any more)", n)
 	}
 
 	// ---- the topic also carries messages the projector must survive ----
@@ -329,11 +329,21 @@ func TestAnalyticsReadSide_EndToEnd(t *testing.T) {
 //	       ASN-3 expected day 6 11:00 and cancelled; dock-scheduling's booking of ASN-1 (day 6 08:00-10:00) reaches
 //	       the local copy.
 //	day 6: ASN-1's receipt opens 08:05 on that appointment, receives 8 good + 1 damaged of line 1
-//	       and 7 good of line 2, closes 09:30 (Short + Damaged on line 1, Over on line 2); ASN-2 is received as a
+//	       and 7 good of line 2, closes 09:30 under ACME's declared band (UnderTolerance on line 1, OverTolerance
+//	       on line 2, both with reason supplier-agreed, plus Damaged; ADR 0026); ASN-2 is received as a
 //	       walk-in from 11:00 and is still open. The appointment's historical events (booked day 5 09:30, checked in
 //	       day 6 07:50, completed 09:30) are what the analytics stream held before the cutover.
 func e2eScenario(t *testing.T, w e2eWrites) {
 	t.Helper()
+	// ACME declares a 5 % band with a 50 % hard stop per side (ADR 0026): the
+	// day-6 close's variances (10 % under on line 1, 40 % over on line 2) sit
+	// in the override zone, so the close carries a reason code and closes on
+	// the tolerance kinds.
+	w.at(e2eAt(5, 7, 0), "declare ACME's tolerance policy", func(ctx context.Context) error {
+		_, _, err := (&usecases.DeclareReceivingPolicy{Writer: w.w}).Handle(ctx, usecases.DeclareReceivingPolicyCommand{
+			SupplierRef: "ACME", OverTolerance: 0.05, OverHardStop: 0.50, UnderTolerance: 0.05, UnderHardStop: 0.50})
+		return err
+	})
 	w.registerAsn("ASN-1", e2eAt(6, 8, 0), e2eAt(5, 8, 0), lineOf(1, "SKU-1", 10), lineOf(2, "SKU-2", 5))
 	w.registerAsn("ASN-2", e2eAt(6, 9, 0), e2eAt(5, 8, 5), lineOf(1, "SKU-3", 4))
 	w.registerAsn("ASN-3", e2eAt(6, 11, 0), e2eAt(5, 8, 10), lineOf(1, "SKU-4", 1))
@@ -370,7 +380,8 @@ func e2eScenario(t *testing.T, w e2eWrites) {
 	receive(e2eAt(6, 8, 20), 1, 1, "Damaged")
 	receive(e2eAt(6, 8, 30), 2, 7, "Good")
 	w.at(e2eAt(6, 9, 30), "close receipt", func(ctx context.Context) error {
-		_, err := (&usecases.CloseReceipt{Writer: w.w}).Handle(ctx, usecases.CloseReceiptCommand{ReceiptID: receiptID, ExpectedVersion: version})
+		_, err := (&usecases.CloseReceipt{Writer: w.w}).Handle(ctx, usecases.CloseReceiptCommand{
+			ReceiptID: receiptID, ExpectedVersion: version, OverrideReason: "supplier-agreed"})
 		return err
 	})
 	w.at(e2eAt(6, 9, 30), "historical appointment events", func(ctx context.Context) error {
@@ -413,10 +424,13 @@ func assertReceivingPerformance(t *testing.T, got e2eReport) {
 			"advice":        zeroAdvice,
 			// ASN-1..3 all registered 2026-10-05 for ACME, none late (ADR 0025).
 			"asn_timeliness": []any{map[string]any{"supplier_ref": "ACME", "registered": 3.0, "late": 0.0, "share_on_time": 1.0}},
+			"tolerance": map[string]any{"closed": 0.0, "overrides": 0.0, "share_without_override": nil,
+				"with_policy": 0.0, "auto_accepted": 0.0, "reasons": []any{}},
 		},
 		{
 			"day": "2026-10-06", "receipts_closed": 1.0, "lines_received": 3.0, "units_good": 15.0, "units_damaged": 1.0,
-			"discrepancies": map[string]any{"short": 1.0, "over": 1.0, "damaged": 1.0},
+			// Both variances sat beyond ACME's 5 % band and closed on the tolerance kinds (ADR 0026).
+			"discrepancies": map[string]any{"short": 0.0, "over": 0.0, "damaged": 1.0},
 			"receipt_cycle": map[string]any{"count": 1.0, "p50_seconds": 5100.0, "p95_seconds": 5100.0},
 			"appointments":  map[string]any{"booked": 0.0, "checked_in": 1.0, "cancelled": 0.0, "completed": 1.0},
 			"dock_dwell":    map[string]any{"count": 1.0, "p50_seconds": 6000.0, "p95_seconds": 6000.0},
@@ -425,6 +439,11 @@ func assertReceivingPerformance(t *testing.T, got e2eReport) {
 			"advice": map[string]any{"count": 1.0, "within_sla": 1.0, "share_within_sla": 1.0},
 			// No ASN was registered on 10-06: the block is empty, never null.
 			"asn_timeliness": []any{},
+			// The close was policy-ruled with two override findings, both
+			// supplier-agreed (ADR 0026).
+			"tolerance": map[string]any{"closed": 1.0, "overrides": 1.0, "share_without_override": 0.0,
+				"with_policy": 1.0, "auto_accepted": 0.0,
+				"reasons": []any{map[string]any{"reason": "supplier-agreed", "count": 2.0}}},
 		},
 	}
 	if !reflect.DeepEqual(got.Days, wantDays) {

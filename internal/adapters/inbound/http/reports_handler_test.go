@@ -85,14 +85,16 @@ func TestReports_ReceivingPerformance(t *testing.T) {
 		`"dock_dwell":{"count":1,"p50_seconds":10800,"p95_seconds":10800},` +
 		`"dock_to_stock":{"count":1,"p50_seconds":14400,"p90_seconds":14400,"under_target":0,"share_under_target":0},` +
 		`"advice":{"count":2,"within_sla":1,"share_within_sla":0.5},` +
-		`"asn_timeliness":[{"supplier_ref":"ACME","registered":1,"late":1,"share_on_time":0},{"supplier_ref":"BOLT","registered":1,"late":0,"share_on_time":1}]},` +
+		`"asn_timeliness":[{"supplier_ref":"ACME","registered":1,"late":1,"share_on_time":0},{"supplier_ref":"BOLT","registered":1,"late":0,"share_on_time":1}],` +
+		`"tolerance":{"closed":1,"overrides":0,"share_without_override":1,"with_policy":0,"auto_accepted":0,"reasons":[]}},` +
 		`{"day":"2026-10-07","receipts_closed":0,"lines_received":0,"units_good":0,"units_damaged":0,` +
 		`"discrepancies":{"short":0,"over":0,"damaged":0},` +
 		`"receipt_cycle":{"count":0,"p50_seconds":null,"p95_seconds":null},` +
 		`"appointments":{"booked":0,"checked_in":0,"cancelled":0,"completed":0},` +
 		`"dock_dwell":{"count":0,"p50_seconds":null,"p95_seconds":null},` +
 		`"dock_to_stock":{"count":0,"p50_seconds":null,"p90_seconds":null,"under_target":0,"share_under_target":null},` +
-		`"advice":{"count":0,"within_sla":0,"share_within_sla":null},"asn_timeliness":[]}],` +
+		`"advice":{"count":0,"within_sla":0,"share_within_sla":null},"asn_timeliness":[],` +
+		`"tolerance":{"closed":0,"overrides":0,"share_without_override":null,"with_policy":0,"auto_accepted":0,"reasons":[]}}],` +
 		`"current":{"open_receipts":1,"expected_today":1,"expected_today_started":1}}` + "\n"
 	if rec.Body.String() != want {
 		t.Fatalf("body:\n got %s\nwant %s", rec.Body, want)

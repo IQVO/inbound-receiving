@@ -49,6 +49,15 @@ func (r *PolicyRepo) Replace(_ context.Context, p *policy.ReceivingPolicy) error
 	return nil
 }
 
+// Delete removes a key's policy (test-side state manipulation for the BDD
+// "no policy" scenarios; production never deletes a declaration).
+func (r *PolicyRepo) Delete(_ context.Context, ownerRef shared.OwnerRef, supplierRef string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.policies, key(ownerRef, supplierRef))
+	return nil
+}
+
 // Snapshot captures the store for a rollback.
 func (r *PolicyRepo) Snapshot() (restore func()) {
 	r.mu.Lock()
