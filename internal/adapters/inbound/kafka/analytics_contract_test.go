@@ -30,7 +30,7 @@ var (
 		"ReceiptStowCompleted", "ReceivingAdviceIssued",
 	}
 	analyticsIgnored = []string{
-		"ReceiptCartonReceived", "CartonDiscrepancyRaised", "ReceivingAdviceOverdue",
+		"ReceiptCartonReceived", "CartonDiscrepancyRaised", "ReceivingAdviceOverdue", "ReceivingPolicyDeclared",
 	}
 )
 
@@ -65,7 +65,7 @@ func TestPinnedAnalyticsSpecCoversSubscriptions(t *testing.T) {
 		}
 	}
 	for _, name := range analyticsIgnored {
-		typ := cloudevents.Type(entityReceipt, name)
+		typ := cloudevents.Type(entityOfKindName(name), name)
 		if _, ok := analyticsKinds[typ]; ok {
 			t.Errorf("documented-but-ignored kind %s must not be routed", name)
 		}
@@ -112,6 +112,9 @@ func entityOfKindName(name string) string {
 		if string(k) == name {
 			return entityOf(k)
 		}
+	}
+	if name == "ReceivingPolicyDeclared" {
+		return "policy" // ADR 0026: the one ignored type of another entity
 	}
 	return entityReceipt
 }
