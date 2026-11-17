@@ -29,6 +29,10 @@ and `asn.AsnLateForArrival` (the ASN-timeliness fact, [ADR 0025](/docs/adr/0025-
 have **no consumer yet** outside this service's own projector, which folds their
 analytics copies into `GET /reports/receiving-performance`.
 
+`policy.ReceivingPolicyDeclared` ([ADR 0026](/docs/adr/0026-receiving-tolerance-policy-bands-override-and-hard-stop))
+has **no consumer yet**: it is a declaration others (supplier scorecards, a sampling driver)
+will copy later, and none is invented here.
+
 `receipt.ReceivingAdviceIssued` and `receipt.ReceivingAdviceOverdue` (the receiving
 advice with W13/CBV-coded discrepancies and its SLA alarm,
 [ADR 0023](/docs/adr/0023-receiving-advice-at-close-with-standard-discrepancy-vocabulary))

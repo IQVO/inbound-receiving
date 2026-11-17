@@ -306,6 +306,25 @@ replay), `share_on_time` is `1 - late / registered` (null when `registered` is
 0), and the list holds at most the day's top ten suppliers by `registered`
 (ties by `supplier_ref` ascending). An empty day reports `[]`.
 
+### Receiving tolerance (ADR 0026)
+
+`POST /receiving-policies` declares the tolerance bands of one (`ownerRef`, `supplierRef`);
+`GET /receiving-policies/{supplierRef}?ownerRef=` reads it (404 `receiving-policy-not-found`
+when the exact key has none; an absent `ownerRef` is the house default, which a client-owned
+receipt does not fall back to). With a policy, a close or a scan judges each variance:
+
+- inside the tolerance band: accepted, no finding;
+- between the band and its hard stop: 409 `tolerance-override-required` until the request
+  carries an `overrideReason` (`supplier-agreed`, `damaged-in-transit-recounted`,
+  `mislabelled-recounted`, `recount-confirmed`); the close then records `OverTolerance` or
+  `UnderTolerance` with that code;
+- at or beyond the hard stop: 409 `tolerance-blocked`; the receipt stays open and no override passes.
+
+A receipt closed before a policy existed keeps its old answers. The applied band is on the
+`ReceiptClosed` event (`tolerance`), not on the receipt. The report's per-day `tolerance`
+block shows `share_without_override`, `auto_accepted` and the top five override reasons.
+No new environment variable, consumer group or topic.
+
 ### Receiving advice overdue
 
 An Open receipt whose last unit was received (or, with none, whose opening) is
