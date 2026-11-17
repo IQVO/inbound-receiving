@@ -146,6 +146,28 @@ const sidebar: SidebarsConfig = {
     },
     {
       type: "category",
+      label: "Receiving policies",
+      link: {
+        type: "doc",
+        id: "api-reference/rest/receiving-policies",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "api-reference/rest/declare-receiving-policy",
+          label: "Declare a receiving tolerance policy",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "api-reference/rest/get-receiving-policy",
+          label: "Read a receiving tolerance policy",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
       label: "Docks",
       link: {
         type: "doc",

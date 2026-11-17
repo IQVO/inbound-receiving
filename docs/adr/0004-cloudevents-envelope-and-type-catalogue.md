@@ -32,7 +32,7 @@ catalogue of every type inbound-receiving publishes or consumes;
 ### Published on `warehouse.inbound-receiving.events`
 
 `<entity>` is the raising aggregate, lowercase, no separators: `asn`,
-`dockappointment`, `receipt`.
+`dockappointment`, `policy` (ADR 0026), `receipt`.
 
 | type | subject | Kafka key | raised when |
 |---|---|---|---|
@@ -51,6 +51,7 @@ catalogue of every type inbound-receiving publishes or consumes;
 | `com.warehouse.wms.inbound-receiving.receipt.ReceiptStowCompleted` | receipt_id | asn_number | the last Good carton of a closed receipt opened from an appointment is stowed: the dock-to-stock fact (ADR 0021) |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceIssued` | receipt_id | asn_number | a receipt closes: the receiving advice for the supplier or depositor, with W13/CBV-coded discrepancies (ADR 0023) |
 | `com.warehouse.wms.inbound-receiving.receipt.ReceivingAdviceOverdue` | receipt_id | asn_number | an Open receipt passed the advice SLA since its last unit was received (ADR 0023) |
+| `com.warehouse.wms.inbound-receiving.policy.ReceivingPolicyDeclared` | supplier_ref | supplier_ref | a receiving tolerance policy is created or replaced (ADR 0026) |
 
 The receipt events are keyed by `asn_number`, so everything that happens while
 one ASN is received stays ordered on one partition. `DockAppointmentCompleted`
@@ -72,10 +73,11 @@ guaranteed; consumers must not depend on it.
 | `receipt.ReceiptLineReceived` | `receipt_id`, `asn_number`, `line_no`, `sku`, `quantity`, `condition` (`Good` or `Damaged`), `received_at` |
 | `receipt.ReceiptCartonReceived` | `receipt_id`, `asn_number`, `sscc`?, `parent_sscc`?, `sealed`, `lpn`, `contents[]` (`line_no`, `sku`, `gtin`, `qty`, `condition`), `received_at` |
 | `receipt.CartonDiscrepancyRaised` | `receipt_id`, `sscc`?, `kind`, `expected`?, `actual`?, `at` |
-| `receipt.ReceiptClosed` | `receipt_id`, `asn_number`, `closed_at`, `discrepancies[]` = `{line_no, sku, kind, expected_qty, received_qty, damaged_qty}`, `kind` in `Short`, `Over`, `Damaged` |
+| `receipt.ReceiptClosed` | `receipt_id`, `asn_number`, `closed_at`, `discrepancies[]` = `{line_no, sku, kind, expected_qty, received_qty, damaged_qty}`, `kind` in `Short`, `Over`, `Damaged`, `OverTolerance`, `UnderTolerance` (ADR 0026), plus `reason_code` on the two tolerance kinds and an optional `tolerance` object `{over_tolerance, under_tolerance, over_hard_stop, under_hard_stop}` present when a policy was applied |
 | `receipt.ReceiptStowCompleted` | `receipt_id`, `asn_number`, `appointment_id`, `arrived_at`, `closed_at`, `stowed_at`, `dock_to_stock_seconds`, `carton_count` (ADR 0021) |
 | `receipt.ReceivingAdviceIssued` | `receipt_id`, `asn_number`, `despatch_advice_ref`, `supplier_ref`, `owner_ref?`, `issued_at`, `last_carton_at`, `sla_seconds`, `within_sla`, `lines[]`, `lines_total`, `carton_findings[]`, `carton_findings_total` (ADR 0023) |
 | `receipt.ReceivingAdviceOverdue` | `receipt_id`, `asn_number`, `last_carton_at`, `due_at`, `sla_seconds`, `overdue_at` (ADR 0023) |
+| `policy.ReceivingPolicyDeclared` | `supplier_ref`, `owner_ref?`, `over_tolerance`, `under_tolerance`, `over_hard_stop`, `under_hard_stop`, `version`, `declared_at` (ADR 0026) |
 
 Payload rules:
 

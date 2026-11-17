@@ -32,6 +32,8 @@ const (
 // kind the screen expects: with a raw Scan, ExpectedKind plays that part and
 // may be empty. Qty is cases for a case GTIN and eaches for an each GTIN
 // (default 1); it is ignored for an SSCC. Condition defaults to Good.
+// OverrideReason is the optional tolerance override of ADR 0026: required
+// when the booking pushes a line beyond the declared over band.
 type ReceiveScanCommand struct {
 	ReceiptID       string
 	Scan            string
@@ -43,6 +45,7 @@ type ReceiveScanCommand struct {
 	Lot             string
 	Expiry          string
 	CountedContents []CountedContent
+	OverrideReason  string
 	ExpectedVersion int64
 }
 
@@ -122,6 +125,10 @@ func (uc *ReceiveScan) Handle(ctx context.Context, cmd ReceiveScanCommand) (Scan
 	if err != nil {
 		return ScanOutcome{}, err
 	}
+	reason, err := parseOverrideReason(cmd.OverrideReason)
+	if err != nil {
+		return ScanOutcome{}, err
+	}
 	in, err := parseScan(cmd, uc.now().Year())
 	if err != nil {
 		return ScanOutcome{}, err
@@ -138,6 +145,17 @@ func (uc *ReceiveScan) Handle(ctx context.Context, cmd ReceiveScanCommand) (Scan
 		}
 		kind, res, err := uc.dispatch(ctx, r, in, condition)
 		if err != nil {
+			return err
+		}
+		// The tolerance seam of ADR 0026: the lines this scan booked are
+		// judged against the policy's over band AFTER the booking, so the
+		// refusal (hard stop, or a missing reason code in the override
+		// zone) aborts this unit of work and books nothing.
+		a, err := uc.Asns.Get(ctx, r.AsnNumber())
+		if err != nil {
+			return err
+		}
+		if err := uc.enforceScanTolerance(ctx, r, a, res.Events, reason); err != nil {
 			return err
 		}
 		if err := uc.saveReceipt(ctx, r, loaded, res.Events); err != nil {

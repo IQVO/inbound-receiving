@@ -11,6 +11,8 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
 	"github.com/claudioed/inbound-receiving/internal/application/repository"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
+	"github.com/claudioed/inbound-receiving/internal/domain/asn"
+	"github.com/claudioed/inbound-receiving/internal/domain/policy"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
 
@@ -80,6 +82,8 @@ type capturingEncoder struct {
 	events []receipt.Event
 }
 
+func (c *capturingEncoder) EncodeAsn(...asn.Event) ([]outbox.Message, error)       { return nil, nil }
+func (c *capturingEncoder) EncodePolicy(...policy.Event) ([]outbox.Message, error) { return nil, nil }
 func (c *capturingEncoder) EncodeReceipt(events ...receipt.Event) ([]outbox.Message, error) {
 	c.events = append(c.events, events...)
 	return c.fakeEncoder.EncodeReceipt(events...)

@@ -49,6 +49,7 @@ Topic `warehouse.inbound-receiving.events`, written by the outbox relay: eleven 
 
 | `receipt.ReceivingAdviceIssued` | no request: raised by `POST /receipts/{receiptId}/closures`, in the same transaction, right after `ReceiptClosed` (ADR 0023) | `receipt_id`, `asn_number`, `despatch_advice_ref`, `supplier_ref`, `owner_ref?`, `issued_at`, `last_carton_at`, `sla_seconds`, `within_sla`, `lines[]` = `{line_no, sku, gtin?, expected_qty, received_qty, accepted_qty, rejected_qty, held_qty, sscc_count, ssccs?, ssccs_truncated?, discrepancies[]}` (each `{kind, quantity, w13_code?, cbv_disposition}`), `lines_total`, `lines_truncated?`, `carton_findings[]`, `carton_findings_total` |
 | `receipt.ReceivingAdviceOverdue` | no request: raised by the housekeeping sweep, once per Open receipt past `RECEIVING_ADVICE_SLA` (ADR 0023) | `receipt_id`, `asn_number`, `last_carton_at`, `due_at`, `sla_seconds`, `overdue_at` |
+| `policy.ReceivingPolicyDeclared` | `POST /receiving-policies` (ADR 0026), in the same transaction as the upsert | `supplier_ref`, `owner_ref?`, `over_tolerance`, `under_tolerance`, `over_hard_stop`, `under_hard_stop`, `version`, `declared_at` |
 
 `?` marks a field omitted when unset. On `ReceiptClosed`, `kind` is `Short`, `Over` or `Damaged` (each with
 `w13_code` and `cbv_disposition`, ADR 0023; `CartonDiscrepancyRaised` carries the carton kinds, listed on

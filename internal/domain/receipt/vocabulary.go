@@ -38,14 +38,22 @@ type Coding struct {
 func (c Coding) Mapped() bool { return c.W13 != "" }
 
 // KindIncorrectProduct and KindHold are the two line kinds of the standard
-// (W13 05 and 09) that this context lacked before ADR 0023. Neither is part of
-// ReceiptClosed: they live on the receiving advice.
+// (W13 05 and 09) that this context lacked before ADR 0023. Neither is part
+// of ReceiptClosed: they live on the receiving advice. KindOverTolerance and
+// KindUnderTolerance (ADR 0026) ARE part of ReceiptClosed: a variance beyond
+// the tolerance band closes on them, carrying the override reason code.
 const (
 	// KindIncorrectProduct: a manifest carton was refused because its label
 	// names another product than its ASN line (derived, never typed in).
 	KindIncorrectProduct Kind = "IncorrectProduct"
 	// KindHold: units of a line were declared held by an explicit command.
 	KindHold Kind = "Hold"
+	// KindOverTolerance: received above the tolerance band; the close needed
+	// an override reason code (ADR 0026).
+	KindOverTolerance Kind = "OverTolerance"
+	// KindUnderTolerance: received below the tolerance band; the close needed
+	// an override reason code (ADR 0026).
+	KindUnderTolerance Kind = "UnderTolerance"
 )
 
 // codings is the table of ADR 0023, the single place to change a code.
@@ -70,6 +78,11 @@ var codings = map[Kind]Coding{
 	// ADR 0025: a flat-ASN scan without AI 02. No W13 code exists for a label
 	// that lacks an AI (the same reasoning as UnlabelledCarton).
 	KindMissingContentGtin: {"", DispositionNonConformant},
+	// ADR 0026: the two tolerance kinds. W13 keeps its quantity codes (03
+	// over, 02 short) because the variance itself is still an over/under —
+	// what the policy adds is that it closed only with an override reason.
+	KindOverTolerance:  {W13Over, DispositionMismatchQuantity},
+	KindUnderTolerance: {W13Short, DispositionMismatchQuantity},
 }
 
 // CodingOf returns the W13 code and CBV disposition of a kind. It reports false
@@ -79,11 +92,14 @@ func CodingOf(k Kind) (Coding, bool) {
 	return c, ok
 }
 
-// AllKinds returns every kind the aggregate can raise: the three line kinds of
-// ReceiptClosed, the two of the advice and the twelve carton kinds.
+// AllKinds returns every kind the aggregate can raise: the five line kinds of
+// ReceiptClosed and the advice's line entries (Short, Over, Damaged,
+// OverTolerance, UnderTolerance), the two advice-only line kinds and the
+// twelve carton kinds.
 func AllKinds() []Kind {
 	return []Kind{
 		KindShort, KindOver, KindDamaged, KindIncorrectProduct, KindHold,
+		KindOverTolerance, KindUnderTolerance,
 		KindUnexpectedCarton, KindMissingCarton, KindDuplicateSscc, KindUnknownGtin, KindCaseQtyMismatch,
 		KindMixedCaseDeclaredAsCasePack, KindUnlabelledCarton, KindCartonOverLimit, KindMixedCartonContentMismatch,
 		KindLabelNonCompliant, KindWrongDestination, KindMissingContentGtin,

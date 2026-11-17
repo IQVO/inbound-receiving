@@ -69,6 +69,7 @@ type adapters struct {
 	outboxStore  outboxrelay.Store
 	processed    ports.ProcessedEvents
 	stows        ports.StowStore
+	policies     ports.ReceivingPolicyRepository
 	advice       ports.AdviceStore
 	// adviceSLA is RECEIVING_ADVICE_SLA (ADR 0023); zero = the default.
 	adviceSLA time.Duration
@@ -110,7 +111,7 @@ func (a adapters) writer() usecases.Writer {
 	}
 	return usecases.Writer{
 		Asns: a.asns, Appointments: a.appointments, Receipts: a.receipts, Stows: a.stows,
-		Advice: a.advice, AdviceSLA: sla,
+		Policies: a.policies, Advice: a.advice, AdviceSLA: sla,
 		Outbox: a.outbox, Encoder: outboundkafka.NewFanoutEncoder(), UoW: a.uow,
 		Clock: clock.System{}, IDs: idgen.UUID{},
 	}
@@ -142,9 +143,12 @@ func buildServer(ad adapters, readiness *inboundhttp.Readiness, metrics http.Han
 		GetReceipt:       &usecases.GetReceipt{Receipts: ad.receipts},
 		ListReceipts:     &usecases.ListReceipts{Receipts: ad.receipts},
 		ListDocks:        &usecases.ListDocks{Doors: ad.doors, Mode: usecases.ModeKafka},
-		Idempotency:      ad.idempotency,
-		Readiness:        readiness,
-		Metrics:          metrics,
+		// The receiving tolerance policy's declarative admin surface (ADR 0026).
+		DeclareReceivingPolicy: &usecases.DeclareReceivingPolicy{Writer: w},
+		GetReceivingPolicy:     &usecases.GetReceivingPolicy{Writer: w},
+		Idempotency:            ad.idempotency,
+		Readiness:              readiness,
+		Metrics:                metrics,
 	}
 }
 
@@ -178,7 +182,7 @@ func buildAdapters(ctx context.Context, databaseURL string, logger *slog.Logger)
 	ad := adapters{
 		asns: postgres.NewAsnRepo(pool), appointments: postgres.NewAppointmentRepo(pool), receipts: postgres.NewReceiptRepo(pool),
 		outbox: ob, outboxStore: ob, processed: postgres.NewProcessedEventRepo(pool), stows: postgres.NewStowRepo(pool),
-		advice: postgres.NewAdviceRepo(pool), adviceSLA: adviceSLA(os.Getenv, logger),
+		policies: postgres.NewPolicyRepo(pool), advice: postgres.NewAdviceRepo(pool), adviceSLA: adviceSLA(os.Getenv, logger),
 		skus: postgres.NewKnownSkus(pool), doors: postgres.NewDockDoors(pool), packaging: postgres.NewPackagingView(pool),
 		idempotency: postgres.NewIdempotencyStore(pool), uow: postgres.NewUnitOfWork(pool), pool: pool,
 		ssccSerials: postgres.NewSsccSerials(pool),

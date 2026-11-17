@@ -1,1 +1,1 @@
-{"title":"Body"}
+{"title":"Body","body":{"required":false,"content":{"application/json":{"schema":{"type":"object","additionalProperties":false,"properties":{"overrideReason":{"type":"string","description":"Why an operator accepted a variance beyond the tolerance band (ADR 0026). Our own closed\nvocabulary: the research names no codes and W13 has none for it.\n","enum":["supplier-agreed","damaged-in-transit-recounted","mislabelled-recounted","recount-confirmed"],"title":"OverrideReason"}},"title":"CloseReceiptRequest"},"example":{"overrideReason":"supplier-agreed"}}}}}

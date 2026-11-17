@@ -1,0 +1,1 @@
+{"parameters":[{"name":"ownerRef","in":"query","required":false,"description":"Opaque tenant tag; absent reads the house default.","schema":{"type":"string"}},{"name":"supplierRef","in":"path","required":true,"description":"The supplier reference (1 to 64 characters).","schema":{"type":"string","minLength":1,"maxLength":64},"example":"ACME"}]}
