@@ -15,3 +15,9 @@ ALTER TABLE receipt_discrepancies
 ALTER TABLE receipt_discrepancies
     ADD CONSTRAINT receipt_discrepancies_kind_check
         CHECK (kind IN ('Short', 'Over', 'Damaged', 'OverTolerance', 'UnderTolerance'));
+
+-- A tolerance finding without its override reason code would leave the
+-- reason Pareto with a NULL bucket: the storage layer refuses it too.
+ALTER TABLE receipt_discrepancies
+    ADD CONSTRAINT receipt_discrepancies_tolerance_reason_check
+        CHECK (kind NOT IN ('OverTolerance', 'UnderTolerance') OR reason_code IS NOT NULL);

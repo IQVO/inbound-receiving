@@ -336,3 +336,81 @@ func TestIssueAdviceUnderPolicy(t *testing.T) {
 		t.Fatalf("within-band advice entries = %+v", adv2.Lines[0].Discrepancies)
 	}
 }
+
+// The refusal text names the absolute gap on either side, never a negative
+// quantity, and says which band refused it.
+func TestToleranceErrorMessage(t *testing.T) {
+	over := toleranceOpened(t, 10000)
+	receive(t, over, 1, 12000, ConditionGood)
+	err := over.CheckScanTolerance(band, []int{1}, ReasonSupplierAgreed)
+	want := "line 1 (SKU-1) received 12000, 2000 above 10000 expected: variance 0.2000 is at or beyond the over hard stop 0.1000, no override can pass"
+	if err == nil || err.Error() != want {
+		t.Fatalf("blocked over message = %v, want %q", err, want)
+	}
+
+	under := toleranceOpened(t, 10000)
+	receive(t, under, 1, 9000, ConditionGood)
+	_, err = under.CloseUnderPolicy(t0, AppliedPolicy{Band: band})
+	want = "line 1 (SKU-1) received 9000, 1000 short of 10000 expected: variance 0.1000 is beyond the under tolerance 0.0200 and below the hard stop 0.2000, an override reason code is required"
+	if err == nil || err.Error() != want {
+		t.Fatalf("override-needed under message = %v, want %q", err, want)
+	}
+}
+
+// A line that matches exactly raises no Short and no Over, whichever sides
+// the policy declares: the undeclared side keeps today's strict comparison.
+func TestCloseUnderPolicyExactMatchRaisesNothing(t *testing.T) {
+	for name, b := range map[string]Band{
+		"over only":  {Over: 0.05, OverStop: 0.10},
+		"under only": {Under: 0.02, UnderStop: 0.20},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := toleranceOpened(t, 100)
+			receive(t, r, 1, 100, ConditionGood)
+			events, err := r.CloseUnderPolicy(t0, AppliedPolicy{Band: b})
+			if err != nil {
+				t.Fatalf("close: %v", err)
+			}
+			if got := closedKinds(t, events); len(got) != 0 {
+				t.Fatalf("kinds = %v, want none", got)
+			}
+		})
+	}
+}
+
+// With a zero tolerance every unit of variance needs a reason: one unit over
+// (or under) is already in the override zone, not inside the band.
+func TestZeroToleranceJudgesASingleUnit(t *testing.T) {
+	zero := Band{OverStop: 0.10, UnderStop: 0.10}
+	over := toleranceOpened(t, 100)
+	receive(t, over, 1, 101, ConditionGood)
+	if _, err := over.CloseUnderPolicy(t0, AppliedPolicy{Band: zero}); !errors.Is(err, ErrToleranceOverrideRequired) {
+		t.Fatalf("one unit over: err = %v, want ErrToleranceOverrideRequired", err)
+	}
+	under := toleranceOpened(t, 100)
+	receive(t, under, 1, 99, ConditionGood)
+	if _, err := under.CloseUnderPolicy(t0, AppliedPolicy{Band: zero}); !errors.Is(err, ErrToleranceOverrideRequired) {
+		t.Fatalf("one unit under: err = %v, want ErrToleranceOverrideRequired", err)
+	}
+}
+
+// The advice's quantity is the unsigned gap on the under side too.
+func TestIssueAdviceUnderSideQuantity(t *testing.T) {
+	r := toleranceOpened(t, 10000)
+	receive(t, r, 1, 9000, ConditionGood)
+	pol := AppliedPolicy{Band: band, Reason: ReasonRecountConfirmed}
+	if _, err := r.CloseUnderPolicy(t0, pol); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	adv, err := r.IssueAdvice("ACME", time.Hour, t0, pol)
+	if err != nil {
+		t.Fatalf("advice: %v", err)
+	}
+	d := adv.Lines[0].Discrepancies[0]
+	if d.Kind != KindUnderTolerance || d.Quantity != 1000 || d.Reason != ReasonRecountConfirmed {
+		t.Fatalf("advice discrepancy = %+v", d)
+	}
+	if d.Coding.W13 != W13Short {
+		t.Fatalf("W13 = %v, want short", d.Coding.W13)
+	}
+}

@@ -10,6 +10,7 @@ package receipt
 import (
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/claudioed/inbound-receiving/internal/domain/shared"
@@ -117,11 +118,7 @@ func classifySide(variance, tolerance, stop float64) bandState {
 // varianceOf is the ratio |received - expected| / expected; expected is >= 1
 // by the receipt's invariants, so the ratio is always defined.
 func varianceOf(received, expected int64) float64 {
-	diff := received - expected
-	if diff < 0 {
-		diff = -diff
-	}
-	return float64(diff) / float64(expected)
+	return math.Abs(float64(received-expected)) / float64(expected)
 }
 
 // ToleranceError is the refusal of a close or a scan under a policy: the
@@ -144,16 +141,16 @@ type ToleranceError struct {
 
 // Error implements error.
 func (e *ToleranceError) Error() string {
-	side, act := "under", "short of"
+	side, act, gap := "under", "short of", e.Expected-e.Received
 	if e.Over {
-		side, act = "over", "above"
+		side, act, gap = "over", "above", e.Received-e.Expected
 	}
 	if e.Blocked {
 		return fmt.Sprintf("line %d (%s) received %d, %d %s %d expected: variance %.4f is at or beyond the %s hard stop %.4f, no override can pass",
-			e.LineNo, e.SKU, e.Received, e.Received-e.Expected, act, e.Expected, e.Variance, side, e.HardStop)
+			e.LineNo, e.SKU, e.Received, gap, act, e.Expected, e.Variance, side, e.HardStop)
 	}
 	return fmt.Sprintf("line %d (%s) received %d, %d %s %d expected: variance %.4f is beyond the %s tolerance %.4f and below the hard stop %.4f, an override reason code is required",
-		e.LineNo, e.SKU, e.Received, e.Received-e.Expected, act, e.Expected, e.Variance, side, e.Tolerance, e.HardStop)
+		e.LineNo, e.SKU, e.Received, gap, act, e.Expected, e.Variance, side, e.Tolerance, e.HardStop)
 }
 
 // Unwrap maps the refusal to its sentinel.
@@ -222,7 +219,7 @@ func sideFinding(l Line, p AppliedPolicy, over bool) (d Discrepancy, ok bool, er
 		declared, diff = p.Band.UnderDeclared(), l.expectedQty-l.Received()
 		kind, tolerance, stop = KindUnderTolerance, p.Band.Under, p.Band.UnderStop
 	}
-	if !declared || diff <= 0 {
+	if !declared || diff < 1 {
 		return Discrepancy{}, false, nil
 	}
 	variance := varianceOf(l.Received(), l.expectedQty)
