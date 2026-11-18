@@ -27,6 +27,10 @@ func TestCodingTable(t *testing.T) {
 		KindWrongDestination:  {W13: "", CBV: "mismatch_instance"},
 		// ADR 0025: the flat-ASN scan kind, unmapped.
 		KindMissingContentGtin: {W13: "", CBV: "non_conformant"},
+		// ADR 0026: the tolerance kinds keep the quantity codes of the
+		// variance they report.
+		KindOverTolerance:  {W13: "03", CBV: "mismatch_quantity"},
+		KindUnderTolerance: {W13: "02", CBV: "mismatch_quantity"},
 	}
 	for kind, coding := range want {
 		got, ok := CodingOf(kind)
@@ -37,15 +41,15 @@ func TestCodingTable(t *testing.T) {
 			t.Errorf("%s: Mapped() = %v, want %v", kind, got.Mapped(), coding.W13 != "")
 		}
 	}
-	if len(want) != 17 {
-		t.Fatalf("the table under test has %d rows, ADR 0023 has 14, ADR 0024 adds 2 and ADR 0025 one", len(want))
+	if len(want) != 19 {
+		t.Fatalf("the table under test has %d rows, ADR 0023 has 14, ADR 0024 adds 2, ADR 0025 one and ADR 0026 two", len(want))
 	}
 }
 
 func TestEveryKindIsCoded(t *testing.T) {
 	kinds := AllKinds()
-	if len(kinds) != 17 {
-		t.Fatalf("AllKinds() = %d kinds, want 17: %v", len(kinds), kinds)
+	if len(kinds) != 19 {
+		t.Fatalf("AllKinds() = %d kinds, want 19: %v", len(kinds), kinds)
 	}
 	seen := map[Kind]bool{}
 	for _, k := range kinds {
@@ -79,8 +83,8 @@ func TestWorkedCodesAreOnlyTheW13SetOfTheStandard(t *testing.T) {
 			t.Errorf("%s maps to %q, which is not a W13 code of the research (01 02 03 05 09)", k, c.W13)
 		}
 	}
-	if mapped != 9 {
-		t.Fatalf("%d kinds are mapped, ADR 0023 maps 9 and ADR 0024 leaves its two new kinds unmapped", mapped)
+	if mapped != 11 {
+		t.Fatalf("%d kinds are mapped, ADR 0023 maps 9, ADR 0024 leaves its two new kinds unmapped and ADR 0026 maps its two tolerance kinds", mapped)
 	}
 }
 

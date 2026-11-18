@@ -67,7 +67,9 @@ func (r registerAsnRequest) cartonInputs() []asn.CartonInput {
 
 // receiveScanRequest is POST /receipts/{id}/scans: EITHER scan (the raw string
 // a scanner delivered) OR kind and id. kind is the kind the screen expects; with
-// a raw scan the optional expectedKind plays that part.
+// a raw scan the optional expectedKind plays that part. overrideReason is the
+// tolerance override of ADR 0026, required when the booking pushes a line
+// beyond the declared over band.
 type receiveScanRequest struct {
 	Scan            string                  `json:"scan"`
 	Kind            string                  `json:"kind"`
@@ -78,6 +80,25 @@ type receiveScanRequest struct {
 	Lot             string                  `json:"lot"`
 	Expiry          string                  `json:"expiry"`
 	CountedContents []countedContentRequest `json:"countedContents"`
+	OverrideReason  string                  `json:"overrideReason"`
+}
+
+// closeReceiptRequest is the optional body of POST /receipts/{id}/closures:
+// the tolerance override reason of ADR 0026, required when a line sits
+// between the declared band and its hard stop.
+type closeReceiptRequest struct {
+	OverrideReason string `json:"overrideReason"`
+}
+
+// declareReceivingPolicyRequest is POST /receiving-policies (ADR 0026):
+// create-or-replace the tolerance policy of one (ownerRef, supplierRef).
+type declareReceivingPolicyRequest struct {
+	OwnerRef       string  `json:"ownerRef"`
+	SupplierRef    string  `json:"supplierRef"`
+	OverTolerance  float64 `json:"overTolerance"`
+	UnderTolerance float64 `json:"underTolerance"`
+	OverHardStop   float64 `json:"overHardStop"`
+	UnderHardStop  float64 `json:"underHardStop"`
 }
 
 // assignSsccRequest is POST /receipts/{id}/sscc-assignments: the case GTIN of a

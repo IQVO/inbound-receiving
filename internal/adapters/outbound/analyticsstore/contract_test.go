@@ -70,6 +70,14 @@ func closedEv(id, receipt, when string, ds ...report.Discrepancy) report.Event {
 	return e
 }
 
+// toleranceClosedEv is a close under a declared policy (ADR 0026): the
+// tolerance fact plus its tolerance discrepancies with reason codes.
+func toleranceClosedEv(id, receipt, when string, ds ...report.Discrepancy) report.Event {
+	e := closedEv(id, receipt, when, ds...)
+	e.Tolerance = &report.ToleranceBands{Over: 0.05, OverStop: 0.10, Under: 0.02, UnderStop: 0.20}
+	return e
+}
+
 func mustApply(t *testing.T, s store, events ...report.Event) {
 	t.Helper()
 	for _, e := range events {
@@ -125,9 +133,20 @@ func assertDay(t *testing.T, got, want report.PerformanceDay) {
 	got.Advice, want.Advice = report.AdviceSummary{}, report.AdviceSummary{}
 	assertTimeliness(t, want.Day, got.AsnTimeliness, want.AsnTimeliness)
 	got.AsnTimeliness, want.AsnTimeliness = nil, nil
+	assertTolerance(t, want.Day, got.Tolerance, want.Tolerance)
+	got.Tolerance, want.Tolerance = report.ToleranceSummary{}, report.ToleranceSummary{}
 	got.Day = want.Day
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("day = %+v, want %+v", got, want)
+	}
+}
+
+func assertTolerance(t *testing.T, day time.Time, got, want report.ToleranceSummary) {
+	t.Helper()
+	if got.Closed != want.Closed || got.Overrides != want.Overrides || got.WithPolicy != want.WithPolicy ||
+		got.AutoAccepted != want.AutoAccepted || !approx(got.ShareWithoutOverride, want.ShareWithoutOverride) ||
+		!reflect.DeepEqual(got.Reasons, want.Reasons) {
+		t.Fatalf("%s tolerance = %+v, want %+v", day.Format("2006-01-02"), got, want)
 	}
 }
 
@@ -212,6 +231,7 @@ var contractScenarios = []struct {
 		)
 		d5 := zeroDay("2026-10-05")
 		d5.ReceiptsClosed, d5.LinesReceived, d5.UnitsGood, d5.UnitsDamaged = 1, 2, 30, 4
+		d5.Tolerance = report.NewToleranceSummary(1, 0, 0, 0, nil)
 		d5.Discrepancies = report.DiscrepancyCounts{Short: 1, Over: 1, Damaged: 1}
 		d5.ReceiptCycle = timing(1, f(7200), f(7200))
 		d6 := zeroDay("2026-10-06")
@@ -230,6 +250,7 @@ var contractScenarios = []struct {
 		)
 		d := zeroDay("2026-10-06")
 		d.ReceiptsClosed = 4
+		d.Tolerance = report.NewToleranceSummary(4, 0, 0, 0, nil)
 		d.ReceiptCycle = timing(3, f(3600), f(3600+0.9*(86400-3600))) // 1800s, 3600s, 86400s
 		assertDays(t, perf(t, s, "2026-10-06T00:00:00Z", "2026-10-07T00:00:00Z"), []report.PerformanceDay{d})
 	}},
@@ -306,6 +327,8 @@ var contractScenarios = []struct {
 		)
 		d5, d6 := zeroDay("2026-10-05"), zeroDay("2026-10-06")
 		d5.ReceiptsClosed, d6.ReceiptsClosed = 1, 1
+		d5.Tolerance = report.NewToleranceSummary(1, 0, 0, 0, nil)
+		d6.Tolerance = report.NewToleranceSummary(1, 0, 0, 0, nil)
 		assertDays(t, perf(t, s, "2026-10-05T10:00:00Z", "2026-10-06T06:00:00Z"), []report.PerformanceDay{d5, d6})
 	}},
 	{"current: open receipts and today's expected arrivals", func(t *testing.T, s store) {
@@ -400,6 +423,39 @@ var contractScenarios = []struct {
 			if row.SupplierRef != "S00" && row.Late != 0 {
 				t.Fatalf("%s = %+v, want no late fact", row.SupplierRef, row)
 			}
+		}
+	}},
+	{"tolerance: closes under a policy, overrides, auto-accepts and the reason Pareto (ADR 0026)", func(t *testing.T, s store) {
+		mustApply(t, s,
+			// R-1: policy close, inside the band everywhere -> auto-accepted.
+			toleranceClosedEv("t-c1", "R-1", "2026-10-05T10:00:00Z"),
+			// R-2: policy close with two override findings carrying reasons.
+			toleranceClosedEv("t-c2", "R-2", "2026-10-05T11:00:00Z",
+				report.Discrepancy{LineNo: 1, SKU: "SKU-1", Kind: report.DiscrepancyOverTolerance, Reason: "supplier-agreed"},
+				report.Discrepancy{LineNo: 2, SKU: "SKU-2", Kind: report.DiscrepancyUnderTolerance, Reason: "supplier-agreed"}),
+			// R-3: a legacy close (no policy) with a plain discrepancy.
+			closedEv("t-c3", "R-3", "2026-10-05T12:00:00Z",
+				report.Discrepancy{LineNo: 1, SKU: "SKU-1", Kind: report.DiscrepancyOver}),
+			// R-4: another policy override, a different reason, the next day.
+			toleranceClosedEv("t-c4", "R-4", "2026-10-06T09:00:00Z",
+				report.Discrepancy{LineNo: 1, SKU: "SKU-1", Kind: report.DiscrepancyOverTolerance, Reason: "recount-confirmed"}),
+		)
+		d5 := zeroDay("2026-10-05")
+		d5.ReceiptsClosed = 3
+		d5.Discrepancies = report.DiscrepancyCounts{Over: 1}
+		d5.Tolerance = report.NewToleranceSummary(3, 1, 2, 1,
+			[]report.OverrideReasonCount{{Reason: "supplier-agreed", Count: 2}})
+		d6 := zeroDay("2026-10-06")
+		d6.ReceiptsClosed = 1
+		d6.Tolerance = report.NewToleranceSummary(1, 1, 1, 0,
+			[]report.OverrideReasonCount{{Reason: "recount-confirmed", Count: 1}})
+		assertDays(t, perf(t, s, "2026-10-05T00:00:00Z", "2026-10-07T00:00:00Z"), []report.PerformanceDay{d5, d6})
+	}},
+	{"a tolerance discrepancy without a reason code is rejected like the database would", func(t *testing.T, s store) {
+		e := toleranceClosedEv("t-bad", "R-9", "2026-10-05T10:00:00Z",
+			report.Discrepancy{LineNo: 1, SKU: "SKU-1", Kind: report.DiscrepancyOverTolerance})
+		if _, err := s.Apply(context.Background(), e); err == nil {
+			t.Fatal("a tolerance discrepancy without a reason code was accepted")
 		}
 	}},
 }

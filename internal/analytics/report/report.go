@@ -81,16 +81,25 @@ func (c Condition) Valid() bool { return c == ConditionGood || c == ConditionDam
 // DiscrepancyKind is the kind of a receiving discrepancy.
 type DiscrepancyKind string
 
-// The three discrepancy kinds a receipt closes with.
+// The five discrepancy kinds a receipt closes with: the three of every close
+// and the two tolerance kinds a policy-ruled close adds (ADR 0026).
 const (
-	DiscrepancyShort   DiscrepancyKind = "Short"
-	DiscrepancyOver    DiscrepancyKind = "Over"
-	DiscrepancyDamaged DiscrepancyKind = "Damaged"
+	DiscrepancyShort          DiscrepancyKind = "Short"
+	DiscrepancyOver           DiscrepancyKind = "Over"
+	DiscrepancyDamaged        DiscrepancyKind = "Damaged"
+	DiscrepancyOverTolerance  DiscrepancyKind = "OverTolerance"
+	DiscrepancyUnderTolerance DiscrepancyKind = "UnderTolerance"
 )
 
 // Valid reports whether k is a known discrepancy kind.
 func (k DiscrepancyKind) Valid() bool {
-	return k == DiscrepancyShort || k == DiscrepancyOver || k == DiscrepancyDamaged
+	return k == DiscrepancyShort || k == DiscrepancyOver || k == DiscrepancyDamaged ||
+		k == DiscrepancyOverTolerance || k == DiscrepancyUnderTolerance
+}
+
+// ToleranceKind reports whether k is one of the two tolerance kinds (ADR 0026).
+func (k DiscrepancyKind) ToleranceKind() bool {
+	return k == DiscrepancyOverTolerance || k == DiscrepancyUnderTolerance
 }
 
 // LineReceived is the part of a ReceiptLineReceived the report reads.
@@ -106,6 +115,9 @@ type Discrepancy struct {
 	LineNo int
 	SKU    string
 	Kind   DiscrepancyKind
+	// Reason is the override reason code, set exactly on the tolerance kinds
+	// (ADR 0026); it feeds the report's reason Pareto.
+	Reason string
 }
 
 // StowCompleted is the part of a ReceiptStowCompleted the report reads: the
@@ -143,6 +155,9 @@ type Event struct {
 	Line *LineReceived
 	// Discrepancies is set on a ReceiptClosed (possibly empty).
 	Discrepancies []Discrepancy
+	// Tolerance is set on a ReceiptClosed that was judged under a declared
+	// receiving policy (ADR 0026); nil when none was.
+	Tolerance *ToleranceBands
 	// Stow is set exactly on a ReceiptStowCompleted.
 	Stow *StowCompleted
 	// Advice is set exactly on a ReceivingAdviceIssued.
@@ -209,13 +224,26 @@ func (e Event) validateDetail() error {
 			return fmt.Errorf("%w: %s %s without an advice", ErrInvalidEvent, e.Kind, e.EventID)
 		}
 	case KindReceiptClosed:
-		for _, d := range e.Discrepancies {
-			if d.LineNo < 1 || !d.Kind.Valid() {
-				return fmt.Errorf("%w: %s %s discrepancy line %d kind %q", ErrInvalidEvent, e.Kind, e.EventID, d.LineNo, d.Kind)
-			}
-		}
+		return e.validateClosed()
 	case KindAsnLateForArrival:
 		return e.validateAsnLate()
+	}
+	return nil
+}
+
+// validateClosed checks a ReceiptClosed's discrepancies (a line, a known kind,
+// and on the tolerance kinds a reason code, ADR 0026) and its tolerance bands.
+func (e Event) validateClosed() error {
+	for _, d := range e.Discrepancies {
+		if d.LineNo < 1 || !d.Kind.Valid() {
+			return fmt.Errorf("%w: %s %s discrepancy line %d kind %q", ErrInvalidEvent, e.Kind, e.EventID, d.LineNo, d.Kind)
+		}
+		if d.Kind.ToleranceKind() && d.Reason == "" {
+			return fmt.Errorf("%w: %s %s tolerance discrepancy line %d without a reason code", ErrInvalidEvent, e.Kind, e.EventID, d.LineNo)
+		}
+	}
+	if e.Tolerance != nil && (e.Tolerance.OverStop < 0 || e.Tolerance.UnderStop < 0) {
+		return fmt.Errorf("%w: %s %s carries a negative tolerance band", ErrInvalidEvent, e.Kind, e.EventID)
 	}
 	return nil
 }
@@ -250,6 +278,8 @@ func (e Event) strayDetail() string {
 		return "an advice"
 	case e.Kind != KindReceiptClosed && len(e.Discrepancies) > 0:
 		return "discrepancies"
+	case e.Kind != KindReceiptClosed && e.Tolerance != nil:
+		return "a tolerance"
 	}
 	return ""
 }
@@ -402,6 +432,10 @@ type PerformanceDay struct {
 	// (ADR 0025): the day's ASNs by registered_at day, how many were late,
 	// and the on-time share, bounded by MaxTimelinessSuppliers.
 	AsnTimeliness []SupplierTimeliness
+	// Tolerance is the receiving-tolerance block of the day (ADR 0026):
+	// closes with and without override findings, the auto-accepted count
+	// and the bounded override-reason Pareto.
+	Tolerance ToleranceSummary
 }
 
 // CurrentCounts is the state right now, independent of the report range.

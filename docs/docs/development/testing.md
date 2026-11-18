@@ -19,30 +19,51 @@ every push and pull request into `develop`/`main`.
 | Adapter unit tests | `internal/adapters/**/*_test.go` (httptest handlers, MCP tools + `testdata/tool_registry.golden.json`, Kafka consumers with fake readers, encoders with golden CloudEvents, relay, telemetry, memory store) | `make test` | nothing |
 | Analytics rules | `internal/analytics/report/report_test.go` (range parsing, day windows, percentiles, freshness) | `make test` | nothing |
 | Composition roots | `cmd/*/main_test.go` (env validation, admin mux, drain delay; the in-memory doubles come from `cmd/api/testdoubles_test.go`) | `make test` | nothing |
-| BDD acceptance (godog) | `features/*.feature`, steps in `features_test.go` + `features_wave2_test.go` | `make bdd` (also part of `make test`) | nothing: in-memory adapters behind an `httptest` server and a stepping clock |
+| BDD acceptance (godog) | `features/*.feature`, steps in `features_test.go` + the sibling `features_*_test.go` files (rule steps in `features_rules_test.go`) | `make bdd` (also part of `make test`) | nothing: in-memory adapters behind an `httptest` server and a stepping clock |
 | Architecture fitness | `internal/architecture/*_test.go` (including `TestRuntimeBinaryHasNoInMemoryAdapters`) | `make arch-test` (also part of `make test`) | nothing |
 | Integration (testcontainers) | files with `//go:build integration`, including `cmd/api/e2e_integration_test.go` (`TestRunOnRealPostgresAndKafka`) | `make integration` | Docker |
 | Mutation | gremlins over `internal/domain` | `make mutation` / `make mutation-full` | `gremlins` v0.6.0 |
 | Frontend remote | `web/` (vitest + Testing Library) | `npm test` in `web/` | Node 22, sibling `warehouse-ui-kit` checkout |
 | Chart render tests | `charts/inbound-receiving/tests/render_test.sh`, `charts/inbound-receiving/tests/test_service_selectors.py` | `bash .../render_test.sh`, `python3 .../test_service_selectors.py` (CI `chart-tests`) | `helm`, PyYAML |
 
-There are **76** `*_test.go` files; 19 of them are integration-tagged.
+There are **170** `*_test.go` files; 32 of them are integration-tagged.
 
 ### BDD features
 
-7 feature files, **71** scenarios (8 of them Scenario Outlines, expanded by
-their Examples tables). godog runs with `Strict: true`, so an undefined or
-pending step fails the suite.
+19 feature files, **226** scenario definitions (35 of them Scenario Outlines),
+which the runner executes as **342** scenarios once every Examples row is
+expanded (the `N scenarios` line of `go test . -run TestFeatures -count=1 -v`).
+godog runs with `Strict: true`, so an undefined or pending step fails the suite.
+BDD-only statement coverage over `./internal/...`
+(`go test . -run TestFeatures -count=1 -coverpkg=./internal/...`) is 77.5 %.
 
-| Feature file | Feature | Scenarios |
+The four `*_rules.feature` files pin the rules written in the documentation
+(canvas invariants, use cases, troubleshooting, ADR 0017, `apis/openapi.yaml`)
+one rule per scenario, with boundaries as Outline rows (at the limit accepted,
+one past it refused).
+
+| Feature file | Feature | Scenario definitions |
 |---|---|---|
 | `register_asn.feature` | Register an ASN | 11 |
-| `dock_appointments.feature` | Appointment writes answer 410; the appointments local copy fed by dock-scheduling (ADR 0019) | 10 |
-| `receiving.feature` | Receive goods against an ASN | 12 |
-| `idempotent_replays.feature` | Idempotent creating requests | 5 |
+| `register_asn_cartons.feature` | Register an ASN with cartons (ADR 0012) | 8 |
+| `asn_timeliness.feature` | ASN timeliness and flat S-O-I ASNs (ADR 0025) | 8 |
+| `asn_rules.feature` | ASN rules from the documentation: number, supplier ref, quantity and line-number bounds, cancel and `If-Match` rules, `ASNRegistered` / `ASNCancelled` payloads | 16 |
+| `dock_appointments.feature` | Appointment writes answer 410; the appointments local copy fed by dock-scheduling (ADR 0019) | 14 |
+| `receiving.feature` | Receive goods against an ASN | 13 |
+| `receiving_rules.feature` | Receipt rules from the documentation: discrepancy kinds, running-total bounds, atomic open, receipt events, closed-receipt scans | 25 |
+| `receiving_advice.feature` | Receiving advice at close, with the standard discrepancy vocabulary (ADR 0023) | 11 |
+| `carton_receiving.feature` | Receive cartons by scan (ADR 0012) | 13 |
+| `carton_discrepancies.feature` | Carton discrepancies (ADR 0012, ADR 0014) | 13 |
+| `receipt_carton_discrepancies.feature` | Carton discrepancies are part of the receipt (ADR 0015) | 4 |
+| `gs1_label_receiving.feature` | GS1 logistic-label receiving (ADR 0024) | 7 |
+| `dock_to_stock.feature` | Dock-to-stock KPI (ADR 0021) | 9 |
+| `feeds_rules.feature` | Local copies and dock-to-stock rules from the documentation: appointment and pack-level copies, dock-to-stock edge cases | 18 |
+| `dock_door_registry.feature` | Dock-door registry fed by facility-layout | 10 |
+| `idempotent_replays.feature` | Idempotent creating requests | 6 |
 | `list_receipts_and_docks.feature` | Listing receipts, appointments and dock doors | 17 |
-| `dock_door_registry.feature` | Dock-door registry fed by facility-layout | 12 |
+| `operations_rules.feature` | Operational rules from the documentation: idempotency, list problem slugs, `/readyz`, the reports service | 22 |
 | `probes.feature` | Health probe | 1 |
+| **Total** | | **226** (342 executed) |
 
 ### Integration suites
 

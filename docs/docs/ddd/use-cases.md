@@ -29,7 +29,8 @@ exist: their routes answer `410 appointment-moved` (ADR 0019).
 | `OpenReceipt` | `POST /receipts` (`Idempotency-Key` required) | In one unit of work: loads the ASN (`422 unknown-asn`), validates the optional appointment against the local copy (`422 unknown-appointment`, `422 asn-not-on-appointment`, `409 appointment-cancelled`) and takes its door, opens the receipt against the ASN snapshot, requires no open receipt for the ASN (`409 receipt-already-open`), moves the ASN to `Receiving` and saves both. `201`, `ReceiptOpened`. |
 | `ReceiveLine` | `POST /receipts/{receiptId}/lines` (`Idempotency-Key` required, not naturally idempotent) | Loads the receipt, checks `If-Match`, records the quantity as `Good` or `Damaged`. `201`, `ReceiptLineReceived`. `409 receipt-closed`, `422 line-not-on-asn`, `400 invalid-condition`. |
 | `ReceiveScan` | `POST /receipts/{receiptId}/scans` (`Idempotency-Key` required) | Receives by scan: an SSCC accepts the carton's manifest, a case GTIN books cases x units per pack, an each GTIN books eaches. A refused scan is not an error: it commits the finding and books nothing. `ReceiptLineReceived` and `ReceiptCartonReceived` for an accepted scan, `CartonDiscrepancyRaised` per finding. |
-| `CloseReceipt` | `POST /receipts/{receiptId}/closures` | In ONE unit of work: closes the receipt (computing the discrepancies), completes the ASN and evaluates the dock-to-stock fact. `200`, `CartonDiscrepancyRaised` (a `MissingCarton` per manifest carton never accepted), `ReceiptClosed` and, when the evidence is complete, `ReceiptStowCompleted`. `409 receipt-closed`. It no longer completes the appointment (ADR 0019). |
+| `CloseReceipt` | `POST /receipts/{receiptId}/closures` | In ONE unit of work: closes the receipt (computing the discrepancies), completes the ASN and evaluates the dock-to-stock fact. `200`, `CartonDiscrepancyRaised` (a `MissingCarton` per manifest carton never accepted), `ReceiptClosed` and, when the evidence is complete, `ReceiptStowCompleted`. `409 receipt-closed`. It no longer completes the appointment (ADR 0019). With a receiving policy declared (ADR 0026) it judges each line against the band: `409 tolerance-override-required` / `409 tolerance-blocked`, and an override closes the line with `OverTolerance` / `UnderTolerance` and its `reason_code`. |
+| `DeclareReceivingPolicy` / `GetReceivingPolicy` | `POST /receiving-policies`, `GET /receiving-policies/{supplierRef}` | Create-or-replace (`201`/`200`) and read the tolerance policy of one (`ownerRef`, `supplierRef`) in the same unit of work as the `ReceivingPolicyDeclared` event; `400 invalid-tolerance-band`, `404 receiving-policy-not-found` (ADR 0026). |
 
 ## Queries
 
@@ -46,8 +47,10 @@ exist: their routes answer `410 appointment-moved` (ADR 0019).
 | `ListDocks` | `GET /docks` | The known inbound dock doors in door-code order plus the current `DOCK_DOOR_MODE`. |
 
 Lists use cursor paging: `limit` 1..500 (default 100) and the opaque `cursor`
-that is the previous page's `nextCursor`; a bad value is `400 invalid-query`
-(`usecases.ErrInvalidListQuery`).
+that is the previous page's `nextCursor`; a bad `limit` is `400 invalid-limit`, a
+bad `cursor` `400 invalid-cursor` (both refine `usecases.ErrInvalidListQuery`,
+which stays `400 invalid-query` for a bad `state`, `door` or instant, ADR 0017).
+The MCP tools and the A2A skills report all of them as `invalid-query`.
 
 ## Event-driven use cases (local copies)
 
@@ -84,8 +87,7 @@ Response shapes: [Runbook — Reports API](../operations/runbook.md#reports-api-
 - **Errors** are RFC 7807 problems from one table, `problemCatalogue` in
   `internal/adapters/inbound/http/errors.go`.
 
-Acceptance scenarios are in `features/*.feature` (7 files, 71 scenarios:
-`register_asn`, `dock_appointments`, `receiving`, `idempotent_replays`,
-`list_receipts_and_docks`, `dock_door_registry`, `probes`; godog,
-`features_test.go` and `features_wave2_test.go`). See
-[Testing](../development/testing.md).
+Acceptance scenarios are in `features/*.feature` (19 files, 226 scenario
+definitions executed as 342 scenarios with every Examples row expanded; godog,
+`features_test.go` and the sibling `features_*_test.go` files). The per-file list
+is in [Testing](../development/testing.md).

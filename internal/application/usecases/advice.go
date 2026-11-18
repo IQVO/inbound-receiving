@@ -28,14 +28,16 @@ func (w Writer) adviceSLA() time.Duration {
 
 // issueAdvice raises the receiving advice of the closed receipt r through the
 // outbox, once: the marker is inserted in the caller's unit of work and only
-// the inserter raises the event (ADR 0023). supplierRef comes from the ASN. A
-// Writer without an AdviceStore issues nothing. It reports whether this call
-// issued the advice and whether it was within the SLA.
-func (w Writer) issueAdvice(ctx context.Context, r *receipt.Receipt, supplierRef string, at time.Time) (issued, withinSLA bool, err error) {
+// the inserter raises the event (ADR 0023). supplierRef comes from the ASN and
+// applied is the tolerance the close was judged under (ADR 0026), so the
+// advice's exceptions agree with ReceiptClosed. A Writer without an AdviceStore
+// issues nothing. It reports whether this call issued the advice and whether it
+// was within the SLA.
+func (w Writer) issueAdvice(ctx context.Context, r *receipt.Receipt, supplierRef string, at time.Time, applied receipt.AppliedPolicy) (issued, withinSLA bool, err error) {
 	if w.Advice == nil {
 		return false, false, nil
 	}
-	event, err := r.IssueAdvice(supplierRef, w.adviceSLA(), at)
+	event, err := r.IssueAdvice(supplierRef, w.adviceSLA(), at, applied)
 	if err != nil {
 		return false, false, fmt.Errorf("receiving advice of %s: %w", r.ID(), err)
 	}

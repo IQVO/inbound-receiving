@@ -7,6 +7,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/application/outbox"
 	"github.com/claudioed/inbound-receiving/internal/application/ports"
 	"github.com/claudioed/inbound-receiving/internal/domain/asn"
+	"github.com/claudioed/inbound-receiving/internal/domain/policy"
 	"github.com/claudioed/inbound-receiving/internal/domain/receipt"
 )
 
@@ -41,6 +42,13 @@ func (e *AnalyticsEncoder) EncodeReceipt(events ...receipt.Event) ([]outbox.Mess
 	return encodeStream(e.NewID, e.Topic, AnalyticsTopic, cloudevents.StreamAnalytics, events, receiptRow)
 }
 
+// EncodePolicy encodes ReceivingPolicy events in order (ADR 0026). The
+// projector acknowledges and ignores the type: the tolerance KPI reads
+// closes, not declarations.
+func (e *AnalyticsEncoder) EncodePolicy(events ...policy.Event) ([]outbox.Message, error) {
+	return encodeStream(e.NewID, e.Topic, AnalyticsTopic, cloudevents.StreamAnalytics, events, policyRow)
+}
+
 // FanoutEncoder is the encoder the use cases get (ASN and receipt events): every domain event becomes
 // TWO outbox messages, the integration one first and the analytics one
 // second, carrying the SAME CloudEvents id (minted once here, persisted with
@@ -72,6 +80,12 @@ func (f *FanoutEncoder) EncodeAsn(events ...asn.Event) ([]outbox.Message, error)
 // EncodeReceipt encodes Receipt events, two messages per event.
 func (f *FanoutEncoder) EncodeReceipt(events ...receipt.Event) ([]outbox.Message, error) {
 	return fanout(f, events, receiptRow)
+}
+
+// EncodePolicy encodes ReceivingPolicy events, two messages per event (ADR
+// 0026).
+func (f *FanoutEncoder) EncodePolicy(events ...policy.Event) ([]outbox.Message, error) {
+	return fanout(f, events, policyRow)
 }
 
 func fanout[T any](f *FanoutEncoder, events []T, toRow func(T) (row, error)) ([]outbox.Message, error) {

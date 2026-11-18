@@ -228,7 +228,7 @@ func closedWithExceptions(t *testing.T) *Receipt {
 
 func TestIssueAdviceReportsEveryLineWithItsCodedDiscrepancies(t *testing.T) {
 	r := closedWithExceptions(t)
-	ev, err := r.IssueAdvice("ACME", sla24h, at(20))
+	ev, err := r.IssueAdvice("ACME", sla24h, at(20), AppliedPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestIssueAdviceOfAMatchingLineHasNoDiscrepancy(t *testing.T) {
 	if _, err := r.Close(t0); err != nil {
 		t.Fatal(err)
 	}
-	ev, err := r.IssueAdvice("ACME", sla24h, t0)
+	ev, err := r.IssueAdvice("ACME", sla24h, t0, AppliedPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestIssueAdviceOfAMatchingLineHasNoDiscrepancy(t *testing.T) {
 
 func TestIssueAdviceNeedsAClosedReceipt(t *testing.T) {
 	r := opened(t)
-	if _, err := r.IssueAdvice("ACME", sla24h, t0); !errors.Is(err, ErrReceiptNotClosed) {
+	if _, err := r.IssueAdvice("ACME", sla24h, t0, AppliedPolicy{}); !errors.Is(err, ErrReceiptNotClosed) {
 		t.Fatalf("open receipt: %v", err)
 	}
 }
@@ -312,7 +312,7 @@ func TestIssueAdviceWithinSLAIsInclusive(t *testing.T) {
 		if _, err := r.Close(issued); err != nil {
 			t.Fatal(err)
 		}
-		ev, err := r.IssueAdvice("ACME", sla24h, issued)
+		ev, err := r.IssueAdvice("ACME", sla24h, issued, AppliedPolicy{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -327,7 +327,7 @@ func TestIssueAdviceCarriesTheDepositor(t *testing.T) {
 	if _, err := r.Close(at(1)); err != nil {
 		t.Fatal(err)
 	}
-	ev, err := r.IssueAdvice("ACME", sla24h, at(1))
+	ev, err := r.IssueAdvice("ACME", sla24h, at(1), AppliedPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestIssueAdviceListsTheSsccsReceivedPerLine(t *testing.T) {
 	if _, err := r.Close(at(9)); err != nil {
 		t.Fatal(err)
 	}
-	ev, err := r.IssueAdvice("ACME", sla24h, at(9))
+	ev, err := r.IssueAdvice("ACME", sla24h, at(9), AppliedPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +376,7 @@ func TestIssueAdviceCartonFindingsCarryTheirCoding(t *testing.T) {
 	if _, err := r.Close(at(9)); err != nil {
 		t.Fatal(err)
 	}
-	ev, err := r.IssueAdvice("ACME", sla24h, at(9))
+	ev, err := r.IssueAdvice("ACME", sla24h, at(9), AppliedPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +425,7 @@ func TestIncorrectProductIsDerivedFromAWrongProductCarton(t *testing.T) {
 	if _, err := r.Close(at(9)); err != nil {
 		t.Fatal(err)
 	}
-	ev, err := r.IssueAdvice("ACME", sla24h, at(9))
+	ev, err := r.IssueAdvice("ACME", sla24h, at(9), AppliedPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,7 +465,7 @@ func TestAWrongLabelThatIsLaterAcceptedIsNoLongerIncorrect(t *testing.T) {
 	if _, err := r.Close(at(9)); err != nil {
 		t.Fatal(err)
 	}
-	ev, err := r.IssueAdvice("ACME", sla24h, at(9))
+	ev, err := r.IssueAdvice("ACME", sla24h, at(9), AppliedPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +484,7 @@ func TestAdviceBoundsAreThePlainLiteralsOfTheADR(t *testing.T) {
 
 func adviceWith(t *testing.T, r *Receipt, b adviceBounds) ReceivingAdviceIssued {
 	t.Helper()
-	ev, err := r.issueAdvice("ACME", sla24h, at(9), b)
+	ev, err := r.issueAdvice("ACME", sla24h, at(9), b, AppliedPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -643,7 +643,7 @@ func manyShortLinesReceipt(t *testing.T, n int) *Receipt {
 
 func TestIssueAdviceUsesTheRealBounds(t *testing.T) {
 	r := manyLinesReceipt(t, MaxAdviceLines+1, MaxAdviceLines+1)
-	ev, err := r.IssueAdvice("ACME", sla24h, at(1))
+	ev, err := r.IssueAdvice("ACME", sla24h, at(1), AppliedPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -56,8 +56,11 @@ const performanceDaysSQL = `
 	       (SELECT count(*) FROM appointment_facts a WHERE a.completed_at  >= days.lo AND a.completed_at  < days.hi),
 	       dwell.n, dwell.p50, dwell.p95,
 	       d2s.n, d2s.p50, d2s.p90, d2s.under,
-	       adv.n, adv.within
-	FROM days
+	       adv.n, adv.within,
+	       tol.with_policy, tol.auto,
+	       (SELECT count(DISTINCT x.receipt_id) FROM receipt_discrepancies x
+	         WHERE x.kind IN ('OverTolerance', 'UnderTolerance') AND x.closed_at >= days.lo AND x.closed_at < days.hi)
+	       FROM days
 	CROSS JOIN LATERAL (
 		SELECT count(*) AS n,
 		       percentile_cont(0.50) WITHIN GROUP (ORDER BY s.secs) AS p50,
@@ -88,6 +91,14 @@ const performanceDaysSQL = `
 		FROM advice_facts f
 		WHERE f.issued_at >= days.lo AND f.issued_at < days.hi
 	) adv
+	CROSS JOIN LATERAL (
+		SELECT count(*) FILTER (WHERE f.tolerance_applied) AS with_policy,
+		       count(*) FILTER (WHERE f.tolerance_applied
+		         AND NOT EXISTS (SELECT 1 FROM receipt_discrepancies x
+		                           WHERE x.receipt_id = f.receipt_id AND x.kind IN ('OverTolerance', 'UnderTolerance'))) AS auto
+		FROM receipt_facts f
+		WHERE f.closed_at >= days.lo AND f.closed_at < days.hi
+	) tol
 	ORDER BY days.day`
 
 // timelinessDaysSQL builds the same day windows as performanceDaysSQL and
@@ -159,6 +170,68 @@ func boundedTimeliness(rows []report.SupplierTimeliness) []report.SupplierTimeli
 	return rows
 }
 
+// toleranceReasonsSQL folds the day's override-reason Pareto (ADR 0026): the
+// tolerance discrepancies of the receipts closed in the day, grouped by
+// reason_code. A day with no override reports no rows.
+const toleranceReasonsSQL = `
+	WITH days AS (
+		SELECT d::date AS day,
+		       GREATEST(d AT TIME ZONE 'UTC', $1::timestamptz)                    AS lo,
+		       LEAST((d + interval '1 day') AT TIME ZONE 'UTC', $2::timestamptz) AS hi
+		FROM generate_series(
+		         date_trunc('day', $1::timestamptz AT TIME ZONE 'UTC'),
+		         ($2::timestamptz - interval '1 microsecond') AT TIME ZONE 'UTC',
+		         interval '1 day') AS d
+		WHERE $1::timestamptz < $2::timestamptz
+	)
+	SELECT days.day, x.reason_code, count(*)
+	FROM days
+	JOIN receipt_discrepancies x ON x.kind IN ('OverTolerance', 'UnderTolerance')
+	                              AND x.closed_at >= days.lo AND x.closed_at < days.hi
+	GROUP BY days.day, x.reason_code
+	ORDER BY days.day`
+
+// readToleranceReasons fills each day's reason Pareto (ADR 0026), bounded by
+// report.MaxOverrideReasons: biggest count first, ties by reason ascending.
+func (r *Reader) readToleranceReasons(ctx context.Context, rg report.Range, days []report.PerformanceDay) error {
+	byDay := map[string][]report.OverrideReasonCount{}
+	rows, err := r.pool.Query(ctx, toleranceReasonsSQL, rg.From.UTC(), rg.To.UTC())
+	if err != nil {
+		return fmt.Errorf("analyticsstore: tolerance reasons days: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var day time.Time
+		var row report.OverrideReasonCount
+		if err := rows.Scan(&day, &row.Reason, &row.Count); err != nil {
+			return fmt.Errorf("analyticsstore: scan tolerance reason: %w", err)
+		}
+		byDay[day.UTC().Format("2006-01-02")] = append(byDay[day.UTC().Format("2006-01-02")], row)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("analyticsstore: tolerance reason rows: %w", err)
+	}
+	for i := range days {
+		days[i].Tolerance.Reasons = boundedReasons(byDay[days[i].Day.UTC().Format("2006-01-02")])
+	}
+	return nil
+}
+
+// boundedReasons ranks the day's override reasons deterministically, then
+// keeps the top MaxOverrideReasons.
+func boundedReasons(rows []report.OverrideReasonCount) []report.OverrideReasonCount {
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Count != rows[j].Count {
+			return rows[i].Count > rows[j].Count
+		}
+		return rows[i].Reason < rows[j].Reason
+	})
+	if len(rows) > report.MaxOverrideReasons {
+		rows = rows[:report.MaxOverrideReasons]
+	}
+	return rows
+}
+
 // PerformanceDays implements report.Reader.
 func (r *Reader) PerformanceDays(ctx context.Context, rg report.Range) ([]report.PerformanceDay, error) {
 	rows, err := r.pool.Query(ctx, performanceDaysSQL, rg.From.UTC(), rg.To.UTC(), report.DockToStockTargetSeconds)
@@ -174,16 +247,19 @@ func (r *Reader) PerformanceDays(ctx context.Context, rg report.Range) ([]report
 			p50, p90     *float64
 		}
 		var adv struct{ count, within int }
+		var tol struct{ withPolicy, auto, overrides int }
 		if err := rows.Scan(&d.Day, &d.ReceiptsClosed, &d.LinesReceived, &d.UnitsGood, &d.UnitsDamaged,
 			&d.Discrepancies.Short, &d.Discrepancies.Over, &d.Discrepancies.Damaged,
 			&d.ReceiptCycle.Count, &d.ReceiptCycle.P50, &d.ReceiptCycle.P95,
 			&d.Appointments.Booked, &d.Appointments.CheckedIn, &d.Appointments.Cancelled, &d.Appointments.Completed,
 			&d.DockDwell.Count, &d.DockDwell.P50, &d.DockDwell.P95,
-			&d2s.count, &d2s.p50, &d2s.p90, &d2s.under, &adv.count, &adv.within); err != nil {
+			&d2s.count, &d2s.p50, &d2s.p90, &d2s.under, &adv.count, &adv.within,
+			&tol.withPolicy, &tol.auto, &tol.overrides); err != nil {
 			return nil, fmt.Errorf("analyticsstore: scan performance day: %w", err)
 		}
 		d.DockToStock = report.NewDockToStock(d2s.count, d2s.p50, d2s.p90, d2s.under)
 		d.Advice = report.NewAdviceSummary(adv.count, adv.within)
+		d.Tolerance = report.NewToleranceSummary(d.ReceiptsClosed, tol.overrides, tol.withPolicy, tol.auto, nil)
 		y, m, dd := d.Day.Date()
 		d.Day = time.Date(y, m, dd, 0, 0, 0, 0, time.UTC)
 		out = append(out, d)
@@ -192,6 +268,9 @@ func (r *Reader) PerformanceDays(ctx context.Context, rg report.Range) ([]report
 		return nil, fmt.Errorf("analyticsstore: performance days rows: %w", err)
 	}
 	if err := r.readTimeliness(ctx, rg, out); err != nil {
+		return nil, err
+	}
+	if err := r.readToleranceReasons(ctx, rg, out); err != nil {
 		return nil, err
 	}
 	return out, nil

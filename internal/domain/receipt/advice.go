@@ -26,13 +26,17 @@ type adviceBounds struct {
 var defaultAdviceBounds = adviceBounds{lines: MaxAdviceLines, sscc: MaxAdviceSSCCs, findings: MaxAdviceCartonFindings}
 
 // AdviceDiscrepancy is one exception of an advice line: its kind, the number of
-// units it concerns and its standard coding (ADR 0023). Quantity is
+// units it concerns, its standard coding (ADR 0023) and, on the tolerance
+// kinds, the override reason code it closed with (ADR 0026). Quantity is
 // expected - received for Short, received - expected for Over, the Damaged
-// units, the units refused as the wrong product, or the held units.
+// units, the units refused as the wrong product, the held units, or the units
+// beyond the tolerance band for the tolerance kinds.
 type AdviceDiscrepancy struct {
 	Kind     Kind
 	Quantity int64
 	Coding   Coding
+	// Reason is set exactly on the tolerance kinds (ADR 0026).
+	Reason OverrideReason
 }
 
 // AdviceLine is one line of the receiving advice. Accepted + Rejected + Held =
@@ -111,14 +115,17 @@ func (r *Receipt) AdviceOverdue(sla time.Duration, now time.Time) (ReceivingAdvi
 }
 
 // IssueAdvice builds the receiving advice of a Closed receipt. supplierRef comes
-// from the ASN (the receipt does not keep it), at is the issue time and sla the
-// committed window. It is pure and changes nothing: raising it twice is
+// from the ASN (the receipt does not keep it), at is the issue time, sla the
+// committed window and applied the tolerance the close was judged under (the
+// zero value when no policy was declared, ADR 0026): the advice's exceptions
+// are computed under the same band, so it can never disagree with
+// ReceiptClosed. It is pure and changes nothing: raising it twice is
 // prevented by the caller's marker, not here.
-func (r *Receipt) IssueAdvice(supplierRef string, sla time.Duration, at time.Time) (ReceivingAdviceIssued, error) {
-	return r.issueAdvice(supplierRef, sla, at, defaultAdviceBounds)
+func (r *Receipt) IssueAdvice(supplierRef string, sla time.Duration, at time.Time, applied AppliedPolicy) (ReceivingAdviceIssued, error) {
+	return r.issueAdvice(supplierRef, sla, at, defaultAdviceBounds, applied)
 }
 
-func (r *Receipt) issueAdvice(supplierRef string, sla time.Duration, at time.Time, b adviceBounds) (ReceivingAdviceIssued, error) {
+func (r *Receipt) issueAdvice(supplierRef string, sla time.Duration, at time.Time, b adviceBounds, applied AppliedPolicy) (ReceivingAdviceIssued, error) {
 	if r.state != StateClosed {
 		return ReceivingAdviceIssued{}, ErrReceiptNotClosed
 	}
@@ -126,7 +133,7 @@ func (r *Receipt) issueAdvice(supplierRef string, sla time.Duration, at time.Tim
 	incorrect := r.incorrectUnits()
 	all := make([]AdviceLine, 0, len(r.lines))
 	for _, l := range r.lines {
-		all = append(all, r.adviceLine(l, incorrect[l.lineNo]))
+		all = append(all, r.adviceLine(l, incorrect[l.lineNo], applied))
 	}
 	lines := capAdviceLines(all, b.lines)
 	budget := b.sscc
@@ -148,8 +155,12 @@ func (r *Receipt) issueAdvice(supplierRef string, sla time.Duration, at time.Tim
 	}, nil
 }
 
-// adviceLine is the quantities and the coded exceptions of one line.
-func (r *Receipt) adviceLine(l Line, incorrect int64) AdviceLine {
+// adviceLine is the quantities and the coded exceptions of one line. The
+// over/under entries follow the tolerance the close was judged under (ADR
+// 0026): nothing inside the band, the tolerance kind with its reason between
+// band and hard stop, today's Short/Over for an undeclared side or without a
+// policy.
+func (r *Receipt) adviceLine(l Line, incorrect int64, applied AppliedPolicy) AdviceLine {
 	out := AdviceLine{
 		LineNo: l.lineNo, SKU: l.sku, GTIN: r.lineGTIN(l.lineNo),
 		Expected: l.expectedQty, Received: l.Received(),
@@ -162,10 +173,14 @@ func (r *Receipt) adviceLine(l Line, incorrect int64) AdviceLine {
 		coding, _ := CodingOf(kind)
 		out.Discrepancies = append(out.Discrepancies, AdviceDiscrepancy{Kind: kind, Quantity: qty, Coding: coding})
 	}
-	if out.Received < l.expectedQty {
+	if under, ok := toleranceFinding(l, applied, false); ok {
+		out.Discrepancies = append(out.Discrepancies, under)
+	} else if !applied.Band.UnderDeclared() && out.Received < l.expectedQty {
 		add(KindShort, l.expectedQty-out.Received)
 	}
-	if out.Received > l.expectedQty {
+	if over, ok := toleranceFinding(l, applied, true); ok {
+		out.Discrepancies = append(out.Discrepancies, over)
+	} else if !applied.Band.OverDeclared() && out.Received > l.expectedQty {
 		add(KindOver, out.Received-l.expectedQty)
 	}
 	if l.receivedDamaged > 0 {

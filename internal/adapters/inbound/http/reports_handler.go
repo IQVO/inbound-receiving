@@ -55,6 +55,24 @@ type adviceDTO struct {
 	ShareWithinSLA *float64 `json:"share_within_sla"`
 }
 
+// toleranceDTO is the receiving-tolerance block of a day (ADR 0026): how the
+// declared bands changed the close answers of the day. reasons is the bounded
+// override-reason Pareto; share_without_override is null when none closed.
+type toleranceDTO struct {
+	Closed               int                 `json:"closed"`
+	Overrides            int                 `json:"overrides"`
+	ShareWithoutOverride *float64            `json:"share_without_override"`
+	WithPolicy           int                 `json:"with_policy"`
+	AutoAccepted         int                 `json:"auto_accepted"`
+	Reasons              []overrideReasonDTO `json:"reasons"`
+}
+
+// overrideReasonDTO is one row of the day's reason Pareto (ADR 0026).
+type overrideReasonDTO struct {
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
+}
+
 // supplierTimelinessDTO is one supplier's ASN timeliness of a day (ADR 0025):
 // the day's ASNs registered for it, how many were late for their visit's
 // arrival, and the on-time share (null while none was registered).
@@ -91,6 +109,7 @@ type performanceDayDTO struct {
 	DockToStock    dockToStockDTO          `json:"dock_to_stock"`
 	Advice         adviceDTO               `json:"advice"`
 	AsnTimeliness  []supplierTimelinessDTO `json:"asn_timeliness"`
+	Tolerance      toleranceDTO            `json:"tolerance"`
 }
 
 type currentDTO struct {
@@ -150,6 +169,20 @@ func dayToDTO(d report.PerformanceDay) performanceDayDTO {
 		},
 		Advice:        adviceDTO{Count: d.Advice.Count, WithinSLA: d.Advice.WithinSLA, ShareWithinSLA: d.Advice.ShareWithinSLA},
 		AsnTimeliness: timelinessToDTO(d.AsnTimeliness),
+		Tolerance:     toleranceToDTO(d.Tolerance),
+	}
+}
+
+// toleranceToDTO maps the tolerance block; the reason Pareto is an empty
+// array, never null.
+func toleranceToDTO(t report.ToleranceSummary) toleranceDTO {
+	reasons := make([]overrideReasonDTO, 0, len(t.Reasons))
+	for _, r := range t.Reasons {
+		reasons = append(reasons, overrideReasonDTO{Reason: r.Reason, Count: r.Count})
+	}
+	return toleranceDTO{
+		Closed: t.Closed, Overrides: t.Overrides, ShareWithoutOverride: t.ShareWithoutOverride,
+		WithPolicy: t.WithPolicy, AutoAccepted: t.AutoAccepted, Reasons: reasons,
 	}
 }
 

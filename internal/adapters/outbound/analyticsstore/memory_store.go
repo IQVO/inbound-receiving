@@ -24,6 +24,8 @@ type Memory struct {
 	stows        map[string]report.StowCompleted // by receipt id
 	advices      map[string]memAdvice            // by receipt id
 	discrepancy  map[discrepancyKey]time.Time
+	// discrepancyReason keeps each tolerance discrepancy's reason code (ADR 0026).
+	discrepancyReason map[discrepancyKey]string
 	// lates is the asn_late_facts twin (ADR 0025): one row per ASN, the
 	// first fact wins.
 	lates  map[string]struct{}
@@ -42,6 +44,8 @@ type memAsn struct {
 
 type memReceipt struct {
 	opened, closed *time.Time
+	// toleranceApplied folds the close's tolerance fact (ADR 0026).
+	toleranceApplied bool
 }
 
 type memLine struct {
@@ -64,14 +68,15 @@ type discrepancyKey struct {
 // NewMemory returns an empty Memory store.
 func NewMemory() *Memory {
 	return &Memory{
-		processed:    map[string]struct{}{},
-		asns:         map[string]*memAsn{},
-		appointments: map[string]*report.AppointmentTimes{},
-		receipts:     map[string]*memReceipt{},
-		discrepancy:  map[discrepancyKey]time.Time{},
-		stows:        map[string]report.StowCompleted{},
-		advices:      map[string]memAdvice{},
-		lates:        map[string]struct{}{},
+		processed:         map[string]struct{}{},
+		asns:              map[string]*memAsn{},
+		appointments:      map[string]*report.AppointmentTimes{},
+		receipts:          map[string]*memReceipt{},
+		discrepancy:       map[discrepancyKey]time.Time{},
+		discrepancyReason: map[discrepancyKey]string{},
+		stows:             map[string]report.StowCompleted{},
+		advices:           map[string]memAdvice{},
+		lates:             map[string]struct{}{},
 	}
 }
 
@@ -192,10 +197,14 @@ func (m *Memory) foldReceipt(e report.Event, at time.Time) {
 	case report.KindReceiptLineReceived:
 		m.lines = append(m.lines, memLine{at: at, quantity: e.Line.Quantity, condition: e.Line.Condition})
 	case report.KindReceiptClosed:
+		if e.Tolerance != nil {
+			r.toleranceApplied = true
+		}
 		for _, d := range e.Discrepancies {
 			k := discrepancyKey{receiptID: e.ReceiptID, lineNo: d.LineNo, kind: d.Kind}
 			if _, exists := m.discrepancy[k]; !exists {
 				m.discrepancy[k] = at
+				m.discrepancyReason[k] = d.Reason
 			}
 		}
 	}
@@ -208,10 +217,8 @@ func checkLikeTheDatabase(e report.Event) error {
 	if l := e.Line; l != nil && (l.LineNo < 1 || l.Quantity < 1 || !l.Condition.Valid()) {
 		return fmt.Errorf("%w: received line %d of %s violates a check constraint", report.ErrRejected, l.LineNo, e.ReceiptID)
 	}
-	for _, d := range e.Discrepancies {
-		if d.LineNo < 1 || !d.Kind.Valid() {
-			return fmt.Errorf("%w: discrepancy %d/%s of %s violates a check constraint", report.ErrRejected, d.LineNo, d.Kind, e.ReceiptID)
-		}
+	if err := checkDiscrepancies(e); err != nil {
+		return err
 	}
 	if s := e.Stow; s != nil && (s.DockToStockSeconds < 0 || s.CartonCount < 1) {
 		return fmt.Errorf("%w: stow of %s violates a check constraint", report.ErrRejected, e.ReceiptID)
@@ -221,6 +228,21 @@ func checkLikeTheDatabase(e report.Event) error {
 	}
 	if e.Kind == report.KindAsnLateForArrival && e.LatenessSeconds < 1 {
 		return fmt.Errorf("%w: late fact of %s violates a check constraint", report.ErrRejected, e.AsnNumber)
+	}
+	return nil
+}
+
+// checkDiscrepancies mirrors the discrepancy CHECKs: a line number >= 1, a
+// known kind, and (ADR 0026) a reason code on the tolerance kinds, whose
+// absence would leave the reason Pareto with a NULL bucket.
+func checkDiscrepancies(e report.Event) error {
+	for _, d := range e.Discrepancies {
+		if d.LineNo < 1 || !d.Kind.Valid() {
+			return fmt.Errorf("%w: discrepancy %d/%s of %s violates a check constraint", report.ErrRejected, d.LineNo, d.Kind, e.ReceiptID)
+		}
+		if d.Kind.ToleranceKind() && d.Reason == "" {
+			return fmt.Errorf("%w: tolerance discrepancy %d of %s without a reason code (a NOT NULL column)", report.ErrRejected, d.LineNo, e.ReceiptID)
+		}
 	}
 	return nil
 }

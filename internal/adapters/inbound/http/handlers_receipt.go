@@ -85,10 +85,17 @@ func (s *Server) handleReceiveLine(w http.ResponseWriter, r *http.Request) {
 	writeVersioned(w, http.StatusCreated, x.Version(), toReceipt(x))
 }
 
-// handleCloseReceipt backs POST /receipts/{receiptId}/closures (200).
+// handleCloseReceipt backs POST /receipts/{receiptId}/closures (200). The
+// optional body carries the tolerance override reason of ADR 0026, required
+// when a line sits between the declared band and its hard stop.
 func (s *Server) handleCloseReceipt(w http.ResponseWriter, r *http.Request) {
 	id, err := pathParam(r, "receiptId")
 	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	var req closeReceiptRequest
+	if err := decodeOptionalJSON(r, &req); err != nil {
 		writeError(w, r, err)
 		return
 	}
@@ -97,7 +104,7 @@ func (s *Server) handleCloseReceipt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	x, err := s.CloseReceipt.Handle(r.Context(), usecases.CloseReceiptCommand{ReceiptID: id, ExpectedVersion: version})
+	x, err := s.CloseReceipt.Handle(r.Context(), usecases.CloseReceiptCommand{ReceiptID: id, ExpectedVersion: version, OverrideReason: req.OverrideReason})
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -143,6 +150,7 @@ func (s *Server) handleReceiveScan(w http.ResponseWriter, r *http.Request) {
 	out, err := s.ReceiveScan.Handle(r.Context(), usecases.ReceiveScanCommand{
 		ReceiptID: id, Scan: req.Scan, Kind: req.Kind, ID: req.ID, Qty: req.Qty, ExpectedKind: req.ExpectedKind,
 		Condition: req.Condition, Lot: req.Lot, Expiry: req.Expiry, CountedContents: req.counted(), ExpectedVersion: version,
+		OverrideReason: req.OverrideReason,
 	})
 	if err != nil {
 		writeError(w, r, err)

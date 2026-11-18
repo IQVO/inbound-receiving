@@ -193,7 +193,7 @@ The rules that shape the runtime:
 - `GET /readyz` checks Postgres and Kafka (a topic-less metadata request); the
   first start under a new consumer group replays the topic from the first
   offset and readiness does not wait for the replay, so writes can answer
-  `422 unknown-sku` / `unknown-dock-door` until the copy has caught up.
+  `422 unknown-sku` until the copy has caught up.
 - `cmd/inbound-projector` and `cmd/inbound-reports` require
   `ANALYTICS_DATABASE_URL`; the projector also requires `KAFKA_BROKERS`.
 
