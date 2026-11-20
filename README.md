@@ -264,10 +264,15 @@ over 19 paths:
 **Idempotency**: every `POST` (creating and action routes alike) **requires** an
 `Idempotency-Key` header of 1-128 printable ASCII characters (`400
 idempotency-key-required` when missing, `400 idempotency-key-invalid` when
-malformed); a retry with the same key and request replays the original
+malformed); a retry with the same key and request replays the stored
 response with `Idempotency-Replayed: true`, the same key with a different
 request is `409 idempotency-key-reused`. The key row commits in the same
-transaction as the aggregate and its outbox rows.
+transaction as the aggregate and its outbox rows. Every problem type declares a
+replay class on its catalogue entry ([ADR 0027](docs/adr/0027-idempotency-replay-classes-a-retryable-refusal-is-not-stored.md)):
+a 2xx and the refusals that are final for the request (`FINAL`) are stored and
+replayed; a refusal that depends on state that can change (`RETRYABLE`:
+`concurrent-modification`, `unknown-asn`, `unknown-sku`, ...) and every 5xx are
+NOT stored, the key is released and a retry under it executes again.
 
 **Pagination**: `GET /asns`, `/appointments`, `/receipts` and `/docks` return
 `{items, nextCursor}` (keyset; `limit` 1-500 and `cursor`); an undeclared query
@@ -436,6 +441,7 @@ make integration  # go test -tags=integration ./... -race -count=1 (needs only D
 | `internal/adapters/inbound/kafka/consumers_integration_test.go` | product and dock-door consumers fill the local copies; invalid and foreign messages skipped; redelivery deduped |
 | `internal/adapters/inbound/kafka/analytics_consumer_integration_test.go` | the projector's consumer: garbage skipped, poison dead-lettered byte for byte, redelivery applied once, offsets committed |
 | `internal/adapters/outbound/analyticsstore/postgres_integration_test.go` | the analytical store's contract, day windows, atomic dedupe + effect, and that the read-only pool cannot write |
+| `internal/adapters/inbound/http/idempotency_replay_classes_*_test.go`, `idempotency_retryable_integration_test.go` | the fleet replay-class suite over the real middleware and BOTH stores (memory; Postgres in the integration build), the ADR 0027 table held equal to the catalogue, and the real router over Postgres: a `concurrent-modification` loser and an `unknown-asn` refusal release their key and the retry executes |
 | `internal/adapters/inbound/http/rest_api_integration_test.go` | the real chi router over real use cases and Postgres: ASN lifecycle and validation (RFC 7807), Idempotency-Key replay and reuse, receipt flow |
 | `internal/adapters/inbound/mcp/streamable_http_integration_test.go` | MCP over the real Streamable HTTP transport with the SDK client: `tools/list` contract, `tools/call` round trips, domain and input errors as tool errors |
 | `cmd/mcp/main_integration_test.go` | the `cmd/mcp` wiring reads what the API wrote and never writes |
