@@ -52,17 +52,19 @@ Feature: Operational rules from the documentation
     Then the response field "state" is "Registered"
 
   @bdd
-  Scenario: A refused request is replayed as refused, even after the cause is gone
+  Scenario: A refusal that depends on state is not stored, so the retry runs once the cause is gone
     When I POST "/receipts" with key "open-9" and body '{"asnNumber":"ASN-9"}'
     Then the response status is 422
     And the problem type is "unknown-asn"
     Given the ASN "ASN-9" is registered
     When I POST "/receipts" with key "open-9" and body '{"asnNumber":"ASN-9"}'
-    Then the response status is 422
-    And the problem type is "unknown-asn"
+    Then the response status is 201
+    And the response header "Idempotency-Replayed" is ""
+    When I POST "/receipts" with key "open-9" and body '{"asnNumber":"ASN-9"}'
+    Then the response status is 201
     And the response header "Idempotency-Replayed" is "true"
     When I GET "/asns/ASN-9"
-    Then the response field "state" is "Registered"
+    Then the response field "state" is "Receiving"
 
   @bdd
   Scenario: A replay returns the stored answer, not the aggregate as it is now

@@ -40,6 +40,7 @@ import (
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/idgen"
 	outboundkafka "github.com/claudioed/inbound-receiving/internal/adapters/outbound/kafka"
 	"github.com/claudioed/inbound-receiving/internal/adapters/outbound/postgres"
+	"github.com/claudioed/inbound-receiving/internal/application/ports"
 	"github.com/claudioed/inbound-receiving/internal/application/usecases"
 )
 
@@ -147,6 +148,13 @@ type httpAPI struct {
 
 func newHTTPAPI(t *testing.T) *httpAPI {
 	t.Helper()
+	return newHTTPAPIWith(t, nil)
+}
+
+// newHTTPAPIWith is newHTTPAPI with an optional decorator over the receipt
+// repository the write use cases use (a test gate, say); nil leaves it as is.
+func newHTTPAPIWith(t *testing.T, decorate func(ports.ReceiptRepository) ports.ReceiptRepository) *httpAPI {
+	t.Helper()
 	ctx := context.Background()
 	pool, err := postgres.NewPool(ctx, migratedDB(t))
 	if err != nil {
@@ -154,10 +162,14 @@ func newHTTPAPI(t *testing.T) *httpAPI {
 	}
 	t.Cleanup(pool.Close)
 
+	var receipts ports.ReceiptRepository = postgres.NewReceiptRepo(pool)
+	if decorate != nil {
+		receipts = decorate(receipts)
+	}
 	w := usecases.Writer{
 		Asns:         postgres.NewAsnRepo(pool),
 		Appointments: postgres.NewAppointmentRepo(pool),
-		Receipts:     postgres.NewReceiptRepo(pool),
+		Receipts:     receipts,
 		Outbox:       postgres.NewOutboxRepo(pool),
 		Encoder:      outboundkafka.NewEncoder(),
 		UoW:          postgres.NewUnitOfWork(pool),

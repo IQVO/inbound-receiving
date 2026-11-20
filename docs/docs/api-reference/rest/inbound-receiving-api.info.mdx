@@ -38,9 +38,13 @@ as events (ADR 0003) and stow stays an RF action there.
 
 Every `POST` except the three retired appointment writes requires an
 `Idempotency-Key` header (fleet REST API guideline): a missing key is a 400 `idempotency-key-required`, a retry with
-the same key and request (method, path, body) replays the original response
+the same key and request (method, path, body) replays the stored response
 with `Idempotency-Replayed: true`, the same key with a different request is
-a 409 `idempotency-key-reused`. Lifecycle transitions are transition
+a 409 `idempotency-key-reused`. Only an answer that is final for the request is stored: every
+2xx and the refusals that are a function of the request or of a state that never changes back.
+A refusal that depends on state that can change (an optimistic-lock conflict, a fact not
+delivered yet, a state not reached yet; the list is under the `Idempotency-Key` parameter) and every 5xx
+is not stored: the key is released and a retry under it executes again. Lifecycle transitions are transition
 resources: `POST /asns/{asnNumber}/cancellations` and
 `/receipts/{receiptId}/closures`.
 

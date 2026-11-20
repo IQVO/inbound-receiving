@@ -6,6 +6,12 @@ Accepted (2026-11-01). Follows [ADR 0002](./0002-aggregates-and-invariants.md)
 (version guards, `If-Match`) and adopts the fleet REST API guideline
 (`.spectral.yaml` ruleset, linted in CI).
 
+Update 2026-11-19 (pointer; the Decision text below is unchanged): decision 2's
+"a replay returns the stored response" holds for every 2xx and for the refusals
+classed `FINAL` or `OUTCOME`. A refusal classed `RETRYABLE` is no longer stored:
+its key is released and a retry executes again
+([ADR 0027](./0027-idempotency-replay-classes-a-retryable-refusal-is-not-stored.md)).
+
 ## Context
 
 The fleet standardises its REST surfaces: noun resources for state

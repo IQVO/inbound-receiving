@@ -16,7 +16,8 @@ import (
 // a zero response. The ctx handed to handle carries the unit of work the
 // store opened: every write handle makes with it commits together with the
 // stored response, or rolls back together with it (a panic stores nothing
-// and propagates).
+// and propagates). A response marked Transient (a 5xx or a RETRYABLE refusal,
+// ADR 0027) is returned as Fresh with nothing stored and the key released.
 type IdempotencyStore interface {
 	Do(ctx context.Context, req idempotency.Request, handle func(ctx context.Context) idempotency.Response) (idempotency.Response, idempotency.Outcome, error)
 }

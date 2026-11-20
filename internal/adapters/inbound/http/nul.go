@@ -8,7 +8,7 @@ import (
 )
 
 // notFoundResource is the 404 of a request path that can never name a resource.
-var notFoundResource = notFound("resource-not-found", "Resource not found")
+var notFoundResource = notFound("resource-not-found", "Resource not found", replayFinal)
 
 // rejectNUL turns a NUL character in a request into a client error before it
 // can reach a Postgres text parameter. PostgreSQL text cannot hold U+0000, and
@@ -43,7 +43,7 @@ func rejectNUL(next http.Handler) http.Handler {
 				return
 			}
 			if containsNUL(body) {
-				writeProblem(w, r, bad("malformed-request", "Malformed request"), "a NUL character (U+0000) is not allowed in a request body")
+				writeProblem(w, r, malformedRequestProblem, "a NUL character (U+0000) is not allowed in a request body")
 				return
 			}
 			r.Body = io.NopCloser(bytes.NewReader(body))
