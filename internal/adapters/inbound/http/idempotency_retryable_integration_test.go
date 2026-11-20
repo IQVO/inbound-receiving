@@ -9,6 +9,7 @@ package http_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -83,11 +84,11 @@ func (a *httpAPI) post(path, key, body string) answer {
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
-	slug := ""
-	if i := strings.Index(string(raw), `"type":"`); i >= 0 {
-		rest := string(raw)[i+len(`"type":"`):]
-		slug = strings.TrimPrefix(rest[:strings.Index(rest, `"`)], "https://errors.inbound-receiving.warehouse-systems.dev/")
+	var problem struct {
+		Type string `json:"type"`
 	}
+	_ = json.Unmarshal(raw, &problem)
+	slug := strings.TrimPrefix(problem.Type, "https://errors.inbound-receiving.warehouse-systems.dev/")
 	return answer{status: resp.StatusCode, header: resp.Header, slug: slug}
 }
 
@@ -105,6 +106,42 @@ func openReceiptOn(t *testing.T, api *httpAPI, asnNumber string) string {
 	}
 	id, _ := rcpt["receiptId"].(string)
 	return id
+}
+
+// raceTwo sends both requests at once and returns the key of the 201 and the
+// key of the 409 concurrent-modification.
+func raceTwo(t *testing.T, api *httpAPI, path string, bodies map[string]string) (winner, loser string) {
+	t.Helper()
+	results := make(map[string]answer, len(bodies))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for key, body := range bodies {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got := api.post(path, key, body)
+			mu.Lock()
+			results[key] = got
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	for key, got := range results {
+		switch {
+		case got.err != nil:
+			t.Fatalf("request %s: %v", key, got.err)
+		case got.status == http.StatusCreated:
+			winner = key
+		case got.status == http.StatusConflict && got.slug == "concurrent-modification":
+			loser = key
+		default:
+			t.Fatalf("request %s: unexpected answer %d %q", key, got.status, got.slug)
+		}
+	}
+	if winner == "" || loser == "" {
+		t.Fatalf("want one winner and one loser, got %+v", results)
+	}
+	return winner, loser
 }
 
 // TestHTTPConcurrentModificationReleasesTheKeySoTheRetryRuns: two requests
@@ -125,42 +162,9 @@ func TestHTTPConcurrentModificationReleasesTheKeySoTheRetryRuns(t *testing.T) {
 	}
 
 	gate.armed.Store(true)
-	results := make(map[string]answer, len(bodies))
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	for key, body := range bodies {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			got := api.post(path, key, body)
-			mu.Lock()
-			results[key] = got
-			mu.Unlock()
-		}()
-	}
-	wg.Wait()
+	winner, loser := raceTwo(t, api, path, bodies)
 	gate.armed.Store(false)
 
-	var winner, loser string
-	for key, got := range results {
-		if got.err != nil {
-			t.Fatalf("request %s: %v", key, got.err)
-		}
-		switch got.status {
-		case http.StatusCreated:
-			winner = key
-		case http.StatusConflict:
-			if got.slug != "concurrent-modification" {
-				t.Fatalf("request %s: 409 with slug %q, want concurrent-modification", key, got.slug)
-			}
-			loser = key
-		default:
-			t.Fatalf("request %s: unexpected status %d", key, got.status)
-		}
-	}
-	if winner == "" || loser == "" {
-		t.Fatalf("want one winner and one loser, got %+v", results)
-	}
 	if got := api.keyRows(t, winner); got != 1 {
 		t.Errorf("winner's key rows = %d, want 1: a 2xx is stored", got)
 	}
