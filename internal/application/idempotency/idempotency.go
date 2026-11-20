@@ -18,10 +18,14 @@ type Response struct {
 	Status int
 	Header map[string][]string
 	Body   []byte
-	// Transient marks a server failure (5xx): the store rolls everything the
-	// handler wrote back, stores nothing and returns the response as Fresh,
-	// so a retry with the same key runs the handler again instead of
-	// replaying the failure.
+	// Transient marks an answer that must NOT be remembered: a server
+	// failure (5xx), or a refusal whose problem type is RETRYABLE (nothing
+	// committed, the answer depends on state that can change) or declares no
+	// replay class (docs/adr/0027). The store rolls everything the handler
+	// wrote back, stores nothing, releases the key and returns the response as
+	// Fresh, so a retry with the same key runs the handler again instead of
+	// replaying the answer, and another body under that key is a new request.
+	// A FINAL or OUTCOME refusal is not Transient: it is stored like a 2xx.
 	Transient bool
 }
 

@@ -36,15 +36,26 @@ type problem struct {
 	status int
 	slug   string
 	title  string
+	class  replayClass
 }
 
-var internalProblem = problem{http.StatusInternalServerError, "internal-error", "Internal server error"}
+// malformedRequestProblem is shared by the catalogue and the NUL guard, so the
+// slug has one declaration (and one replay class).
+var malformedRequestProblem = bad("malformed-request", "Malformed request", replayRetryable)
 
-func bad(slug, title string) problem      { return problem{http.StatusBadRequest, slug, title} }
-func notFound(slug, title string) problem { return problem{http.StatusNotFound, slug, title} }
-func conflict(slug, title string) problem { return problem{http.StatusConflict, slug, title} }
-func unprocessable(slug, title string) problem {
-	return problem{http.StatusUnprocessableEntity, slug, title}
+var internalProblem = problem{status: http.StatusInternalServerError, slug: "internal-error", title: "Internal server error", class: replayRetryable}
+
+func bad(slug, title string, class replayClass) problem {
+	return problem{status: http.StatusBadRequest, slug: slug, title: title, class: class}
+}
+func notFound(slug, title string, class replayClass) problem {
+	return problem{status: http.StatusNotFound, slug: slug, title: title, class: class}
+}
+func conflict(slug, title string, class replayClass) problem {
+	return problem{status: http.StatusConflict, slug: slug, title: title, class: class}
+}
+func unprocessable(slug, title string, class replayClass) problem {
+	return problem{status: http.StatusUnprocessableEntity, slug: slug, title: title, class: class}
 }
 
 // problemCatalogue maps every typed error to its problem, in match order.
@@ -53,86 +64,86 @@ var problemCatalogue = []struct {
 	err error
 	p   problem
 }{
-	{errMalformedRequest, bad("malformed-request", "Malformed request")},
-	{usecases.ErrInvalidLimit, bad("invalid-limit", "Invalid limit")},
-	{usecases.ErrInvalidCursor, bad("invalid-cursor", "Invalid cursor")},
-	{errUnknownQuery, bad("unknown-query-parameter", "Unknown query parameter")},
-	{usecases.ErrInvalidListQuery, bad("invalid-query", "Invalid query parameter")},
-	{errIdempotencyKeyRequired, bad("idempotency-key-required", "Idempotency-Key header is required")},
-	{errIdempotencyKeyInvalid, bad("idempotency-key-invalid", "Idempotency-Key header is invalid")},
-	{errIdempotencyKeyReused, conflict("idempotency-key-reused", "Idempotency-Key was already used with a different request")},
+	{errMalformedRequest, malformedRequestProblem},
+	{usecases.ErrInvalidLimit, bad("invalid-limit", "Invalid limit", replayFinal)},
+	{usecases.ErrInvalidCursor, bad("invalid-cursor", "Invalid cursor", replayFinal)},
+	{errUnknownQuery, bad("unknown-query-parameter", "Unknown query parameter", replayFinal)},
+	{usecases.ErrInvalidListQuery, bad("invalid-query", "Invalid query parameter", replayFinal)},
+	{errIdempotencyKeyRequired, bad("idempotency-key-required", "Idempotency-Key header is required", replayFinal)},
+	{errIdempotencyKeyInvalid, bad("idempotency-key-invalid", "Idempotency-Key header is invalid", replayFinal)},
+	{errIdempotencyKeyReused, conflict("idempotency-key-reused", "Idempotency-Key was already used with a different request", replayRetryable)},
 
-	{asn.ErrInvalidNumber, bad("invalid-asn-number", "ASN number is invalid")},
-	{asn.ErrInvalidSupplierRef, bad("invalid-supplier-ref", "Supplier reference is invalid")},
-	{asn.ErrNoLines, bad("asn-requires-lines", "An ASN requires at least one line")},
-	{asn.ErrInvalidLineNo, bad("invalid-line-no", "Line numbers must run 1..n in order")},
-	{asn.ErrDuplicateSKU, bad("duplicate-sku", "An ASN may list a SKU only once")},
-	{shared.ErrInvalidSKU, bad("invalid-sku", "SKU is invalid")},
-	{shared.ErrInvalidQuantity, bad("invalid-quantity", "Quantity is invalid")},
-	{shared.ErrInvalidReason, bad("invalid-reason", "Reason is invalid")},
-	{appointment.ErrInvalidID, bad("invalid-appointment-id", "Appointment id is invalid")},
-	{receipt.ErrInvalidID, bad("invalid-receipt-id", "Receipt id is invalid")},
-	{appointment.ErrInvalidDoorCode, bad("invalid-door-code", "Door code is invalid")},
+	{asn.ErrInvalidNumber, bad("invalid-asn-number", "ASN number is invalid", replayFinal)},
+	{asn.ErrInvalidSupplierRef, bad("invalid-supplier-ref", "Supplier reference is invalid", replayFinal)},
+	{asn.ErrNoLines, bad("asn-requires-lines", "An ASN requires at least one line", replayFinal)},
+	{asn.ErrInvalidLineNo, bad("invalid-line-no", "Line numbers must run 1..n in order", replayFinal)},
+	{asn.ErrDuplicateSKU, bad("duplicate-sku", "An ASN may list a SKU only once", replayFinal)},
+	{shared.ErrInvalidSKU, bad("invalid-sku", "SKU is invalid", replayFinal)},
+	{shared.ErrInvalidQuantity, bad("invalid-quantity", "Quantity is invalid", replayFinal)},
+	{shared.ErrInvalidReason, bad("invalid-reason", "Reason is invalid", replayFinal)},
+	{appointment.ErrInvalidID, bad("invalid-appointment-id", "Appointment id is invalid", replayFinal)},
+	{receipt.ErrInvalidID, bad("invalid-receipt-id", "Receipt id is invalid", replayFinal)},
+	{appointment.ErrInvalidDoorCode, bad("invalid-door-code", "Door code is invalid", replayFinal)},
 	// ADR 0026: the policy admin surface's value validations.
-	{receipt.ErrInvalidOverrideReason, bad("invalid-override-reason", "Override reason must be one of the declared receiving reason codes")},
-	{policy.ErrInvalidBand, bad("invalid-tolerance-band", "Tolerance band must satisfy 0 <= tolerance < hardStop <= 1 per side")},
-	{appointment.ErrInvalidCarrier, bad("invalid-carrier", "Carrier is invalid")},
-	{appointment.ErrInvalidWindow, bad("invalid-window", "Window is invalid")},
-	{appointment.ErrNoAsns, bad("appointment-requires-asns", "An appointment requires at least one ASN")},
-	{appointment.ErrDuplicateAsn, bad("duplicate-asn-number", "An appointment may list an ASN only once")},
-	{receipt.ErrInvalidCondition, bad("invalid-condition", "Condition must be Good or Damaged")},
-	{shared.ErrInvalidOwnerRef, bad("invalid-owner-ref", "Owner reference is invalid")},
-	{asn.ErrInvalidCartonKind, bad("invalid-carton-kind", "Carton kind must be HOMOGENEOUS_CASE or MIXED")},
-	{asn.ErrInvalidCarton, bad("invalid-carton", "Carton is invalid")},
+	{receipt.ErrInvalidOverrideReason, bad("invalid-override-reason", "Override reason must be one of the declared receiving reason codes", replayFinal)},
+	{policy.ErrInvalidBand, bad("invalid-tolerance-band", "Tolerance band must satisfy 0 <= tolerance < hardStop <= 1 per side", replayFinal)},
+	{appointment.ErrInvalidCarrier, bad("invalid-carrier", "Carrier is invalid", replayFinal)},
+	{appointment.ErrInvalidWindow, bad("invalid-window", "Window is invalid", replayFinal)},
+	{appointment.ErrNoAsns, bad("appointment-requires-asns", "An appointment requires at least one ASN", replayFinal)},
+	{appointment.ErrDuplicateAsn, bad("duplicate-asn-number", "An appointment may list an ASN only once", replayFinal)},
+	{receipt.ErrInvalidCondition, bad("invalid-condition", "Condition must be Good or Damaged", replayFinal)},
+	{shared.ErrInvalidOwnerRef, bad("invalid-owner-ref", "Owner reference is invalid", replayFinal)},
+	{asn.ErrInvalidCartonKind, bad("invalid-carton-kind", "Carton kind must be HOMOGENEOUS_CASE or MIXED", replayFinal)},
+	{asn.ErrInvalidCarton, bad("invalid-carton", "Carton is invalid", replayFinal)},
 	// asn.ErrInvalidSscc wraps gs1.ErrInvalidSSCC: it must match first so a
 	// register-time SSCC is a 422 and a scanned one (below) a 400.
-	{asn.ErrInvalidSscc, unprocessable("invalid-sscc", "SSCC is invalid")},
-	{usecases.ErrInvalidScanKind, bad("invalid-scan-kind", "Scan kind must be SSCC, CASE_GTIN or EACH_GTIN")},
-	{usecases.ErrInvalidScan, bad("invalid-scan", "Scan is not a valid GS1 scan")},
-	{receipt.ErrInvalidCases, bad("invalid-cases", "Cases must be between 1 and 1000 per scan")},
-	{gs1.ErrVariableMeasure, bad("unsupported-gtin", "Variable measure GTINs are not supported")},
-	{gs1.ErrInvalidGTIN, bad("invalid-gtin", "GTIN is invalid")},
-	{gs1.ErrInvalidSSCC, bad("invalid-sscc", "SSCC is invalid")},
+	{asn.ErrInvalidSscc, unprocessable("invalid-sscc", "SSCC is invalid", replayFinal)},
+	{usecases.ErrInvalidScanKind, bad("invalid-scan-kind", "Scan kind must be SSCC, CASE_GTIN or EACH_GTIN", replayFinal)},
+	{usecases.ErrInvalidScan, bad("invalid-scan", "Scan is not a valid GS1 scan", replayFinal)},
+	{receipt.ErrInvalidCases, bad("invalid-cases", "Cases must be between 1 and 1000 per scan", replayFinal)},
+	{gs1.ErrVariableMeasure, bad("unsupported-gtin", "Variable measure GTINs are not supported", replayFinal)},
+	{gs1.ErrInvalidGTIN, bad("invalid-gtin", "GTIN is invalid", replayFinal)},
+	{gs1.ErrInvalidSSCC, bad("invalid-sscc", "SSCC is invalid", replayFinal)},
 
-	{repository.ErrAsnNotFound, notFound("asn-not-found", "ASN not found")},
-	{repository.ErrAppointmentNotFound, notFound("appointment-not-found", "Appointment not found")},
-	{repository.ErrReceiptNotFound, notFound("receipt-not-found", "Receipt not found")},
-	{repository.ErrPolicyNotFound, notFound("receiving-policy-not-found", "No receiving policy is declared for this owner and supplier")},
-	{usecases.ErrCartonNotFound, notFound("carton-not-found", "Carton not found on the receipt")},
+	{repository.ErrAsnNotFound, notFound("asn-not-found", "ASN not found", replayRetryable)},
+	{repository.ErrAppointmentNotFound, notFound("appointment-not-found", "Appointment not found", replayRetryable)},
+	{repository.ErrReceiptNotFound, notFound("receipt-not-found", "Receipt not found", replayFinal)},
+	{repository.ErrPolicyNotFound, notFound("receiving-policy-not-found", "No receiving policy is declared for this owner and supplier", replayRetryable)},
+	{usecases.ErrCartonNotFound, notFound("carton-not-found", "Carton not found on the receipt", replayRetryable)},
 
-	{usecases.ErrAsnAlreadyExists, conflict("asn-already-exists", "ASN already exists")},
-	{asn.ErrAsnInProgress, conflict("asn-in-progress", "ASN is being received")},
-	{asn.ErrAsnTerminal, conflict("asn-terminal", "ASN is closed or cancelled")},
-	{usecases.ErrAppointmentCancelled, conflict("appointment-cancelled", "Appointment is cancelled")},
-	{receipt.ErrAsnNotReceivable, conflict("asn-not-receivable", "ASN is not receivable")},
-	{asn.ErrAsnNotReceiving, conflict("asn-not-receivable", "ASN is not being received")},
-	{repository.ErrReceiptAlreadyOpen, conflict("receipt-already-open", "ASN already has an open receipt")},
-	{receipt.ErrReceiptClosed, conflict("receipt-closed", "Receipt is closed")},
+	{usecases.ErrAsnAlreadyExists, conflict("asn-already-exists", "ASN already exists", replayFinal)},
+	{asn.ErrAsnInProgress, conflict("asn-in-progress", "ASN is being received", replayRetryable)},
+	{asn.ErrAsnTerminal, conflict("asn-terminal", "ASN is closed or cancelled", replayFinal)},
+	{usecases.ErrAppointmentCancelled, conflict("appointment-cancelled", "Appointment is cancelled", replayFinal)},
+	{receipt.ErrAsnNotReceivable, conflict("asn-not-receivable", "ASN is not receivable", replayRetryable)},
+	{asn.ErrAsnNotReceiving, conflict("asn-not-receivable", "ASN is not being received", replayRetryable)},
+	{repository.ErrReceiptAlreadyOpen, conflict("receipt-already-open", "ASN already has an open receipt", replayRetryable)},
+	{receipt.ErrReceiptClosed, conflict("receipt-closed", "Receipt is closed", replayFinal)},
 	// ADR 0026: the two tolerance refusals. The detail carries the line, its
 	// quantities, the variance and the band it was judged against.
-	{receipt.ErrToleranceOverrideRequired, conflict("tolerance-override-required", "The variance is beyond the tolerance band: an override reason code is required")},
-	{receipt.ErrToleranceBlocked, conflict("tolerance-blocked", "The variance is at or beyond the tolerance hard stop: no override can pass and the receipt stays open")},
+	{receipt.ErrToleranceOverrideRequired, conflict("tolerance-override-required", "The variance is beyond the tolerance band: an override reason code is required", replayRetryable)},
+	{receipt.ErrToleranceBlocked, conflict("tolerance-blocked", "The variance is at or beyond the tolerance hard stop: no override can pass and the receipt stays open", replayRetryable)},
 	// ADR 0024: no company prefix is configured (a licensed asset, no default), or its serials are used up.
-	{receipt.ErrCompanyPrefixNotConfigured, conflict("sscc-prefix-not-configured", "No GS1 company prefix is configured for receiver-assigned SSCCs")},
-	{repository.ErrSsccSerialsExhausted, conflict("sscc-serial-exhausted", "Every SSCC serial of the company prefix has been used")},
-	{repository.ErrConcurrentModification, conflict("concurrent-modification", "The resource was modified by another request; re-fetch the latest version and retry")},
+	{receipt.ErrCompanyPrefixNotConfigured, conflict("sscc-prefix-not-configured", "No GS1 company prefix is configured for receiver-assigned SSCCs", replayRetryable)},
+	{repository.ErrSsccSerialsExhausted, conflict("sscc-serial-exhausted", "Every SSCC serial of the company prefix has been used", replayRetryable)},
+	{repository.ErrConcurrentModification, conflict("concurrent-modification", "The resource was modified by another request; re-fetch the latest version and retry", replayRetryable)},
 
-	{usecases.ErrUnknownSKU, unprocessable("unknown-sku", "SKU is not a registered product")},
-	{usecases.ErrUnknownAsn, unprocessable("unknown-asn", "ASN does not exist")},
-	{usecases.ErrUnknownAppointment, unprocessable("unknown-appointment", "Appointment does not exist")},
-	{usecases.ErrAsnNotOnAppointment, unprocessable("asn-not-on-appointment", "ASN is not covered by the appointment")},
-	{receipt.ErrLineNotOnAsn, unprocessable("line-not-on-asn", "Line is not on the ASN")},
-	{asn.ErrDuplicateSscc, unprocessable("duplicate-sscc", "An SSCC may appear once per site")},
-	{asn.ErrHomogeneousCartonMixed, unprocessable("homogeneous-carton-mixed", "A homogeneous case carton may hold one SKU only")},
-	{asn.ErrCartonContentsMismatch, unprocessable("carton-contents-mismatch", "Carton contents must add up to every line")},
-	{receipt.ErrCountedContentsNotMixed, unprocessable("counted-contents-not-mixed", "Counted contents apply to a mixed carton only")},
-	{receipt.ErrInvalidCount, bad("invalid-counted-contents", "Counted contents need a unique SKU and a quantity of zero or more")},
-	{usecases.ErrCountedSkuUnknown, unprocessable("counted-sku-unknown", "A counted SKU has no each GTIN in the packaging view")},
-	{usecases.ErrScanKindMismatch, unprocessable("scan-kind-mismatch", "The scan is not of the kind the screen expects")},
-	{usecases.ErrUnsupportedPackLevel, unprocessable("unsupported-pack-level", "Only EACH and CASE pack levels can be received by scan")},
-	{usecases.ErrUnknownGtin, unprocessable("unknown-gtin", "The GTIN is not in the packaging view")},
+	{usecases.ErrUnknownSKU, unprocessable("unknown-sku", "SKU is not a registered product", replayRetryable)},
+	{usecases.ErrUnknownAsn, unprocessable("unknown-asn", "ASN does not exist", replayRetryable)},
+	{usecases.ErrUnknownAppointment, unprocessable("unknown-appointment", "Appointment does not exist", replayRetryable)},
+	{usecases.ErrAsnNotOnAppointment, unprocessable("asn-not-on-appointment", "ASN is not covered by the appointment", replayRetryable)},
+	{receipt.ErrLineNotOnAsn, unprocessable("line-not-on-asn", "Line is not on the ASN", replayRetryable)},
+	{asn.ErrDuplicateSscc, unprocessable("duplicate-sscc", "An SSCC may appear once per site", replayRetryable)},
+	{asn.ErrHomogeneousCartonMixed, unprocessable("homogeneous-carton-mixed", "A homogeneous case carton may hold one SKU only", replayFinal)},
+	{asn.ErrCartonContentsMismatch, unprocessable("carton-contents-mismatch", "Carton contents must add up to every line", replayFinal)},
+	{receipt.ErrCountedContentsNotMixed, unprocessable("counted-contents-not-mixed", "Counted contents apply to a mixed carton only", replayRetryable)},
+	{receipt.ErrInvalidCount, bad("invalid-counted-contents", "Counted contents need a unique SKU and a quantity of zero or more", replayFinal)},
+	{usecases.ErrCountedSkuUnknown, unprocessable("counted-sku-unknown", "A counted SKU has no each GTIN in the packaging view", replayRetryable)},
+	{usecases.ErrScanKindMismatch, unprocessable("scan-kind-mismatch", "The scan is not of the kind the screen expects", replayRetryable)},
+	{usecases.ErrUnsupportedPackLevel, unprocessable("unsupported-pack-level", "Only EACH and CASE pack levels can be received by scan", replayRetryable)},
+	{usecases.ErrUnknownGtin, unprocessable("unknown-gtin", "The GTIN is not in the packaging view", replayRetryable)},
 
-	{usecases.ErrVersionMismatch, problem{http.StatusPreconditionFailed, "version-mismatch", "The If-Match version is stale"}},
+	{usecases.ErrVersionMismatch, problem{status: http.StatusPreconditionFailed, slug: "version-mismatch", title: "The If-Match version is stale", class: replayRetryable}},
 }
 
 // problemFor returns the problem of the first catalogue entry err matches,

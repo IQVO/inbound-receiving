@@ -30,7 +30,15 @@ const maxIdempotencyKeyLength = 128
 // Idempotency-Replayed: true, the same key with another request is 409
 // idempotency-key-reused. The key is global, not per route. The store runs
 // the handler in the same transaction that records the response, so writes,
-// outbox rows and response are atomic; a 5xx is never stored.
+// outbox rows and response are atomic.
+//
+// What is stored depends on the answer's replay class (ADR 0027): a 2xx is
+// stored; a 5xx and a panic never are; a refusal is stored only when its
+// problem type declares FINAL or OUTCOME on its catalogue entry. A RETRYABLE
+// refusal (and one that declares nothing) is handed to the store as
+// Transient: everything the handler wrote rolls back, nothing is stored, the
+// key is released and a retry under the same key executes again, a different
+// body under it being a new request. This file holds no list of slugs.
 func RequireIdempotencyKey(store ports.IdempotencyStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,12 +83,13 @@ func serveIdempotent(w http.ResponseWriter, r *http.Request, store ports.Idempot
 	req := idempotency.Request{Key: key, BodyHash: fingerprint(r, body)}
 	resp, outcome, err := store.Do(r.Context(), req, func(ctx context.Context) idempotency.Response {
 		rec := &recorder{header: http.Header{}, status: http.StatusOK}
+		ctx, mark := withReplayMark(ctx)
 		next.ServeHTTP(rec, r.WithContext(ctx))
 		return idempotency.Response{
 			Status:    rec.status,
 			Header:    rec.header,
 			Body:      rec.body.Bytes(),
-			Transient: rec.status >= http.StatusInternalServerError,
+			Transient: mark.transient(rec.status),
 		}
 	})
 	if err != nil {

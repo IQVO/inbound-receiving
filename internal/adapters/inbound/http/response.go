@@ -96,6 +96,7 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func writeProblem(w http.ResponseWriter, r *http.Request, p problem, detail string) {
+	markReplayClass(r.Context(), p.class)
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(p.status)
 	_ = json.NewEncoder(w).Encode(problemDetail{
