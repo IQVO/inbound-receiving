@@ -266,7 +266,7 @@ func problemFromUseCase(err error, asnNumber string) *problem {
 	case errors.Is(err, repository.ErrAsnNotFound):
 		return &problem{Type: problemTypeBase + "/asn-not-found", Title: "ASN not found", Detail: fmt.Sprintf("no ASN exists with asnNumber %q", asnNumber), Status: 404}
 	default:
-		slog.Error("a2a skill failed", "error", err)
+		slog.Error("a2a skill failed", "error", logReplacer.Replace(err.Error()))
 		return &problem{Type: problemTypeBase + "/internal-error", Title: "Internal server error", Detail: "the skill failed; see server logs (trace id in the response metadata)", Status: 500}
 	}
 }
