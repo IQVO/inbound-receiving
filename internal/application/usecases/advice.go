@@ -142,8 +142,8 @@ func (uc *SweepAdviceOverdue) Handle(ctx context.Context) (int, error) {
 		}
 		for _, ev := range raised {
 			uc.logger().WarnContext(ctx, "receiving advice overdue: the receipt is still open past the advice SLA",
-				"receipt_id", ev.ReceiptID(), "asn_number", ev.AsnNumber(), "last_carton_at", ev.LastCartonAt,
-				"due_at", ev.DueAt, "sla", ev.SLA.String())
+				"receipt_id", sanitizeLog(string(ev.ReceiptID())), "asn_number", sanitizeLog(string(ev.AsnNumber())), "last_carton_at", ev.LastCartonAt,
+				"due_at", ev.DueAt, "sla", sanitizeLog(ev.SLA.String()))
 			if uc.metrics != nil {
 				uc.metrics.AdviceOverdue(ctx)
 			}

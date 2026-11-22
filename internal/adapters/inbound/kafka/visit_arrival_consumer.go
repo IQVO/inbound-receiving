@@ -95,7 +95,7 @@ func (c *VisitArrivalConsumer) HandleMessage(ctx context.Context, value []byte) 
 	logger := defaultLogger(c.Logger)
 	e, err := cloudevents.Decode(value)
 	if err != nil {
-		logger.WarnContext(ctx, "skipping a message that is not a valid CloudEvent", "topic", YardManagementTopic, "error", err)
+		logger.WarnContext(ctx, "skipping a message that is not a valid CloudEvent", "topic", YardManagementTopic, "error", sanitizeErr(err))
 		return nil
 	}
 	if e.Type() != TypeVisitCheckedIn {

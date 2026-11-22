@@ -98,7 +98,7 @@ func (s *Sweeper) Run(ctx context.Context) error {
 		n, err := s.SweepOnce(ctx)
 		switch {
 		case err != nil && ctx.Err() == nil:
-			s.logger.Error("analytics housekeeping sweep failed", "error", err, "analytics_processed_events_deleted", n)
+			s.logger.Error("analytics housekeeping sweep failed", "error", sanitizeErr(err), "analytics_processed_events_deleted", n)
 		case n > 0:
 			s.logger.Info("analytics housekeeping sweep", "analytics_processed_events_deleted", n)
 		}

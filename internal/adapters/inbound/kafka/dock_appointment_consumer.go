@@ -154,7 +154,7 @@ func (c *DockAppointmentConsumer) HandleMessage(ctx context.Context, value []byt
 	logger := defaultLogger(c.Logger)
 	e, err := cloudevents.Decode(value)
 	if err != nil {
-		logger.WarnContext(ctx, "skipping a message that is not a valid CloudEvent", "topic", DockSchedulingTopic, "error", err)
+		logger.WarnContext(ctx, "skipping a message that is not a valid CloudEvent", "topic", DockSchedulingTopic, "error", sanitizeErr(err))
 		return nil
 	}
 	switch e.Type() {

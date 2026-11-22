@@ -108,7 +108,7 @@ func (c *PackagingConsumer) HandleMessage(ctx context.Context, value []byte) err
 	logger := defaultLogger(c.Logger)
 	e, err := cloudevents.Decode(value)
 	if err != nil {
-		logger.WarnContext(ctx, "skipping a message that is not a valid CloudEvent", "topic", ProductTopic, "error", err)
+		logger.WarnContext(ctx, "skipping a message that is not a valid CloudEvent", "topic", ProductTopic, "error", sanitizeErr(err))
 		return nil
 	}
 	switch e.Type() {

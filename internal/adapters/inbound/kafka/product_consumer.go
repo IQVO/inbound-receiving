@@ -78,7 +78,7 @@ func (c *ProductConsumer) HandleMessage(ctx context.Context, value []byte) error
 	logger := defaultLogger(c.Logger)
 	e, err := cloudevents.Decode(value)
 	if err != nil {
-		logger.WarnContext(ctx, "skipping a message that is not a valid CloudEvent", "topic", ProductTopic, "error", err)
+		logger.WarnContext(ctx, "skipping a message that is not a valid CloudEvent", "topic", ProductTopic, "error", sanitizeErr(err))
 		return nil
 	}
 	if e.Type() != TypeProductRegistered {
@@ -86,17 +86,17 @@ func (c *ProductConsumer) HandleMessage(ctx context.Context, value []byte) error
 	}
 	var data productRegisteredData
 	if err := e.DataAs(&data); err != nil {
-		logger.WarnContext(ctx, "skipping a malformed ProductRegistered payload", "event_id", e.ID(), "error", err)
+		logger.WarnContext(ctx, "skipping a malformed ProductRegistered payload", "event_id", sanitizeLog(e.ID()), "error", sanitizeErr(err))
 		return nil
 	}
 	outcome, err := c.Apply.Handle(ctx, e.ID(), data.SKU)
 	if errors.Is(err, usecases.ErrInvalidEvent) {
-		logger.WarnContext(ctx, "skipping an invalid ProductRegistered", "event_id", e.ID(), "sku", data.SKU, "error", err)
+		logger.WarnContext(ctx, "skipping an invalid ProductRegistered", "event_id", sanitizeLog(e.ID()), "sku", sanitizeLog(data.SKU), "error", sanitizeErr(err))
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	logger.InfoContext(ctx, "product registered processed", "event_id", e.ID(), "sku", data.SKU, "outcome", string(outcome))
+	logger.InfoContext(ctx, "product registered processed", "event_id", sanitizeLog(e.ID()), "sku", sanitizeLog(data.SKU), "outcome", sanitizeLog(string(outcome)))
 	return nil
 }

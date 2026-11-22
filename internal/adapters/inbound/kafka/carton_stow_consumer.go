@@ -88,7 +88,7 @@ func (c *CartonStowConsumer) HandleMessage(ctx context.Context, value []byte) er
 	logger := defaultLogger(c.Logger)
 	e, err := cloudevents.Decode(value)
 	if err != nil {
-		logger.WarnContext(ctx, "skipping a message that is not a valid CloudEvent", "topic", InventoryTopic, "error", err)
+		logger.WarnContext(ctx, "skipping a message that is not a valid CloudEvent", "topic", InventoryTopic, "error", sanitizeErr(err))
 		return nil
 	}
 	if e.Type() != TypeContainerStowed {

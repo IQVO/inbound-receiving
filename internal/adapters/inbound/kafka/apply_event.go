@@ -31,13 +31,13 @@ type eventSpec[T any] struct {
 func applyEvent[T any](ctx context.Context, logger *slog.Logger, id string, spec eventSpec[T], decode func(*T) error, handle func(context.Context, string, T) (usecases.Outcome, error)) error {
 	var data T
 	if err := decode(&data); err != nil {
-		logger.WarnContext(ctx, "skipping a malformed "+spec.kind+" payload", "event_id", id, "error", err)
+		logger.WarnContext(ctx, "skipping a malformed "+spec.kind+" payload", "event_id", sanitizeLog(id), "error", sanitizeErr(err))
 		return nil
 	}
 	attrs := append([]any{"event_id", id}, spec.attrs(data)...)
 	outcome, err := handle(ctx, id, data)
 	if errors.Is(err, usecases.ErrInvalidEvent) {
-		logger.WarnContext(ctx, "skipping an invalid "+spec.kind, append(attrs, "error", err)...)
+		logger.WarnContext(ctx, "skipping an invalid "+spec.kind, sanitizeArgs(append(attrs, "error", err))...)
 		return nil
 	}
 	if err != nil {
@@ -45,9 +45,9 @@ func applyEvent[T any](ctx context.Context, logger *slog.Logger, id string, spec
 	}
 	attrs = append(attrs, "outcome", string(outcome))
 	if spec.quietIgnored && outcome == usecases.Ignored {
-		logger.DebugContext(ctx, spec.processed, attrs...)
+		logger.DebugContext(ctx, spec.processed, sanitizeArgs(attrs)...)
 		return nil
 	}
-	logger.InfoContext(ctx, spec.processed, attrs...)
+	logger.InfoContext(ctx, spec.processed, sanitizeArgs(attrs)...)
 	return nil
 }
