@@ -87,6 +87,15 @@ Fully qualified name of the A2A agent Deployment/Service (<release>-a2a, docs/ad
 {{- include "inbound-receiving.fullname" . }}-a2a
 {{- end }}
 
+{{/* agents.colocate (warehouse-infra ADR 0012): "true" iff colocate, mcp and a2a are all on; else empty. */}}
+{{- define "inbound-receiving.agentsColocated" -}}
+{{- if and (.Values.agents | default dict).colocate .Values.mcp.enabled .Values.a2a.enabled }}true{{ end -}}
+{{- end }}
+
+{{- define "inbound-receiving.agentsFullname" -}}
+{{- printf "%s-agents" (include "inbound-receiving.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
 {{/*
 Image reference shared by every Deployment (api, mcp, a2a, analytics-projector, analytics-reports).
 */}}
