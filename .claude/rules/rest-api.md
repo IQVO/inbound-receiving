@@ -53,7 +53,15 @@ read-only pool on the ANALYTICAL database, never the OLTP one):
   idempotency middleware, EVERY POST): missing = 400 `idempotency-key-required`,
   invalid key = 400 `idempotency-key-invalid`, same key with a different request
   = 409 `idempotency-key-reused`; replays carry `Idempotency-Replayed: true`;
-  the key is GLOBAL (fingerprint = method + path + body hash). List GETs page
+  the key is GLOBAL (fingerprint = method + path + body hash; headers such as
+  `If-Match` are not part of it). Replay classes (ADR 0027): every problem type
+  declares `FINAL`, `OUTCOME` or `RETRYABLE` on its catalogue entry
+  (`internal/adapters/inbound/http/errors.go`, no default; a unit test fails an
+  unclassified one and `docs/adr/0027-*.md` holds the table equal to the
+  catalogue). A 2xx and `FINAL`/`OUTCOME` refusals are stored and replayed; a
+  `RETRYABLE` refusal and every 5xx are not stored (the key is released, a retry
+  executes). A new problem type is classified in the PR that adds it; unsure
+  between `FINAL` and `RETRYABLE` choose `RETRYABLE`. List GETs page
   (`limit` + keyset `cursor`, body `{items,nextCursor}`) and reject undeclared
   query parameters with 400 `unknown-query-parameter`.
 - Optimistic concurrency: bodies carry `version`, single-resource responses

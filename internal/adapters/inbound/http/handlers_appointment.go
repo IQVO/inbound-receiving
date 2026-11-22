@@ -25,7 +25,7 @@ const (
 )
 
 // appointmentMovedProblem is the 410 problem of every former appointment write.
-var appointmentMovedProblem = problem{http.StatusGone, "appointment-moved", "Appointment writes moved to dock-scheduling"}
+var appointmentMovedProblem = problem{status: http.StatusGone, slug: "appointment-moved", title: "Appointment writes moved to dock-scheduling", class: replayFinal}
 
 // appointmentWriteMoved answers 410 appointment-moved with the detail of the
 // operation. The body is not read and no key is required.
