@@ -88,7 +88,7 @@ func (c *DockDoorConsumer) HandleMessage(ctx context.Context, value []byte) erro
 	logger := defaultLogger(c.Logger)
 	e, err := cloudevents.Decode(value)
 	if err != nil {
-		logger.WarnContext(ctx, "skipping a message that is not a valid CloudEvent", "topic", FacilityTopic, "error", err)
+		logger.WarnContext(ctx, "skipping a message that is not a valid CloudEvent", "topic", FacilityTopic, "error", sanitizeErr(err))
 		return nil
 	}
 	if e.Type() != TypeLocationSlotRegistered && e.Type() != TypeLocationSlotDecommissioned {
@@ -96,7 +96,7 @@ func (c *DockDoorConsumer) HandleMessage(ctx context.Context, value []byte) erro
 	}
 	var data locationSlotData
 	if err := e.DataAs(&data); err != nil {
-		logger.WarnContext(ctx, "skipping a malformed location slot payload", "event_id", e.ID(), "type", e.Type(), "error", err)
+		logger.WarnContext(ctx, "skipping a malformed location slot payload", "event_id", sanitizeLog(e.ID()), "type", sanitizeLog(e.Type()), "error", sanitizeErr(err))
 		return nil
 	}
 	var outcome usecases.Outcome
@@ -106,12 +106,12 @@ func (c *DockDoorConsumer) HandleMessage(ctx context.Context, value []byte) erro
 		outcome, err = c.Decommissions.Handle(ctx, e.ID(), data.LocationCode)
 	}
 	if errors.Is(err, usecases.ErrInvalidEvent) {
-		logger.WarnContext(ctx, "skipping an invalid location slot event", "event_id", e.ID(), "type", e.Type(), "location_code", data.LocationCode, "error", err)
+		logger.WarnContext(ctx, "skipping an invalid location slot event", "event_id", sanitizeLog(e.ID()), "type", sanitizeLog(e.Type()), "location_code", sanitizeLog(data.LocationCode), "error", sanitizeErr(err))
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	logger.InfoContext(ctx, "location slot event processed", "event_id", e.ID(), "type", e.Type(), "location_code", data.LocationCode, "outcome", string(outcome))
+	logger.InfoContext(ctx, "location slot event processed", "event_id", sanitizeLog(e.ID()), "type", sanitizeLog(e.Type()), "location_code", sanitizeLog(data.LocationCode), "outcome", sanitizeLog(string(outcome)))
 	return nil
 }
